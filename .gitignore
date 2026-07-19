@@ -1,0 +1,13 @@
+.DS_Store
+.build/
+DerivedData/
+dist/
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+.env
+.env.*
+*.secret
+*.secrets
+*.key
+*.pem
