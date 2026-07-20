@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { lstat, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 
@@ -106,6 +106,22 @@ function normalizedArchiveRecords(archive) {
     ...record,
     mode: binPaths.has(record.path) ? 0o755 : record.mode,
   }));
+}
+
+async function extractPackedRoot(runtimeRoot, archive) {
+  try {
+    await lstat(runtimeRoot);
+    throw new Error(`Refusing to extract over an existing runtime root: ${runtimeRoot}`);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  await mkdir(runtimeRoot, { recursive: false, mode: 0o755 });
+  for (const record of normalizedArchiveRecords(archive)) {
+    const absolute = path.join(runtimeRoot, ...record.path.split("/"));
+    await mkdir(path.dirname(absolute), { recursive: true, mode: 0o755 });
+    await writeFile(absolute, archive.contents.get(record.path), { flag: "wx", mode: record.mode });
+    if (process.platform !== "win32") await chmod(absolute, record.mode);
+  }
 }
 
 async function validatePackedRoot(runtimeRoot, archive, lockBytes, manifestPath) {
@@ -342,9 +358,10 @@ function stableJson(value) {
 }
 
 const [mode, lockPathArgument, runtimeRootArgument, manifestPathArgument, archivePathArgument] = process.argv.slice(2);
-if (!new Set(["archive", "write", "verify"]).has(mode) || !lockPathArgument || !runtimeRootArgument
-    || (mode !== "archive" && (!manifestPathArgument || !archivePathArgument))) {
-  throw new Error("Usage: locked_runtime_manifest.mjs archive LOCK_PATH ARCHIVE_PATH | write|verify LOCK_PATH RUNTIME_ROOT MANIFEST_PATH ARCHIVE_PATH");
+if (!new Set(["archive", "extract", "write", "verify"]).has(mode) || !lockPathArgument || !runtimeRootArgument
+    || (mode === "extract" && !manifestPathArgument)
+    || ((mode === "write" || mode === "verify") && (!manifestPathArgument || !archivePathArgument))) {
+  throw new Error("Usage: locked_runtime_manifest.mjs archive LOCK_PATH ARCHIVE_PATH | extract LOCK_PATH RUNTIME_ROOT ARCHIVE_PATH | write|verify LOCK_PATH RUNTIME_ROOT MANIFEST_PATH ARCHIVE_PATH");
 }
 
 const lockPath = path.resolve(lockPathArgument);
@@ -354,6 +371,12 @@ if (mode === "archive") {
   process.exit(0);
 }
 const runtimeRoot = path.resolve(runtimeRootArgument);
+if (mode === "extract") {
+  const contract = await readArchiveContract(lockPath, path.resolve(manifestPathArgument));
+  await extractPackedRoot(runtimeRoot, contract.archive);
+  console.log(`Extracted ${contract.archive.records.length} reviewed packed payload entries.`);
+  process.exit(0);
+}
 const manifestPath = path.resolve(manifestPathArgument);
 const archivePath = path.resolve(archivePathArgument);
 const actual = await snapshot(lockPath, runtimeRoot, manifestPath, archivePath);

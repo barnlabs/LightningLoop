@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { join, posix, win32 } from "node:path";
 
 export interface PlatformPathEnvironment {
   LIGHTNINGLOOP_DATA_DIR?: string;
@@ -16,14 +16,15 @@ export function lightningLoopDataDirectory(
   env: PlatformPathEnvironment = process.env as unknown as PlatformPathEnvironment,
   home = homedir(),
 ): string {
+  const platformPath = platform === "win32" ? win32 : posix;
   const override = env.LIGHTNINGLOOP_DATA_DIR?.trim();
   if (override) {
-    if (!isAbsolute(override)) throw new Error("LIGHTNINGLOOP_DATA_DIR must be absolute.");
+    if (!platformPath.isAbsolute(override)) throw new Error("LIGHTNINGLOOP_DATA_DIR must be absolute.");
     return override;
   }
-  if (platform === "darwin") return join(home, "Library", "Application Support", "LightningLoop");
-  if (platform === "win32") return join(env.APPDATA?.trim() || join(home, "AppData", "Roaming"), "LightningLoop");
-  return join(env.XDG_DATA_HOME?.trim() || join(home, ".local", "share"), "lightningloop");
+  if (platform === "darwin") return posix.join(home, "Library", "Application Support", "LightningLoop");
+  if (platform === "win32") return win32.join(env.APPDATA?.trim() || win32.join(home, "AppData", "Roaming"), "LightningLoop");
+  return posix.join(env.XDG_DATA_HOME?.trim() || posix.join(home, ".local", "share"), "lightningloop");
 }
 
 export function lightningLoopDataPath(...segments: string[]): string {

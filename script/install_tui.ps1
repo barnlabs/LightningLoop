@@ -91,6 +91,42 @@ function Assert-LiveTargetAbsent {
     Assert-LightningLoopLiveTargetAbsent $Path $Label
 }
 
+function Write-LightningLoopNewUtf8File {
+    param([string]$Path, [string]$Content)
+    $Bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($Content)
+    $Stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    try {
+        $Stream.Write($Bytes, 0, $Bytes.Length)
+        $Stream.Flush($true)
+    } finally {
+        $Stream.Dispose()
+    }
+}
+
+function New-LightningLoopStagedShims {
+    param([string]$Prefix, [string[]]$Aliases)
+    $Shell = @'
+#!/bin/sh
+exec node "$(dirname "$0")/node_modules/@barnlabs/lightningloop-harness/dist/cli/index.js" "$@"
+'@
+    $Cmd = @'
+@ECHO off
+node "%~dp0node_modules\@barnlabs\lightningloop-harness\dist\cli\index.js" %*
+@EXIT /b %ERRORLEVEL%
+'@
+    $PowerShell = @'
+#!/usr/bin/env pwsh
+$basedir = Split-Path $MyInvocation.MyCommand.Definition -Parent
+& node "$basedir\node_modules\@barnlabs\lightningloop-harness\dist\cli\index.js" $args
+exit $LASTEXITCODE
+'@
+    foreach ($Alias in $Aliases) {
+        Write-LightningLoopNewUtf8File (Join-Path $Prefix $Alias) $Shell
+        Write-LightningLoopNewUtf8File (Join-Path $Prefix ($Alias + ".cmd")) $Cmd
+        Write-LightningLoopNewUtf8File (Join-Path $Prefix ($Alias + ".ps1")) $PowerShell
+    }
+}
+
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw "Node.js 22.19+ and npm are required." }
 if ([string]::IsNullOrWhiteSpace($TestNodeVersion)) {
     $ReportedNodeVersion = (& node --version).Trim()
@@ -203,27 +239,19 @@ try {
 
 try {
     $StagePrefix = New-LightningLoopSafeDirectory $StagePrefix
-    Invoke-Checked "offline staged TUI installation" {
-        & npm install --global --ignore-scripts --offline --prefix $StagePrefix $PackagePath
-    }
+    New-LightningLoopSafeDirectory (Split-Path -Parent $StagePackage) | Out-Null
+    Invoke-Tui "node" @($LockVerifier, "extract", (Join-Path $RootDir "package-lock.json"), $StagePackage, $PackagePath) "reviewed packed runtime extraction"
+    New-LightningLoopStagedShims $StagePrefix $Names
     if ((Get-FileHash -LiteralPath $PackagePath -Algorithm SHA256).Hash -ne $PackedArchiveHash) {
         throw "Package archive changed during extraction."
     }
 
-    # npm's global install creates the Windows shims only. Its dependency
-    # resolution is discarded and replaced with a production-only npm ci from
-    # the reviewed lock. Record package versions and byte trees now, then
-    # verify the same manifest after the recoverable move.
-    $StageDependencies = Join-Path $StagePackage "node_modules"
-    if (Test-Path -LiteralPath $StageDependencies) {
-        Remove-Item -LiteralPath $StageDependencies -Recurse -Force
-    }
+    # The reviewed archive and deterministic shims are staged directly. Build
+    # only the production dependency tree from the reviewed lock, record its
+    # versions and byte trees, then verify it after the recoverable move.
     Copy-Item -LiteralPath (Join-Path $RootDir "package-lock.json") -Destination (Join-Path $StagePackage "package-lock.json")
     Invoke-Checked "lock-bound staged production dependency install" {
         & npm ci --omit=dev --ignore-scripts --offline --prefix $StagePackage
-    }
-    Invoke-Checked "staged production dependency validation" {
-        & npm ls --omit=dev --all --prefix $StagePackage
     }
     Invoke-Tui "node" @($LockVerifier, "write", (Join-Path $RootDir "package-lock.json"), $StagePackage, (Join-Path $StagePackage $RuntimeManifestName), $PackagePath) "staged lock manifest"
     $StagedRuntimeManifestHash = (Get-FileHash -LiteralPath (Join-Path $StagePackage $RuntimeManifestName) -Algorithm SHA256).Hash

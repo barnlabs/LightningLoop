@@ -362,25 +362,28 @@ mkdir -p "$TUI_PREFIX" "$APP_PARENT" "$BACKUP_PARENT"
 TUI_STAGING="$(mktemp -d "$TUI_PREFIX/.lightningloop-tui-stage.XXXXXX")"
 RENAME_EXCL_HELPER="$TUI_STAGING/.lightningloop-rename-excl"
 build_rename_excl_helper "$RENAME_EXCL_HELPER"
-"$NPM_EXECUTABLE" install --global --ignore-scripts --offline --prefix "$TUI_STAGING" "$PACKAGE_FILE"
-[[ "$(/usr/bin/shasum -a 256 "$PACKAGE_FILE" | /usr/bin/awk '{print $1}')" == "$PACKED_ARCHIVE_SHA256" ]] || die "Package archive changed during extraction."
 STAGED_TUI_ROOT="$TUI_STAGING/lib/node_modules/@barnlabs/lightningloop-harness"
+mkdir -p "$(dirname "$STAGED_TUI_ROOT")" "$TUI_STAGING/bin"
+"$NODE_EXECUTABLE" "$ROOT_DIR/script/tests/locked_runtime_manifest.mjs" extract \
+  "$ROOT_DIR/package-lock.json" "$STAGED_TUI_ROOT" "$PACKAGE_FILE"
+record_staged_aliases
+for alias in "${ALIAS_NAMES[@]}"; do
+  ln -s "../lib/node_modules/@barnlabs/lightningloop-harness/dist/cli/index.js" "$TUI_STAGING/bin/$alias"
+done
+[[ "$(/usr/bin/shasum -a 256 "$PACKAGE_FILE" | /usr/bin/awk '{print $1}')" == "$PACKED_ARCHIVE_SHA256" ]] || die "Package archive changed during extraction."
 [[ -f "$STAGED_TUI_ROOT/dist/cli/index.js" ]] || die "Staged TUI package was incomplete."
 
-# npm's global install is used only to create its platform shims. Replace the
-# dependency tree it resolved with a production-only npm ci driven by the
-# reviewed repository lock, then bind every installed package version and byte
-# tree into a manifest that is checked again after the recoverable move.
-rm -rf -- "$STAGED_TUI_ROOT/node_modules"
+# The reviewed archive is extracted directly and only deterministic aliases are
+# created. Build its production dependency tree with the reviewed repository
+# lock, then bind every installed package version and byte tree into a manifest
+# that is checked again after the recoverable move.
 /bin/cp "$ROOT_DIR/package-lock.json" "$STAGED_TUI_ROOT/package-lock.json"
 "$NPM_EXECUTABLE" ci --omit=dev --ignore-scripts --offline --prefix "$STAGED_TUI_ROOT"
-"$NPM_EXECUTABLE" ls --omit=dev --all --prefix "$STAGED_TUI_ROOT" >/dev/null
 "$NODE_EXECUTABLE" "$ROOT_DIR/script/tests/locked_runtime_manifest.mjs" write \
   "$ROOT_DIR/package-lock.json" "$STAGED_TUI_ROOT" "$STAGED_TUI_ROOT/$RUNTIME_MANIFEST_NAME" "$PACKAGE_FILE"
 STAGED_RUNTIME_MANIFEST_SHA256="$(/usr/bin/shasum -a 256 "$STAGED_TUI_ROOT/$RUNTIME_MANIFEST_NAME" | /usr/bin/awk '{print $1}')"
 [[ "$STAGED_RUNTIME_MANIFEST_SHA256" =~ ^[a-f0-9]{64}$ ]] || die "Could not hash the staged runtime manifest."
 "$NODE_EXECUTABLE" "$STAGED_TUI_ROOT/dist/cli/index.js" help >/dev/null
-record_staged_aliases
 for alias in "${ALIAS_NAMES[@]}"; do
   [[ -x "$TUI_STAGING/bin/$alias" ]] || die "Staged TUI executable $alias was absent."
   "$TUI_STAGING/bin/$alias" help >/dev/null

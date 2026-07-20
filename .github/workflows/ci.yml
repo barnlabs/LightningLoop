@@ -38,13 +38,15 @@ jobs:
           trap 'rm -rf "$INSTALL_ROOT" "$PACKAGE_FILE"' EXIT
           node script/tests/locked_runtime_manifest.mjs archive package-lock.json "$PACKAGE_FILE"
           PACKED_ARCHIVE_SHA256="$(shasum -a 256 "$PACKAGE_FILE" | awk '{print $1}')"
-          npm install --global --ignore-scripts --offline --prefix "$INSTALL_ROOT" "$PWD/$PACKAGE_FILE"
-          test "$(shasum -a 256 "$PACKAGE_FILE" | awk '{print $1}')" = "$PACKED_ARCHIVE_SHA256"
           RUNTIME_ROOT="$INSTALL_ROOT/lib/node_modules/@barnlabs/lightningloop-harness"
-          rm -rf "$RUNTIME_ROOT/node_modules"
+          mkdir -p "$(dirname "$RUNTIME_ROOT")" "$INSTALL_ROOT/bin"
+          node script/tests/locked_runtime_manifest.mjs extract package-lock.json "$RUNTIME_ROOT" "$PACKAGE_FILE"
+          for alias in lightningloop lloop llp; do
+            ln -s "../lib/node_modules/@barnlabs/lightningloop-harness/dist/cli/index.js" "$INSTALL_ROOT/bin/$alias"
+          done
+          test "$(shasum -a 256 "$PACKAGE_FILE" | awk '{print $1}')" = "$PACKED_ARCHIVE_SHA256"
           cp package-lock.json "$RUNTIME_ROOT/package-lock.json"
           npm ci --omit=dev --ignore-scripts --offline --prefix "$RUNTIME_ROOT"
-          npm ls --omit=dev --all --prefix "$RUNTIME_ROOT"
           cp "$RUNTIME_ROOT/dist/cli/index.js" "$INSTALL_ROOT/reviewed-cli.js"
           printf '\nthrow new Error("tampered packed CLI executed");\n' >> "$RUNTIME_ROOT/dist/cli/index.js"
           if node script/tests/locked_runtime_manifest.mjs write package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE"; then
