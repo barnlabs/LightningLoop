@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "currentVersion": "0.2.0",
+  "channelManifestURL": null,
+  "ed25519PublicKeyPEM": null,
+  "piPackageVersion": "0.80.10",
+  "macOSInstaller": "sparkle2",
+  "windowsInstaller": "npm-pinned"
+}

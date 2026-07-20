@@ -1,4 +1,4 @@
-name: macOS CI
+name: LightningLoop CI
 
 on:
   push:
@@ -9,16 +9,212 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  harness:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install locked harness dependencies
+        run: npm ci --ignore-scripts
+      - name: Verify package-lock integrity metadata
+        run: |
+          npm run verify:lock-integrity
+          node script/tests/locked_runtime_dirty_cache_test.mjs
+      - name: Audit locked dependencies
+        run: npm audit
+      - name: Verify shared harness and TUI
+        run: npm run verify:harness
+      - name: Prove the packed install contract without lifecycle scripts or network
+        run: |
+          test -x script/install_from_github.sh
+          grep -Fq 'pack --ignore-scripts --silent' script/install_from_github.sh
+          grep -Fq 'npm pack --ignore-scripts --silent' script/install_tui.ps1
+          PACKAGE_FILE="$(npm pack --ignore-scripts --silent)"
+          INSTALL_ROOT="$(mktemp -d)"
+          trap 'rm -rf "$INSTALL_ROOT" "$PACKAGE_FILE"' EXIT
+          node script/tests/locked_runtime_manifest.mjs archive package-lock.json "$PACKAGE_FILE"
+          PACKED_ARCHIVE_SHA256="$(shasum -a 256 "$PACKAGE_FILE" | awk '{print $1}')"
+          npm install --global --ignore-scripts --offline --prefix "$INSTALL_ROOT" "$PWD/$PACKAGE_FILE"
+          test "$(shasum -a 256 "$PACKAGE_FILE" | awk '{print $1}')" = "$PACKED_ARCHIVE_SHA256"
+          RUNTIME_ROOT="$INSTALL_ROOT/lib/node_modules/@barnlabs/lightningloop-harness"
+          rm -rf "$RUNTIME_ROOT/node_modules"
+          cp package-lock.json "$RUNTIME_ROOT/package-lock.json"
+          npm ci --omit=dev --ignore-scripts --offline --prefix "$RUNTIME_ROOT"
+          npm ls --omit=dev --all --prefix "$RUNTIME_ROOT"
+          cp "$RUNTIME_ROOT/dist/cli/index.js" "$INSTALL_ROOT/reviewed-cli.js"
+          printf '\nthrow new Error("tampered packed CLI executed");\n' >> "$RUNTIME_ROOT/dist/cli/index.js"
+          if node script/tests/locked_runtime_manifest.mjs write package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE"; then
+            echo "Tampered packed CLI was accepted before execution" >&2
+            exit 1
+          fi
+          mv "$INSTALL_ROOT/reviewed-cli.js" "$RUNTIME_ROOT/dist/cli/index.js"
+          cp "$RUNTIME_ROOT/package.json" "$INSTALL_ROOT/package.json.reviewed"
+          node --input-type=module -e 'import {readFile,writeFile} from "node:fs/promises"; const p=process.argv[1]; const x=JSON.parse(await readFile(p,"utf8")); x.bin.evil="dist/cli/index.js"; await writeFile(p,JSON.stringify(x));' "$RUNTIME_ROOT/package.json"
+          if node script/tests/locked_runtime_manifest.mjs write package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE"; then
+            echo "Tampered packed bin metadata was accepted" >&2
+            exit 1
+          fi
+          mv "$INSTALL_ROOT/package.json.reviewed" "$RUNTIME_ROOT/package.json"
+          node script/tests/locked_runtime_manifest.mjs write package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE"
+          node script/tests/locked_runtime_manifest.mjs verify package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE"
+          node "$RUNTIME_ROOT/dist/cli/index.js" help
+          "$INSTALL_ROOT/bin/llp" help
+          "$INSTALL_ROOT/bin/lloop" help
+      - name: Prove macOS installer rollback and shell safety
+        run: |
+          shellcheck script/install_from_github.sh script/tests/install_from_github_transaction_test.sh
+          bash script/tests/install_from_github_transaction_test.sh
+
+  windows-tui:
+    runs-on: windows-2025
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install locked harness dependencies
+        run: npm ci --ignore-scripts
+      - name: Verify package-lock integrity metadata
+        run: |
+          npm run verify:lock-integrity
+          node script/tests/locked_runtime_dirty_cache_test.mjs
+      - name: Audit locked dependencies
+        run: npm audit --omit=dev
+      - name: Prove exclusive Windows install locking
+        shell: pwsh
+        run: ./script/tests/install_lock_test.ps1
+      - name: Install and smoke-test the packed Windows TUI without lifecycle scripts or network
+        shell: pwsh
+        run: |
+          $InstallRoot = Join-Path $env:RUNNER_TEMP "LightningLoop-Prefix"
+          $BackupRoot = Join-Path $env:RUNNER_TEMP "LightningLoop-Backups"
+          Remove-Item -LiteralPath $InstallRoot, $BackupRoot -Recurse -Force -ErrorAction SilentlyContinue
+
+          function Get-TuiManifest([string]$Root) {
+            if (-not (Test-Path -LiteralPath $Root)) { return @("<missing>") }
+            @(
+              Get-ChildItem -LiteralPath $Root -Recurse -Force -File |
+                Sort-Object FullName |
+                ForEach-Object {
+                  $Relative = $_.FullName.Substring($Root.Length).TrimStart('\\', '/')
+                  "$Relative $((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
+                }
+            )
+          }
+          function Assert-TuiManifest([string[]]$Expected, [string]$Phase) {
+            $Actual = Get-TuiManifest $InstallRoot
+            $Difference = Compare-Object -ReferenceObject $Expected -DifferenceObject $Actual
+            if ($Difference) { throw "$Phase rollback did not restore the package and all owned npm shims: $($Difference | Out-String)" }
+          }
+          function Invoke-CiNative([scriptblock]$Command, [string]$Label) {
+            & $Command
+            if ($LASTEXITCODE -ne 0) { throw "$Label failed with exit code $LASTEXITCODE" }
+          }
+
+          # First run starts with an empty prefix. It proves the public aliases
+          # and leaves a known-good baseline for both rollback probes.
+          $UnsupportedNodeRejected = $false
+          try { ./script/install_tui.ps1 -Prefix $InstallRoot -BackupRoot $BackupRoot -TestNodeVersion "v22.18.99" 2>$null } catch { $UnsupportedNodeRejected = $true }
+          if (-not $UnsupportedNodeRejected) { throw "Expected unsupported Node preflight to fail" }
+          if (Test-Path -LiteralPath $InstallRoot) { throw "Unsupported Node preflight changed the target install prefix" }
+
+          ./script/install_tui.ps1 -Prefix $InstallRoot -BackupRoot $BackupRoot
+
+          # Simulate a prior package version that owned an alias no longer
+          # shipped. The installer must discover it from that installed
+          # package's manifest, preserve it on rollback, and remove it only
+          # after the replacement transaction succeeds.
+          $LivePackage = Join-Path $InstallRoot "node_modules/@barnlabs/lightningloop-harness"
+          $LiveManifestPath = Join-Path $LivePackage "package.json"
+          $LiveManifest = Get-Content -LiteralPath $LiveManifestPath -Raw | ConvertFrom-Json
+          $LiveManifest.bin | Add-Member -NotePropertyName "lightningloop-legacy" -NotePropertyValue "dist/cli/index.js"
+          $LiveManifest | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $LiveManifestPath -NoNewline -Encoding utf8
+          Set-Content -LiteralPath (Join-Path $InstallRoot "lightningloop-legacy") -Value "legacy extensionless shim" -NoNewline -Encoding utf8
+          Set-Content -LiteralPath (Join-Path $InstallRoot "lightningloop-legacy.cmd") -Value "legacy cmd shim" -NoNewline -Encoding utf8
+          Set-Content -LiteralPath (Join-Path $InstallRoot "lightningloop-legacy.ps1") -Value "legacy powershell shim" -NoNewline -Encoding utf8
+          $UnrelatedShim = Join-Path $InstallRoot "unrelated-tool.cmd"
+          Set-Content -LiteralPath $UnrelatedShim -Value "unrelated shim must remain untouched" -NoNewline -Encoding utf8
+          $UnrelatedHash = (Get-FileHash -LiteralPath $UnrelatedShim -Algorithm SHA256).Hash
+
+          $Baseline = Get-TuiManifest $InstallRoot
+          if ($Baseline.Count -lt 4) { throw "Expected package plus npm shims in the installed baseline" }
+
+          $BackupProbeFailed = $false
+          try { ./script/install_tui.ps1 -Prefix $InstallRoot -BackupRoot (Join-Path $BackupRoot "backup") -TestFailAt backup 2>$null } catch { $BackupProbeFailed = $true }
+          if (-not $BackupProbeFailed) { throw "Expected mid-backup rollback probe to fail" }
+          Assert-TuiManifest $Baseline "Mid-backup"
+          Invoke-CiNative { & (Join-Path $InstallRoot "llp.cmd") help } "Mid-backup rollback llp smoke"
+
+          $CommitProbeFailed = $false
+          try { ./script/install_tui.ps1 -Prefix $InstallRoot -BackupRoot (Join-Path $BackupRoot "commit") -TestFailAt commit 2>$null } catch { $CommitProbeFailed = $true }
+          if (-not $CommitProbeFailed) { throw "Expected commit rollback probe to fail" }
+          Assert-TuiManifest $Baseline "Commit"
+          Invoke-CiNative { & (Join-Path $InstallRoot "llp.cmd") help } "Commit rollback llp smoke"
+          $SmokeProbeFailed = $false
+          try { ./script/install_tui.ps1 -Prefix $InstallRoot -BackupRoot (Join-Path $BackupRoot "smoke") -TestFailAt smoke 2>$null } catch { $SmokeProbeFailed = $true }
+          if (-not $SmokeProbeFailed) { throw "Expected smoke rollback probe to fail" }
+          Assert-TuiManifest $Baseline "Smoke"
+          Invoke-CiNative { & (Join-Path $InstallRoot "llp.cmd") help } "Smoke rollback llp smoke"
+
+          ./script/install_tui.ps1 -Prefix $InstallRoot -BackupRoot (Join-Path $BackupRoot "upgrade")
+          foreach ($Suffix in @("", ".cmd", ".ps1")) {
+            if (Test-Path -LiteralPath (Join-Path $InstallRoot ("lightningloop-legacy" + $Suffix))) {
+              throw "Successful upgrade retained obsolete package-owned alias lightningloop-legacy$Suffix"
+            }
+          }
+          if (-not (Test-Path -LiteralPath $UnrelatedShim) -or (Get-FileHash -LiteralPath $UnrelatedShim -Algorithm SHA256).Hash -ne $UnrelatedHash) {
+            throw "Successful upgrade changed an unrelated shim"
+          }
+          $env:LIGHTNINGLOOP_DATA_DIR = Join-Path $env:RUNNER_TEMP "LightningLoop-CI"
+          Remove-Item -LiteralPath $env:LIGHTNINGLOOP_DATA_DIR -Recurse -Force -ErrorAction SilentlyContinue
+          $CliPath = Join-Path $InstallRoot "node_modules/@barnlabs/lightningloop-harness/dist/cli/index.js"
+          Invoke-CiNative { & (Join-Path $InstallRoot "llp.cmd") help } "Installed llp smoke"
+          Invoke-CiNative { & (Join-Path $InstallRoot "lloop.cmd") help } "Installed lloop smoke"
+          Invoke-CiNative { node $CliPath harness status } "Harness status"
+          Invoke-CiNative { node $CliPath harness backup } "Harness backup"
+          Invoke-CiNative { node $CliPath update check } "Update check"
+          $FirstRunOutput = & (Join-Path $InstallRoot "llp.cmd") 2>&1
+          $FirstRunStatus = $LASTEXITCODE
+          if ($FirstRunStatus -ne 2 -or ($FirstRunOutput -join "`n") -notmatch "provider select PRESET") {
+            throw "Clean-data llp did not stop at the explicit provider-selection boundary: $($FirstRunOutput -join "`n")"
+          }
+          Invoke-CiNative { & (Join-Path $InstallRoot "llp.cmd") provider list } "Provider list"
+          Invoke-CiNative { & (Join-Path $InstallRoot "llp.cmd") provider select cerebras } "Provider select"
+          Invoke-CiNative { & (Join-Path $InstallRoot "llp.cmd") doctor } "Selected-provider doctor"
+
+  macos-app:
     runs-on: macos-15
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Build locked shared harness
+        run: |
+          npm ci --ignore-scripts
+          npm run verify:lock-integrity
+          npm run build:harness
       - name: Build and test
         run: |
-          xcodebuild \
-            -project CerebrasLoop.xcodeproj \
-            -scheme CerebrasLoop \
+          LIGHTNINGLOOP_NODE_PATH="$(command -v node)" xcodebuild \
+            -project LightningLoop.xcodeproj \
+            -scheme LightningLoop \
             -derivedDataPath .build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             test
+      - name: Compile isolated UI journey tests
+        run: |
+          xcodebuild \
+            -project LightningLoop.xcodeproj \
+            -scheme LightningLoopUI \
+            -derivedDataPath .build/UIBuild \
+            CODE_SIGNING_ALLOWED=NO \
+            build-for-testing

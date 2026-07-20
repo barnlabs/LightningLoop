@@ -1,0 +1,33 @@
+{
+  "workflow": "LightningLoop photo-to-3D relief",
+  "source": "icon_256.png",
+  "source_sha256": "a9daa1e2252ff2aca09838a0ec489bdb0b91e03f49397242a34c68997db952bb",
+  "source_pixels": [
+    256,
+    256
+  ],
+  "grid": [
+    64,
+    64
+  ],
+  "vertices": 4096,
+  "triangles": 7938,
+  "dimensions_model_units": [
+    3.2,
+    3.2,
+    0.512
+  ],
+  "reopen_validation": {
+    "passed": true,
+    "mesh_objects": 1,
+    "vertices": 4096,
+    "material_slots": 1
+  },
+  "outputs": [
+    "relief.glb",
+    "relief.obj",
+    "preview.png",
+    "report.json"
+  ],
+  "limitation": "A single photograph cannot reveal hidden geometry. This output is a textured 2.5D luminance relief, not full photogrammetry."
+}

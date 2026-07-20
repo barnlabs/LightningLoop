@@ -1,32 +1,49 @@
-# CerebrasLoop runbook
+# LightningLoop runbook
 
 ## Purpose and ownership
 
-CerebrasLoop is a native macOS demonstration of fast iterative model orchestration. BarnLabs owns the repository and release decisions. This is not a production service and has no hosted backend.
+LightningLoop is a native macOS demonstration of fast iterative model orchestration. BarnLabs owns the repository and release decisions. This is not a production service and has no hosted backend.
 
 ## Repository and runtime
 
-- Repository: `baney75/CerebrasLoop`
-- Runtime: native macOS 14+ SwiftUI app
-- Model/API: Cerebras Inference, `gemma-4-31b`, API version patch 2
-- Local credential: macOS Keychain service `com.barnlabs.CerebrasLoop.apiKey`
-- Local history: `~/Library/Application Support/CerebrasLoop/sessions.json`
+- Canonical repository: `barnlabs/LightningLoop` (verified public; default branch `main` on 2026-07-20)
+- Required public release target: `barnlabs/LightningLoop`
+- Runtime: native macOS 14+ SwiftUI app; macOS/Windows terminal harness on Node >=22.19 and Pi's Bash requirement
+- Source install: `script/install_from_github.sh` installs the macOS GUI at `~/Applications/LightningLoop.app` and the shared TUI package under `~/.local`; `script/install_tui.ps1` verifies, packs, and installs the Windows TUI
+- Execution isolation: pinned Anthropic Sandbox Runtime; workspace-only writes and network denied by default
+- Model/API: Pi-native provider/model catalog; Codex, Claude, and Grok login plus API-key providers including Groq and Fireworks
+- Credentials: Pi owns built-in provider auth; research uses official environment variables cross-platform or isolated macOS Keychain services
+- Local history: `~/Library/Application Support/LightningLoop/sessions.json`
+- Local ledgers: `memory.json` and `evolutions.json` in the same directory, written with owner-only permissions
 
 ## Build and health check
 
 ```bash
 ./script/build_and_run.sh --verify
-xcodebuild -project CerebrasLoop.xcodeproj -scheme CerebrasLoop \
+./script/run_tui.sh doctor
+npm run verify:harness
+npm audit
+xcodebuild -project LightningLoop.xcodeproj -scheme LightningLoop \
   -derivedDataPath .build/DerivedData CODE_SIGNING_ALLOWED=NO test
+xcodebuild -project LightningLoop.xcodeproj -scheme LightningLoopUI \
+  -derivedDataPath .build/UIBuild CODE_SIGNING_ALLOWED=NO build-for-testing
 ```
 
-The first command is healthy when the app builds, opens, and `pgrep` finds the process. The second is healthy when all tests pass.
+The app command is healthy when it builds, opens, and `pgrep` finds the process. The doctor must report a compatible Node version plus the active provider/model and credential status without printing any value. Native unit and harness suites must pass, and the isolated UI journey must compile. A live UI-test run is an opt-in workstation check because macOS requires Accessibility/automation approval for Xcode's test runner; never bypass or weaken that control. Its isolated launch uses a temporary home, does not query Keychain credential state, and forces the no-network native test engine.
+
+For a source-installed macOS build, normal Finder launch must discover `~/.local/lib/node_modules/@barnlabs/lightningloop-harness`; no checkout-relative working directory or launch-only environment variable is part of the installed contract. Finder-launchable Node is deliberately limited to `~/.local/node/bin/node`, `/opt/homebrew/bin/node`, or `/usr/local/bin/node` at Node 22.19+. The installer stages and verifies the packed TUI plus universal ad-hoc-signed GUI before moving either live target, preserves the previous app/package/all package aliases in the app-owned `InstallerBackups` directory, and restores both on commit, signature, or normal-launch smoke failure. This is source-build convenience only: it neither bypasses Gatekeeper nor substitutes for Developer ID signing and notarization. Windows CI installs the packed archive into an empty temporary prefix with lifecycle scripts disabled and offline before probing managed paths.
+
+## Repository ownership release gate
+
+Do not push, merge, release, rename, transfer, or change settings without explicit owner authorization for the exact action. Before any authorized publication step, re-verify `barnlabs/LightningLoop`, the current branch/worktree, organization permissions, public visibility, default branch, CI, rulesets, release permissions, and rollback. The local Git remote may still use a redirecting legacy URL; changing it is a separate Git write. If any check fails, stop without deleting or overwriting repository state.
+
+For an end-to-end artifact probe, create a new empty directory and run `lightningloop loop` with `--workspace`, `--approve-artifact-writes`, and—only when generated code execution is intended—`--approve-verification-commands`. A healthy report includes file hashes, successful command exits when enabled, and a passing workspace audit. Never point artifact mode at an existing project or home directory.
 
 ## Common incidents
 
 ### HTTP 401 or 403
 
-Replace the API key in Settings, then use **Test Connection**. Never paste the key into source or an issue.
+For a named built-in provider, use `lightningloop auth` and Pi's `/login` flow (or repair that provider's official environment-variable configuration), then retry through Pi. LightningLoop never reads or replaces Pi credentials. For an explicitly selected custom macOS profile, update its LightningLoop-owned credential in Settings and use **Test Connection**; this test does not authorize native loop execution. For Exa, Brave, or Firecrawl, repair only the matching research credential. Never paste any key into source, logs, an issue, or a loop prompt.
 
 ### Model output is malformed
 
@@ -36,14 +53,42 @@ The run fails closed and preserves prior history. Retry once. If reproducible, c
 
 This is expected fail-closed behavior. The configured per-stage review cap pauses the run and preserves findings. Improve the goal/answers or raise the cap deliberately; do not bypass the reviewer.
 
-### API version behavior changes
+### Provider or model behavior changes
 
-Review Cerebras’s version documentation, test the probe and a full loop locally, then update the pinned header and parsers together.
+Review the provider’s current primary documentation, run model discovery and the connection probe, then test a full loop locally. Update presets, provider-specific headers, and parsers together; do not silently redirect a preset endpoint.
+
+### Managed harness recovery
+
+Run `lightningloop harness status`, then `backup` before a managed change. `restore --slot 0` restores the latest snapshot while preserving a new pre-restore backup. `reset --approve-reset` affects only LightningLoop's skills/MCP manifests/tools/graphs/prompt overlay and never Pi state. Stop on a symlink, special file, size bound, or malformed snapshot.
+
+### Update channel
+
+`lightningloop update check` must report `unconfigured` for source builds until a real signed release channel exists. Do not bypass this state. See `docs/UPDATES.md` for the Developer ID, notarization, Sparkle, Ed25519, Windows package, rollback, and smoke-test gates.
+
+### Custom provider is rejected
+
+Custom endpoints must use a credential-free public HTTPS DNS hostname. Literal IPs, localhost, `.local` names, URL credentials, query strings, and fragments are rejected. This is intentional; do not weaken it to accommodate a private endpoint without a new threat model and explicit product decision.
+
+### Sandbox initialization fails
+
+Execution fails closed and the TUI reports that the OS sandbox is unavailable. Keep the session read-only. Re-run the harness tests and verify `/usr/bin/sandbox-exec` exists; do not bypass the sandbox or substitute host-authority shell execution.
+
+### Artifact workspace is rejected
+
+Use a real, dedicated, empty directory. Root, home, links, existing content, traversal, secret-like paths/content, and files not owned by the current run are intentionally rejected. Move wanted existing work elsewhere or start a new directory; do not weaken the collision gate. If verification fails, inspect the bounded report and revise the generated files or command vector rather than claiming Gold.
+
+### MCP integrity mismatch
+
+Do not update the stored hash reflexively. Reopen the named source, review the exact executable and artifact changes, rerun the synthetic sandbox suite, and create a new reviewed manifest version. Floating launchers remain prohibited.
+
+### Memory or evolution ledger is malformed
+
+The shared harness fails closed instead of inserting ambiguous context. Back up the affected owner-only JSON file, inspect it without copying secrets into an issue, and repair it through the native UI/TUI or restore a known-good local copy. Do not disable parsing or activation gates. Rolling an active evolution back in Settings or with `/evolution-rollback UUID` removes it from future prompts.
 
 ## Rollback and recovery
 
-There is no server deployment. Roll back code by checking out a known-good tagged release or commit. Loop history is a local JSON file; there is no automatic backup or cloud recovery. Deleting the app does not necessarily delete Keychain data or Application Support history.
+There is no server deployment. Roll back code by checking out a known-good tagged release or commit. Managed harness resources have three local rotating snapshots; sessions and other app history do not yet have cloud recovery. Deleting the app does not necessarily delete Pi credentials, Keychain data, or Application Support history.
 
 ## Cost and limits
 
-Every review and repair is a separate API call. The cap of 1–8 rounds per plan and implementation stage prevents unbounded retries. The UI reports token count, model time, and an estimate based on the documented Gemma 4 31B token prices present when this version was built; provider pricing can change.
+Every review and repair is a separate API call. The cap of 1–8 rounds per plan and implementation stage prevents unbounded retries. The UI reports token count and model time. It does not invent cost when a provider does not return a trustworthy price signal; provider pricing and limits can change.
