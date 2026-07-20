@@ -1,0 +1,58 @@
+{
+  "name": "@barnlabs/lightningloop-harness",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Shared LightningLoop policy, orchestration, and terminal harness",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/barnlabs/LightningLoop.git"
+  },
+  "homepage": "https://github.com/barnlabs/LightningLoop#readme",
+  "bugs": "https://github.com/barnlabs/LightningLoop/issues",
+  "files": [
+    "dist/**/*.js",
+    "!dist/**/*.test.js",
+    "skills/",
+    "vendor/earendil-works-pi-coding-agent-0.80.10-unshrunk.tgz",
+    "README.md",
+    "NOTICE.md",
+    "SECURITY.md"
+  ],
+  "keywords": ["pi-package", "agent-orchestration", "promise-graph"],
+  "type": "module",
+  "bin": {
+    "lightningloop": "dist/cli/index.js",
+    "lloop": "dist/cli/index.js",
+    "llp": "dist/cli/index.js"
+  },
+  "pi": {
+    "skills": ["./skills"]
+  },
+  "scripts": {
+    "clean:harness": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build:harness": "tsc -p tsconfig.json",
+    "check:harness": "tsc -p tsconfig.json --noEmit",
+    "verify:lock-integrity": "node --input-type=module --eval \"import { readFile } from 'node:fs/promises'; const lock = JSON.parse(await readFile('package-lock.json', 'utf8')); const invalid = Object.entries(lock.packages).filter(([path, item]) => path && item.resolved && !item.link && (typeof item.integrity !== 'string' || !/^sha(?:256|384|512)-[A-Za-z0-9+/]+={0,2}$/.test(item.integrity))).map(([path]) => path); if (invalid.length) throw new Error('Lock entries without valid integrity: ' + invalid.join(', ')); console.log('Lock integrity verified for ' + Object.keys(lock.packages).length + ' package entries');\"",
+    "test:harness": "npm run build:harness && node --test --test-concurrency=2 'dist/**/*.test.js'",
+    "test:portable": "npm run build:harness && node --test dist/artifacts/browser-artifact-server.test.js dist/core/platform-paths.test.js dist/core/pi-options.test.js dist/core/provider-profile.test.js dist/graph/promise-graph.test.js dist/search/search-client.test.js dist/update/update-policy.test.js",
+    "harness": "node dist/cli/index.js",
+    "verify:harness": "npm run check:harness && npm run test:harness",
+    "prepack": "npm run clean:harness && npm run build:harness"
+  },
+  "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.66",
+    "@earendil-works/pi-coding-agent": "file:vendor/earendil-works-pi-coding-agent-0.80.10-unshrunk.tgz",
+    "@earendil-works/pi-tui": "0.80.10"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.7",
+    "protobufjs": "7.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

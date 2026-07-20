@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a reproducible LightningLoop defect without credentials or private content.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Never include provider keys, Pi state, private prompts, or personal files.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - macOS GUI
+        - macOS TUI
+        - Windows TUI
+        - GitHub install or update
+        - Artifact or HTML handoff
+        - Managed skills or graph review
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.2.0 or git rev-parse --short HEAD
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction
+      description: Give the smallest deterministic steps and expected versus actual result.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Include bounded logs, screenshots, or hashes after removing secrets and private data.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, private prompts, and personal file contents.
+          required: true
