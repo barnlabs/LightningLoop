@@ -140,6 +140,10 @@ Assert-SupportedNodeVersion $ReportedNodeVersion
 # nor staged install is allowed to run lifecycle scripts.
 Invoke-Checked "npm ci --ignore-scripts" { & npm ci --ignore-scripts }
 Invoke-Checked "portable harness verification" { & npm run test:portable }
+$NpmCacheRoot = (& npm config get cache).Trim()
+if ($LASTEXITCODE -ne 0 -or -not [System.IO.Path]::IsPathRooted($NpmCacheRoot) -or -not (Test-Path -LiteralPath $NpmCacheRoot -PathType Container)) {
+    throw "npm reported an invalid cache directory."
+}
 $PackageName = (& npm pack --ignore-scripts --silent | Select-Object -Last 1).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($PackageName)) {
     throw "npm pack --ignore-scripts did not produce an archive."
@@ -246,14 +250,12 @@ try {
         throw "Package archive changed during extraction."
     }
 
-    # The reviewed archive and deterministic shims are staged directly. Build
-    # only the production dependency tree from the reviewed lock, record its
-    # versions and byte trees, then verify it after the recoverable move.
+    # The reviewed archive and deterministic shims are staged directly. Extract
+    # only SRI-verified production archives from npm's content-addressed cache,
+    # record their versions and byte trees, then verify after the recoverable move.
     Copy-Item -LiteralPath (Join-Path $RootDir "package-lock.json") -Destination (Join-Path $StagePackage "package-lock.json")
-    Invoke-Checked "lock-bound staged production dependency install" {
-        & npm ci --omit=dev --ignore-scripts --offline --prefix $StagePackage
-    }
-    Invoke-Tui "node" @($LockVerifier, "write", (Join-Path $RootDir "package-lock.json"), $StagePackage, (Join-Path $StagePackage $RuntimeManifestName), $PackagePath) "staged lock manifest"
+    Invoke-Tui "node" @($LockVerifier, "copy-production", (Join-Path $RootDir "package-lock.json"), $NpmCacheRoot, $StagePackage) "SRI-verified production dependency extraction"
+    Invoke-Tui "node" @($LockVerifier, "write", (Join-Path $RootDir "package-lock.json"), $StagePackage, (Join-Path $StagePackage $RuntimeManifestName), $PackagePath, $NpmCacheRoot) "staged SRI-bound lock manifest"
     $StagedRuntimeManifestHash = (Get-FileHash -LiteralPath (Join-Path $StagePackage $RuntimeManifestName) -Algorithm SHA256).Hash
 
     # Smoke the staged bytes before any live package or shim is moved.

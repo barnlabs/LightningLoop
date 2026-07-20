@@ -46,22 +46,45 @@ jobs:
           done
           test "$(shasum -a 256 "$PACKAGE_FILE" | awk '{print $1}')" = "$PACKED_ARCHIVE_SHA256"
           cp package-lock.json "$RUNTIME_ROOT/package-lock.json"
-          npm ci --omit=dev --ignore-scripts --offline --prefix "$RUNTIME_ROOT"
+          node script/tests/locked_runtime_manifest.mjs copy-production package-lock.json "$(npm config get cache)" "$RUNTIME_ROOT"
           cp "$RUNTIME_ROOT/dist/cli/index.js" "$INSTALL_ROOT/reviewed-cli.js"
           printf '\nthrow new Error("tampered packed CLI executed");\n' >> "$RUNTIME_ROOT/dist/cli/index.js"
-          if node script/tests/locked_runtime_manifest.mjs write package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE"; then
+          if node script/tests/locked_runtime_manifest.mjs write package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE" "$(npm config get cache)"; then
             echo "Tampered packed CLI was accepted before execution" >&2
             exit 1
           fi
           mv "$INSTALL_ROOT/reviewed-cli.js" "$RUNTIME_ROOT/dist/cli/index.js"
           cp "$RUNTIME_ROOT/package.json" "$INSTALL_ROOT/package.json.reviewed"
           node --input-type=module -e 'import {readFile,writeFile} from "node:fs/promises"; const p=process.argv[1]; const x=JSON.parse(await readFile(p,"utf8")); x.bin.evil="dist/cli/index.js"; await writeFile(p,JSON.stringify(x));' "$RUNTIME_ROOT/package.json"
-          if node script/tests/locked_runtime_manifest.mjs write package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE"; then
+          if node script/tests/locked_runtime_manifest.mjs write package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE" "$(npm config get cache)"; then
             echo "Tampered packed bin metadata was accepted" >&2
             exit 1
           fi
           mv "$INSTALL_ROOT/package.json.reviewed" "$RUNTIME_ROOT/package.json"
-          node script/tests/locked_runtime_manifest.mjs write package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE"
+          mv "$RUNTIME_ROOT/node_modules" "$INSTALL_ROOT/external-node-modules"
+          ln -s "$INSTALL_ROOT/external-node-modules" "$RUNTIME_ROOT/node_modules"
+          if node script/tests/locked_runtime_manifest.mjs write package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE" "$(npm config get cache)"; then
+            echo "Symlinked dependency container became manifest authority" >&2
+            exit 1
+          fi
+          mv "$RUNTIME_ROOT/node_modules" "$INSTALL_ROOT/rejected-node-modules-link"
+          mv "$INSTALL_ROOT/external-node-modules" "$RUNTIME_ROOT/node_modules"
+          mkdir "$RUNTIME_ROOT/node_modules/.bin"
+          printf '#!/bin/sh\nexit 0\n' > "$RUNTIME_ROOT/node_modules/.bin/unbound"
+          chmod +x "$RUNTIME_ROOT/node_modules/.bin/unbound"
+          if node script/tests/locked_runtime_manifest.mjs write package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE" "$(npm config get cache)"; then
+            echo "Unbound dependency executable became manifest authority" >&2
+            exit 1
+          fi
+          rm -rf "$RUNTIME_ROOT/node_modules/.bin"
+          cp "$RUNTIME_ROOT/node_modules/zod/package.json" "$INSTALL_ROOT/zod-package.json.reviewed"
+          printf '\n ' >> "$RUNTIME_ROOT/node_modules/zod/package.json"
+          if node script/tests/locked_runtime_manifest.mjs write package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE" "$(npm config get cache)"; then
+            echo "Post-extraction dependency mutation became manifest authority" >&2
+            exit 1
+          fi
+          mv "$INSTALL_ROOT/zod-package.json.reviewed" "$RUNTIME_ROOT/node_modules/zod/package.json"
+          node script/tests/locked_runtime_manifest.mjs write package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE" "$(npm config get cache)"
           node script/tests/locked_runtime_manifest.mjs verify package-lock.json "$RUNTIME_ROOT" "$RUNTIME_ROOT/.lightningloop-runtime-manifest.json" "$PACKAGE_FILE"
           node "$RUNTIME_ROOT/dist/cli/index.js" help
           "$INSTALL_ROOT/bin/llp" help

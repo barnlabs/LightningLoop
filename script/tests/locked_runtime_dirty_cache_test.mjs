@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, readdir } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 const npmCli = process.platform === "win32"
   ? path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js")
@@ -14,6 +15,7 @@ const root = await mkdtemp(path.join(tmpdir(), "lightningloop-dirty-cache-"));
 const dependency = path.join(root, "dependency");
 const application = path.join(root, "application");
 const cache = path.join(root, "cache");
+const verifier = path.join(path.dirname(fileURLToPath(import.meta.url)), "locked_runtime_manifest.mjs");
 await mkdir(dependency, { recursive: true });
 await mkdir(application, { recursive: true });
 await mkdir(cache, { recursive: true });
@@ -44,6 +46,10 @@ await writeFile(
 run(["install", "--package-lock-only", "--ignore-scripts", "--cache", cache], application);
 run(["cache", "add", archive, "--cache", cache], root);
 run(["ci", "--offline", "--ignore-scripts", "--cache", cache], application);
+const verifiedRuntime = path.join(root, "verified-runtime");
+await mkdir(verifiedRuntime);
+const verified = spawnSync(process.execPath, [verifier, "copy-production", path.join(application, "package-lock.json"), cache, verifiedRuntime], { encoding: "utf8" });
+if (verified.status !== 0) throw new Error(`SRI cache extraction fixture failed before poisoning:\n${verified.stderr}`);
 
 // Remove the original archive so the next install can use only the cache, then
 // corrupt that cache. npm must reject the bytes using package-lock integrity.
@@ -65,6 +71,12 @@ async function firstFile(directory) {
 const cachedTarball = await firstFile(contentRoot);
 if (!cachedTarball) throw new Error("Fixture did not populate npm's content cache.");
 await appendFile(cachedTarball, "poisoned-cache-bytes");
+const poisonedRuntime = path.join(root, "poisoned-runtime");
+await mkdir(poisonedRuntime);
+const poisoned = spawnSync(process.execPath, [verifier, "copy-production", path.join(application, "package-lock.json"), cache, poisonedRuntime], { encoding: "utf8" });
+if (poisoned.status === 0 || !poisoned.stderr.includes("fail reviewed integrity")) {
+  throw new Error(`LightningLoop cache extraction did not reject poisoned SRI bytes:\n${poisoned.stdout}\n${poisoned.stderr}`);
+}
 run(["ci", "--offline", "--ignore-scripts", "--cache", cache], application, false);
 await rm(root, { recursive: true, force: true });
-console.log("PASS: npm ci rejected a poisoned offline cache using lockfile integrity.");
+console.log("PASS: npm ci and LightningLoop extraction rejected poisoned cache bytes using lockfile integrity.");

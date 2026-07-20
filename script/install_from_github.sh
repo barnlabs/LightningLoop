@@ -348,6 +348,8 @@ acquire_install_lock || die "Concurrent source installation is not allowed."
 cd "$ROOT_DIR"
 "$NPM_EXECUTABLE" ci --ignore-scripts
 "$NPM_EXECUTABLE" run verify:harness
+NPM_CACHE_ROOT="$("$NPM_EXECUTABLE" config get cache)"
+[[ "$NPM_CACHE_ROOT" == /* && -d "$NPM_CACHE_ROOT" ]] || die "npm reported an invalid cache directory."
 xcodegen generate
 PACKAGE_BASENAME="$("$NPM_EXECUTABLE" pack --ignore-scripts --silent | tail -n 1)"
 PACKAGE_FILE="$ROOT_DIR/$PACKAGE_BASENAME"
@@ -375,12 +377,14 @@ done
 
 # The reviewed archive is extracted directly and only deterministic aliases are
 # created. Build its production dependency tree with the reviewed repository
-# lock, then bind every installed package version and byte tree into a manifest
-# that is checked again after the recoverable move.
+# lock. Each dependency is extracted only from the npm content-addressed cache
+# after its archive bytes match the exact lockfile SRI, then the installed byte
+# trees are bound into a manifest checked again after the recoverable move.
 /bin/cp "$ROOT_DIR/package-lock.json" "$STAGED_TUI_ROOT/package-lock.json"
-"$NPM_EXECUTABLE" ci --omit=dev --ignore-scripts --offline --prefix "$STAGED_TUI_ROOT"
+"$NODE_EXECUTABLE" "$ROOT_DIR/script/tests/locked_runtime_manifest.mjs" copy-production \
+  "$ROOT_DIR/package-lock.json" "$NPM_CACHE_ROOT" "$STAGED_TUI_ROOT"
 "$NODE_EXECUTABLE" "$ROOT_DIR/script/tests/locked_runtime_manifest.mjs" write \
-  "$ROOT_DIR/package-lock.json" "$STAGED_TUI_ROOT" "$STAGED_TUI_ROOT/$RUNTIME_MANIFEST_NAME" "$PACKAGE_FILE"
+  "$ROOT_DIR/package-lock.json" "$STAGED_TUI_ROOT" "$STAGED_TUI_ROOT/$RUNTIME_MANIFEST_NAME" "$PACKAGE_FILE" "$NPM_CACHE_ROOT"
 STAGED_RUNTIME_MANIFEST_SHA256="$(/usr/bin/shasum -a 256 "$STAGED_TUI_ROOT/$RUNTIME_MANIFEST_NAME" | /usr/bin/awk '{print $1}')"
 [[ "$STAGED_RUNTIME_MANIFEST_SHA256" =~ ^[a-f0-9]{64}$ ]] || die "Could not hash the staged runtime manifest."
 "$NODE_EXECUTABLE" "$STAGED_TUI_ROOT/dist/cli/index.js" help >/dev/null
