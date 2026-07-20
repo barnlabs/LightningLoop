@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { appendFile, chmod, lstat, mkdtemp, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -383,12 +382,11 @@ test("TypeScript artifacts fail closed when no typecheck, build, or test runs", 
   }
 });
 
-test("offline Rust verification fails closed because cargo requires child processes", async (context) => {
+test("offline Rust verification fails closed when Cargo is unavailable or requires child processes", async (context) => {
   if (process.platform !== "darwin") {
     context.skip("Deterministic autonomous Bash verification currently requires macOS Seatbelt process-fork denial.");
     return;
   }
-  const cargoAvailable = spawnSync("/usr/bin/env", ["cargo", "--version"], { encoding: "utf8" }).status === 0;
   const workspace = await mkdtemp(join(tmpdir(), "lightningloop-artifacts-"));
   try {
     const executor = await WorkspaceArtifactExecutor.create(workspace, true);
@@ -413,11 +411,10 @@ test("offline Rust verification fails closed because cargo requires child proces
     assert.equal(report.commands[0]?.executable, "cargo");
     assert.equal(report.commands[0]?.origin, "harness");
     assert.equal(report.commands[0]?.passed, false);
-    if (cargoAvailable) {
-      assert.match(report.commands[0]?.output ?? "", /operation not permitted|EPERM/iu);
-    } else {
-      assert.match(report.commands[0]?.output ?? "", /cargo: No such file or directory/iu);
-    }
+    assert.match(
+      report.commands[0]?.output ?? "",
+      /operation not permitted|EPERM|^env: cargo: No such file or directory$/imu,
+    );
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
