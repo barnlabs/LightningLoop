@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain LightningLoop"
+  short_description: "Safely evolve graphs and managed harness resources"
+  default_prompt: "Use $maintain-lightningloop to change this LightningLoop harness resource with backups, bounded graph checks, and verification."

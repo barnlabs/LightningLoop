@@ -1,124 +1,226 @@
 <p align="center">
-  <img src="CerebrasLoop/Resources/AppIconMaster.png" width="128" alt="CerebrasLoop app icon">
+  <img src="LightningLoop/Resources/AppIconMaster.png" width="132" alt="LightningLoop icon">
 </p>
 
-# CerebrasLoop
+# LightningLoop
 
-**Fast models. Ruthless review.**
+**Fast inference. Relentless refinement.**
 
-CerebrasLoop is a native macOS demonstration of how a relatively small, extremely fast model can produce stronger work when it is placed inside a strict clarify → plan → review → implement → review loop. It runs **Gemma 4 31B** (`gemma-4-31b`) on the Cerebras Inference API.
+LightningLoop is an open-source BarnLabs macOS app plus macOS/Windows terminal interface built on the Pi harness. Agents traverse bounded promise/duty graphs that clarify, plan, challenge, implement, gather proof, and repair until every acceptance criterion passes—or the graph stops honestly.
 
-![CerebrasLoop showing a Gold deliverable](docs/screenshots/cerebrasloop-gold.png)
+![LightningLoop native macOS interface](docs/screenshots/lightningloop-native.png)
 
-## The loop
+## Why it exists
 
-1. **Orchestrator clarifies** the request with a few decision-critical questions.
-2. **Orchestrator creates** atomic acceptance criteria and a falsifiable execution plan.
-3. **Gold Reviewer challenges** the plan. Rejected plans return to the orchestrator for repair.
-4. **Implementer produces** the complete text/Markdown deliverable.
-5. **Gold Reviewer audits** every criterion. Rejected work returns to the implementer.
-6. The run ends at **Gold** only when the reviewer returns a score of at least 9/10, no high/blocking finding, and no required change.
-
-Review rounds are capped from 1–8 per stage. If the cap is reached, CerebrasLoop pauses with the remaining findings visible; it never converts exhaustion into a false success.
+Fast models are often judged from one-shot prompts. LightningLoop tests a different thesis: speed is most useful when it buys more independent critique and repair. A run reaches **Gold** only when the reviewer scores it at least 9/10 without rounding, finds no medium, high, or blocking issue, requests no further change, and cites harness evidence bound to each criterion's explicit proof predicate and an independently supported objective contract. Search snippets, reference images, file hashes, implementer prose, syntax, builds, and reviewer approval do not prove that an artifact solved the user's goal. Until owner-supplied typed objective contracts ship, artifact and general semantic work pauses for owner acceptance even when its deterministic checks pass. Exhausting the configured round cap pauses the run; it never becomes a false pass.
 
 ```mermaid
 flowchart LR
-    G["Goal"] --> C["Clarify"]
+    G["Goal + images"] --> C["Clarify"]
     C --> P["Criteria + plan"]
-    P --> RP{"Gold plan review"}
-    RP -->|Revise| P
-    RP -->|Pass| I["Implement"]
-    I --> RI{"Gold implementation review"}
-    RI -->|Revise| I
-    RI -->|Pass| D["Gold deliverable"]
+    P --> R1{"Plan review"}
+    R1 -->|Repair| P
+    R1 -->|Pass| I["Implement"]
+    I --> R2{"Deliverable review"}
+    R2 -->|Repair| I
+    R2 -->|Gold| D["Done"]
 ```
 
-## Live proof
+## What is included
 
-The repository’s captured demo run on July 19, 2026 completed a full clarification, plan review, implementation, and implementation review with:
+- A native SwiftUI macOS client with local history, source-image attachments, visible criteria, plan, reviews, trace, and run metrics.
+- Pi-native provider catalogs and official login flows for **OpenAI Codex**, **Anthropic Claude**, and **xAI/Grok**, plus API-key providers including **Cerebras Inference**, **Groq**, and **Fireworks**. BarnLabs remains the product and repository identity; providers are replaceable inference dependencies.
+- Bounded promise/duty graphs with named requirements, outputs, routes, evidence traces, per-node visit caps, and total-step caps.
+- Pi owns catalogs and model selection for every named built-in provider. Only an explicitly selected Custom macOS profile uses LightningLoop's native `/models` discovery and connection test; that path cannot execute a loop without the shared harness.
+- Optional iterative research through Exa, Brave, or Firecrawl in the shared harness. The orchestrator researches before planning, and harsh reviewers may request narrow follow-up queries between repair rounds. Queries, URLs, and result counts are deduplicated and capped per run. Search snippets remain unverified; the harness can open the leading HTTPS sources with redirects disabled, preserve retrieval time/content hash/source class, and bind factual criteria to an exact opened URL. The parity-tested native research implementation is not reachable from production loop execution while no-harness execution is blocked.
+- A shared TypeScript state machine used by the CLI and, when discoverable, the native app through a versioned JSONL subprocess protocol.
+- A policy-wrapped Pi TUI that starts read-only. Optional execution uses a separate OS-sandboxed, per-call-confirmed path.
+- A platform-native managed overlay for skills, MCP manifests, tools, graphs, and prompts, with secret/tamper checks, three rotating backups, and explicit managed-skill install/enable/disable commands that never touch Pi state. Imported skills start disabled. Enable verifies a unique non-active staging tree before one atomic rename; disable atomically quarantines the active copy even when the inactive installation contains secret-shaped or symlink drift.
+- Permissioned macOS notifications plus cross-platform terminal/hook notifications for Gold, blockers, and required input.
+- A fail-closed Ed25519 update-manifest foundation; automatic installation stays disabled until signed platform release channels exist.
+- An opt-in **Evidence Lab** that creates run-owned files in a dedicated empty directory, proactively selects bounded single-process Python and JavaScript checks, runs only structured single-process verification in the network-denied macOS sandbox, captures duration and redacted output, serves HTML on an ephemeral `127.0.0.1` endpoint, renders CSP-confined PNG proof, and feeds only harness-observed evidence back to the reviewer. Multi-process compilers and test runners, including Cargo, fail closed in autonomous verification.
+- An in-app evidence workspace with hash-verified static picture evidence, response metadata, expandable script-runner output, bounded source inspection, Finder reveal, and explicit links that open created files in their default apps. HTML opens only in the system default browser through a short-lived loopback handoff.
+- A bounded photo-to-3D workflow that normalizes an attached image, generates textured GLB and OBJ relief models plus a shaded preview, reopens the GLB, and reports every artifact hash while explicitly disclosing the limits of single-view reconstruction.
+- Local provenance-aware memory with session binding and explicit durable promotion. A reviewed evolution ledger can activate bounded system-prompt or advisory skill guidance; proposals never activate themselves, and tools/MCPs stay separately gated.
 
-- plan review: **10/10**
-- implementation review: **10/10**
-- total tokens: **4,877**
-- measured completion speed: **1,118 tokens/second**
-- summed model time: **1.21 seconds**
-- estimated model cost: **$0.0054**
+## Providers and images
 
-Those numbers are one observed run, not a performance or cost guarantee. Queueing, prompt length, model behavior, availability, and provider pricing can change.
+Choose a preset in **Settings**. Every named built-in preset is Pi-managed: use `lightningloop auth` and Pi’s `/login` when supported, or Pi's official environment-variable resolution; LightningLoop never copies the resulting OAuth or API-key credential. Cerebras remains an optional Pi-managed inference provider with the official OpenAI-compatible `https://api.cerebras.ai/v1` endpoint and `gpt-oss-120b` default. Historical LightningLoop-owned Keychain service identifiers are retained only so local memory, evolution, errors, and migration paths can reject credential values without enumerating Pi state. A custom provider is a macOS-only, explicit user-trusted public HTTPS hostname and its connection can be tested in Settings, but loop clarification, execution, and Gold all require the shared harness.
+
+Image inputs are deliberately bounded: PNG, JPEG, WebP, or GIF; up to four files; 10 MB each. LightningLoop validates the decoded image type, copies it into protected app storage, and sends it only to the active provider during the run. Text-only models reject image-bearing runs before inference.
+
+Provider capabilities and model availability change. The presets are useful starting points, while `/models` discovery and a connection test are the source of truth for the user’s account.
+
+## Research
+
+Research is opt-in. The shared harness asks the model for up to three narrow searches, retrieves at most five results per query, preserves source URLs, and labels all excerpts as untrusted evidence. Up to two leading HTTPS results per query may be opened with redirects disabled and strict time/type/size limits; these retrieval-time/hash-preserved records can support review but cannot certify factual truth or automatic Gold. “Official-or-primary candidate” is a routing class, not a truth verdict. Apart from `.gov` and `.edu`, a host receives that routing label only when its exact lowercase hostname appears in the comma-separated `LIGHTNINGLOOP_SOURCE_HOST_ALLOWLIST`; general-web results can also inform a draft. In every case, the planner selected the claim, so factual completion pauses for owner acceptance even when the case-sensitive excerpt literally occurs in the exact opened record. Research credentials use official environment variables cross-platform or separate macOS Keychain entries. Root `llms.txt` retrieval is off by default and requires an exact-host allowlist.
+
+## Install from GitHub
+
+Requirements:
+
+- macOS 14+ for the GUI; macOS or Windows for the TUI
+- Xcode 16+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen) for the GUI
+- Node.js 22.19+ for the shared harness and TUI. For a Finder-launchable macOS GUI install, Node must be executable at exactly `~/.local/node/bin/node`, `/opt/homebrew/bin/node`, or `/usr/local/bin/node`.
+- a Pi-supported login or API key for at least one inference provider
+
+### macOS GUI and TUI
+
+Clone the canonical BarnLabs repository, then use the checked-in executable installer. It verifies the complete harness, creates a universal Release build, ad-hoc signs that local build, and stages a locked, recoverable GUI/TUI transaction in `~/Applications` and `~/.local/bin`. This is not one filesystem-atomic set: an exclusive install lock prevents cooperating concurrent installers, each directory transition uses same-volume `renameatx_np(RENAME_EXCL)`, and a rollback snapshot restores the prior set on a failed commit. After the fresh root `npm ci --ignore-scripts` populates npm's content-addressed cache, the staging tool independently hashes each required production archive against its exact lockfile SRI before bounded create-new extraction; it never trusts the mutable root `node_modules` tree. Before manifest authority is written, the same archive-derived pass compares every staged path/mode/size/hash and binds real, stable dependency-container identities; symlink containers and generated `.bin` executables fail closed. The archive parser and runtime manifest bind all 46 packed paths/types/modes/sizes/hashes, archive/package/bin/engine metadata, and 136 dependency integrity/version/tree records, then verify the installed tree again before any CLI execution. The 2026-07-20 review packet records the completed local install and normal Finder-launch smoke. Shell-only Node managers such as nvm, fnm, asdf, and Volta are not sufficient for normal Finder launch unless their supported Node binary is linked or installed at `~/.local/node/bin/node`.
+
+```bash
+git clone https://github.com/barnlabs/LightningLoop.git
+cd LightningLoop
+./script/install_from_github.sh
+```
+
+The app discovers the exact TUI package installed under `~/.local/lib/node_modules`, so a normal Finder launch is designed not to depend on the checkout or a temporary environment variable. It also uses only the three documented Finder-launchable Node locations above. If an older GUI is present, the installer first requires the exact old app process to disappear, stages both replacements, then records the old GUI, TUI package, and aliases in a unique backup under `~/Library/Application Support/LightningLoop/InstallerBackups/` before committing. Launch proof requires one newly observed stable PID executing the installed app, not merely any old process with the same name. Isolated fixtures prove that mid-backup, mid-commit, installed-signature, and launch-smoke failures restore the complete prior GUI/TUI/alias byte state and that an incomplete rollback returns nonzero; the completed post-PASS source install supplied the live proof at `~/Applications/LightningLoop.app` and `~/.local/bin`. Add `~/.local/bin` to `PATH` if your shell does not already include it.
+
+Run `llp` or `lloop` with no arguments to open the interactive TUI. The full `lightningloop` command remains available for scripts and explicit subcommands.
+
+The three command names invoke the same packed entry point: use **`llp`** for the shortest interactive launch, **`lloop`** as the readable short form, and **`lightningloop`** for automation and explicit subcommands. `help`, `--help`, and `-h` only print usage; they never start the TUI.
+
+To update later, keep the worktree clean and fast-forward from GitHub before rerunning the same verified installer:
+
+```bash
+cd LightningLoop
+git fetch --prune
+git switch main
+git pull --ff-only
+./script/install_from_github.sh
+```
+
+LightningLoop does not publish a signed/notarized binary release yet. Do not bypass Gatekeeper or run a downloaded `LightningLoopUITests-Runner`; that is an internal test host, not the app. Build from the canonical source checkout until the documented signing and notarization gates are complete.
+
+### Windows TUI
+
+Use PowerShell with Node.js 22.19+ and Git for Windows installed. The checked-in installer verifies the portable contracts, packs and directly extracts the allowlisted CLI, creates three deterministic no-replace shims, and independently SRI-verifies every required production archive from npm's content-addressed cache before bounded create-new extraction. The same complete packed-root/package/dependency manifest is checked after commit. A resolved-prefix exclusive file lease is held through rollback and cleanup; staging and backup stay on that live volume; reparse/junction/cross-volume prefixes and recreated package/shim targets fail closed through same-volume .NET no-replace renames. The committed `windows-2025` workflow remains the authoritative Windows smoke gate; documentation or macOS review alone is not a Windows release claim.
+
+```powershell
+git clone https://github.com/barnlabs/LightningLoop.git
+Set-Location LightningLoop
+.\script\install_tui.ps1
+lightningloop provider list
+lightningloop provider select cerebras
+llp
+lightningloop doctor
+```
+
+Update with a clean fast-forward and rerun the installer:
+
+```powershell
+Set-Location LightningLoop
+git fetch --prune
+git switch main
+git pull --ff-only
+.\script\install_tui.ps1
+```
+
+The package remains private to the repository until a signed release channel exists, so the supported GitHub path is clone → verify → local pack → install—not an unverified registry or release-asset shortcut.
+
+## First run
+
+The terminal interface has no silent default provider. On clean data, `llp` exits before invoking Pi and prints the two selection commands. Run `lightningloop provider list`, then `lightningloop provider select PRESET`; the bounded `provider.json` contains model/provider metadata only, never a credential. `doctor --runtime-only` is reserved for installer runtime health, while normal `doctor` continues to report incomplete provider onboarding.
+
+Then open **LightningLoop → Settings**:
+
+1. Choose Codex, Claude, Grok, Cerebras, Groq, Fireworks, or Custom.
+2. Select or enter a compatible model.
+3. Use Pi `/login` or Pi's official environment-variable resolution for every named built-in provider.
+4. Run **Discover Models & Test** for the explicit custom-provider fallback; Pi validates built-in provider authentication when the graph starts.
+5. Optionally enable research and save a search-provider key.
+6. Start a loop, attach source images if needed, and answer the clarifying questions.
+7. For real files, choose an empty output directory before starting the loop. The Evidence Lab—generated-code execution, bounded automatic checks, loopback HTML proof, and static picture capture—has a separate warning and approval.
+
+## Terminal and TUI
+
+```bash
+./script/run_tui.sh doctor
+./script/run_tui.sh auth
+./script/run_tui.sh loop "Write a launch brief" --cycles 4
+./script/run_tui.sh loop "Audit this interface" --image ./screen.png --research brave
+./script/run_tui.sh loop "Build a tested static site" --workspace /absolute/empty/output \
+  --approve-artifact-writes --approve-verification-commands
+./script/run_tui.sh tui
+./script/run_tui.sh harness backup
+./script/run_tui.sh update check
+```
+
+Inside the TUI, `/loop GOAL` runs the complete clarify → research → plan/review → gap-research → implement/verify/review state machine. `/research exa|brave|firecrawl|off` selects bounded iterative research, `/image PATH` queues a validated image, `/artifacts /absolute/empty/output --verify` grants the Evidence Lab for subsequent loops, `/artifacts off` revokes it, and `/loop-cancel` stops an active run. Final TUI output includes static-preview paths, localhost status, hashes, automatic-versus-implementer runner provenance, duration, and pass/fail state. `/memory` lists the protected ledger; `/memory-add`, `/memory-promote`, and `/memory-delete` provide explicit durable-memory control. `/evolution` lists versioned changes; `/evolution-propose`, `/evolution-evidence`, `/evolution-advance`, and `/evolution-rollback` expose the same ordered lifecycle as the GUI. Every advance is one confirmed transition. Activating a tool or MCP record changes ledger state only—it never grants execution authority or bypasses the separately pinned manifest, sandbox, and per-invocation approval. `/quit` and `/exit` both close the interface. The TUI advertises provider, model, research, and artifact state, fits standard 80-column terminals, and keeps credentials outside the model/tool environment.
+
+Pi arguments after `--` are restricted to safe presentation/session options. Tool, extension, provider, model, and session-directory overrides are rejected so passthrough flags cannot weaken LightningLoop’s boundary.
 
 ## Safety and privacy
 
-- The Cerebras API key is stored in **macOS Keychain**, never in source, UserDefaults, loop history, exports, or logs.
-- Goals, answers, plans, reviews, and drafts are sent to Cerebras when a loop runs.
-- Loop history is stored locally in `~/Library/Application Support/CerebrasLoop/sessions.json`.
-- The implementer produces text/Markdown only. The app does **not** execute model-generated commands or silently edit files.
-- Prompt content is treated as untrusted data, and the reviewer independently applies the explicit rubric. Model-level prompt injection remains a residual risk.
-- Token count, model time, estimated cost, agent handoffs, review scores, and findings remain visible in the UI.
+- Pi owns built-in inference authentication and refresh. LightningLoop does not copy Pi credentials into source, settings JSON, sessions, exports, logs, or managed backups. Research keys use official environment variables cross-platform or device-only Keychain entries on macOS.
+- Goals, attached images, answers, plans, reviews, drafts, and bounded research evidence may be sent to the provider(s) the user selects.
+- Local state lives under `~/Library/Application Support/LightningLoop/` with restrictive permissions.
+- Prompt content, managed memories, skill guidance, and web excerpts are treated as untrusted data. Model-level prompt injection remains a residual risk.
+- Run memory is bound to one native session. Project/user memory enters future runs only after explicit promotion and is capped before prompt insertion.
+- Evolution activation requires source review, a named evaluation, adversarial review, explicit user approval, and a rollback target. Active skills are advisory and cannot grant capabilities.
+- Custom API hosts must be public DNS names over HTTPS. Literal IPs, localhost, `.local` names, URL credentials, queries, and fragments are rejected.
+- The loop is autonomous only inside explicit round, token, attachment, search, timeout, workspace, and tool limits.
+- Root `llms.txt` research is off by default and exact-host allowlisted; retrieved content remains bounded and untrusted.
+- Artifact mode never overwrites an existing directory. Revisions may replace only files owned by that run; traversal, links, credential-like paths/content, command-shell syntax, and failed workspace audits stop Gold.
+- HTML picture evidence is captured only after Evidence Lab approval. The native app never embeds generated HTML. A user-clicked link revalidates the reviewed SHA-256 and opens a tokenized, short-lived `127.0.0.1` URL in the system default browser with restrictive HTTP security headers. Other created formats, including Blender and STL files, open through their registered default applications.
 
-Read [SECURITY.md](SECURITY.md) before expanding the app’s permissions or execution capabilities.
+See [SECURITY.md](SECURITY.md), [the threat model](docs/THREAT_MODEL.md), and [the security review](docs/SECURITY_REVIEW.md) before expanding permissions.
 
-## Requirements
+Checked-in proof artifacts include the [generated photo relief](Examples/PhotoRelief/README.md) and the [responsive BarnLabs landing example](Examples/GoldLanding/README.md), including real 375 px and 1280 px browser captures.
 
-- macOS 14 or newer
-- Xcode 16 or newer
-- a Cerebras Inference API key with access to `gemma-4-31b`
-
-The app uses the OpenAI-compatible `POST /v1/chat/completions` endpoint and sends `X-Cerebras-Version-Patch: 2`. The model ID and structured-output capabilities were verified against the account used for this demo on July 19, 2026. See Cerebras’s [supported-model documentation](https://inference-docs.cerebras.ai/models/overview) and [API versioning guide](https://inference-docs.cerebras.ai/api-reference/versions).
-
-## Build and run
-
-```bash
-git clone https://github.com/baney75/CerebrasLoop.git
-cd CerebrasLoop
-./script/build_and_run.sh --verify
-```
-
-Or open `CerebrasLoop.xcodeproj` and run the `CerebrasLoop` scheme.
-
-On first launch:
-
-1. Open **CerebrasLoop → Settings**.
-2. Paste a Cerebras API key and choose **Save Key**.
-3. Choose **Test Connection**.
-4. Create a new loop and describe the outcome you want.
-
-The project also includes a Codex Run action at `.codex/environments/environment.toml`.
-
-## Test
+## Verify
 
 ```bash
+xcodegen generate
 xcodebuild \
-  -project CerebrasLoop.xcodeproj \
-  -scheme CerebrasLoop \
+  -project LightningLoop.xcodeproj \
+  -scheme LightningLoop \
   -derivedDataPath .build/DerivedData \
   CODE_SIGNING_ALLOWED=NO \
   test
+
+# Compile the isolated keyboard/accessibility journey without requesting UI control.
+xcodebuild \
+  -project LightningLoop.xcodeproj \
+  -scheme LightningLoopUI \
+  -derivedDataPath .build/UIBuild \
+  CODE_SIGNING_ALLOWED=NO \
+  build-for-testing
+
+npm run verify:harness
 ```
 
-The deterministic suite covers reviewer rejection and repair, the 9/10 Gold threshold, exhaustion behavior, and fenced JSON recovery. Live API calls are intentionally excluded from the default test suite.
+The native unit suite covers fail-closed no-harness clarification/execution, provider validation and explicit custom connection testing, image import bounds, managed-memory scoping, terminal/native ledger compatibility, and reviewed prompt/skill activation. The isolated UI suite compiles a stable accessibility surface, a no-credential launch, Command-N behavior, and screenshot capture. Running that UI test locally requires granting Xcode's test runner macOS Accessibility/automation permission; compilation remains non-interactive and runs in CI. The harness suite covers the shared loop, owner-acceptance boundary, research injection, multimodal validation, JSONL recovery and cancellation, traversal and symlink rejection, OS-sandbox allow/deny behavior, fail-closed MCP execution, protected memory/evolution mutations and runtime gates, secret redaction, and prompt-channel separation.
 
-## Project layout
+## Architecture
 
 ```text
-CerebrasLoop/
-├── App/        macOS scenes and lifecycle
-├── Models/     loop state, criteria, reviews, and metrics
-├── Services/   Cerebras client, prompts, Keychain, and loop engine
-├── Stores/     local session state and persistence
-├── Support/    branding and Markdown rendering
-└── Views/      native sidebar, composer, settings, and workspace
+LightningLoop/  SwiftUI app, Pi bridge, fail-closed native boundary, persistence, views
+Harness/        Pi adapter, promise graphs, CLI/TUI, search, sandbox, MCP, governance, updates
+Examples/       checked-in artifact workflow examples
+Tools/          reviewed built-in artifact generators
+docs/           architecture, capabilities, threat model, review, brand research
+skills/         one minimal project-local harness-maintenance skill
 ```
 
-The Xcode project is generated from `project.yml` with XcodeGen and committed so cloning contributors do not need XcodeGen for a normal build.
+More detail: [Architecture](docs/ARCHITECTURE.md) · [Capabilities](docs/CAPABILITIES.md) · [Runbook](RUNBOOK.md)
+
+## Current boundaries
+
+- `ponytail:` Source builds use the shared Node harness when it is discoverable; a signed/notarized release with a bundled runtime is not published yet.
+- `ponytail:` Native and terminal histories are separate and cannot resume one another’s runs.
+- `ponytail:` Reviewed artifact mode creates new projects in a dedicated empty directory. Editing an existing repository and automatically activating MCP/tool evolutions remain separate, explicitly approved operations.
+- `ponytail:` The isolated native keyboard/accessibility/screenshot journey compiles, but its live run is pending macOS Accessibility/automation approval. The OS canceled the runner while system authentication was active, and Computer Use also timed out attaching. No security control was weakened and no stale provider-branded screenshot is presented as proof.
+- Provider presets and default model IDs can age; model discovery and the provider’s current documentation remain authoritative.
+
+## Brand and third parties
+
+LightningLoop uses BarnLabs’ forest, mint, paper, and signal-gold palette with a product-specific loop/bolt icon. The parent BarnLabs mark remains separate and unmodified.
+
+LightningLoop is an independent BarnLabs open-source project. Provider names and trademarks belong to their respective owners; compatibility does not imply affiliation, endorsement, sponsorship, or partnership. See [NOTICE.md](NOTICE.md).
 
 ## Contributing
 
 Focused issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [RUNBOOK.md](RUNBOOK.md).
 
-## Trademark and affiliation
-
-**CerebrasLoop is an independent open-source BarnLabs demonstration. It is not affiliated with, endorsed by, sponsored by, or an official product of Cerebras Systems, Inc.** “Cerebras” and related marks belong to their respective owner. See [NOTICE.md](NOTICE.md).
-
-## License
-
-MIT © 2026 BarnLabs. See [LICENSE](LICENSE).
+MIT © 2026 BarnLabs.

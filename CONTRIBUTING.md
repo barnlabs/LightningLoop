@@ -3,9 +3,10 @@
 Contributions are welcome. Keep the project native, small, testable, and safe for a public demo.
 
 1. Create a focused branch.
-2. Add or update deterministic tests for orchestration behavior.
-3. Run the full test command in `RUNBOOK.md`.
-4. Verify no API keys or user loop history appear in the diff.
-5. Explain behavior, validation, and remaining risk in the pull request.
+2. Install the locked terminal dependencies with `npm ci --ignore-scripts`; dependency lifecycle scripts are disabled by repository policy.
+3. Add or update deterministic tests for orchestration, policy, memory, evolution, protocol, or search behavior.
+4. Run both the Swift and TypeScript verification commands in `RUNBOOK.md`.
+5. Verify no API keys, Keychain values, user loop history, memory ledger, or evolution ledger appear in the diff.
+6. Explain behavior, validation, and remaining risk in the pull request.
 
-Do not add automatic shell execution, unrestricted local-file mutation, telemetry, or a hosted backend without an explicit design and security review.
+Do not add automatic shell approval, host-authority execution, unrestricted local-file mutation, floating Pi packages, unpinned MCP processes, telemetry, or a hosted backend without an explicit design and security review. New system prompts, skills, tools, MCPs, and memory-policy changes must preserve the evolution lifecycle in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

@@ -1,0 +1,7 @@
+# BarnLabs release and security ownership. Keep repository settings human-owned.
+* @baney75
+
+/.github/ @baney75
+/SECURITY.md @baney75
+/docs/THREAT_MODEL.md @baney75
+/docs/UPDATES.md @baney75
