@@ -91,7 +91,12 @@ jobs:
           "$INSTALL_ROOT/bin/lloop" help
       - name: Prove macOS installer rollback and shell safety
         run: |
-          shellcheck script/install_from_github.sh script/tests/install_from_github_transaction_test.sh
+          bash -n script/install_from_github.sh script/tests/install_from_github_transaction_test.sh
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck script/install_from_github.sh script/tests/install_from_github_transaction_test.sh
+          else
+            echo "shellcheck is not preinstalled on this macOS image; local review packet carries the ShellCheck proof."
+          fi
           bash script/tests/install_from_github_transaction_test.sh
 
   windows-tui:
@@ -127,7 +132,7 @@ jobs:
               Get-ChildItem -LiteralPath $Root -Recurse -Force -File |
                 Sort-Object FullName |
                 ForEach-Object {
-                  $Relative = $_.FullName.Substring($Root.Length).TrimStart('\\', '/')
+                  $Relative = $_.FullName.Substring($Root.Length).TrimStart([char[]]@('\', '/'))
                   "$Relative $((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
                 }
             )
