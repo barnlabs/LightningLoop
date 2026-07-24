@@ -56,6 +56,31 @@ has_path() {
   [[ -e "$1" || -L "$1" ]]
 }
 
+is_canonical_checkout_remote() {
+  case "$1" in
+    https://github.com/barnlabs/LightningLoop|https://github.com/barnlabs/LightningLoop.git|git@github.com:barnlabs/LightningLoop.git|ssh://git@github.com/barnlabs/LightningLoop.git) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+require_canonical_checkout() {
+  local root top branch remote head upstream status
+  command -v git >/dev/null 2>&1 || die "Git is required to authenticate the source checkout."
+  root="$(cd "$ROOT_DIR" && pwd -P)"
+  top="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)" || die "The source directory is not a Git checkout."
+  top="$(cd "$top" && pwd -P)"
+  [[ "$top" == "$root" ]] || die "The installer must run from the root of the authenticated checkout."
+  branch="$(git -C "$root" symbolic-ref --quiet --short HEAD 2>/dev/null)" || die "The source checkout must be on the main branch."
+  [[ "$branch" == "main" ]] || die "The source checkout must be on the main branch, not $branch."
+  remote="$(git -C "$root" remote get-url origin 2>/dev/null)" || die "The source checkout has no origin fetch remote."
+  is_canonical_checkout_remote "$remote" || die "The origin fetch remote is not the canonical barnlabs/LightningLoop repository."
+  head="$(git -C "$root" rev-parse HEAD 2>/dev/null)" || die "The source HEAD is unreadable."
+  upstream="$(git -C "$root" rev-parse --verify refs/remotes/origin/main 2>/dev/null)" || die "The fetched canonical origin/main ref is absent."
+  [[ "$head" == "$upstream" ]] || die "The source HEAD does not equal the fetched canonical origin/main ref."
+  status="$(git -C "$root" status --porcelain=v1 --untracked-files=normal)"
+  [[ -z "$status" ]] || die "The source checkout is dirty; preserve it and install from a separate clean canonical checkout."
+}
+
 acquire_install_lock() {
   mkdir -p "$(dirname "$INSTALL_LOCK_DIR")"
   if ! mkdir -m 700 "$INSTALL_LOCK_DIR" 2>/dev/null; then
@@ -339,6 +364,7 @@ cleanup() {
 main() {
 trap cleanup EXIT
 [[ "$(uname -s)" == "Darwin" ]] || die "This installer is for macOS. On Windows, run script/install_tui.ps1."
+require_canonical_checkout
 select_supported_node
 command -v xcodebuild >/dev/null 2>&1 || die "Xcode 16+ is required."
 require_xcode_16

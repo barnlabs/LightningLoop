@@ -4,26 +4,68 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { parseProviderProfile, profileForPreset } from "../core/provider-profile.js";
 import { PiProviderAdapter } from "./model-adapter.js";
 
-test("built-in Pi providers never inspect Pi authentication state", async () => {
+function runtimeModel(profile: { supportsImages: boolean; contextWindow: number; maxOutputTokens: number }) {
+  return {
+    input: profile.supportsImages ? ["text", "image"] : ["text"],
+    contextWindow: profile.contextWindow,
+    maxTokens: profile.maxOutputTokens,
+  };
+}
+
+test("built-in runtime providers never inspect runtime authentication state", async () => {
   const profile = profileForPreset("openai-codex");
   let getAuthCalls = 0;
   const runtime = {
     getAuth: () => {
       getAuthCalls += 1;
-      throw new Error("LightningLoop must not read Pi auth state");
+      throw new Error("LightningLoop must not read runtime authentication state");
     },
     getModel: (providerID: string, modelID: string) => {
       assert.equal(providerID, "openai-codex");
       assert.equal(modelID, profile.modelID);
-      return {};
+      return runtimeModel(profile);
     },
-    registerProvider: () => assert.fail("built-in Pi providers must not register a Keychain fallback"),
+    registerProvider: () => assert.fail("built-in runtime providers must not register a Keychain fallback"),
     completeSimple: async () => assert.fail("not exercised"),
   } as unknown as Pick<ModelRuntime, "completeSimple" | "getModel" | "registerProvider">;
 
   const adapter = await PiProviderAdapter.create(profile, async () => runtime);
   assert.equal(adapter.supportsImages, true);
   assert.equal(getAuthCalls, 0);
+});
+
+test("adapter rejects runtime model capability or token-limit drift after catalog selection", async () => {
+  const profile = profileForPreset("openai-codex");
+  for (const model of [
+    { ...runtimeModel(profile), input: ["text"] },
+    { ...runtimeModel(profile), contextWindow: profile.contextWindow - 1 },
+    { ...runtimeModel(profile), maxTokens: profile.maxOutputTokens - 1 },
+  ]) {
+    const runtime = {
+      getModel: () => model,
+      registerProvider: () => assert.fail("built-in runtime providers must not register"),
+      completeSimple: async () => assert.fail("not exercised"),
+    } as unknown as Pick<ModelRuntime, "completeSimple" | "getModel" | "registerProvider">;
+    await assert.rejects(PiProviderAdapter.create(profile, async () => runtime), /metadata.*changed|exact model snapshot/iu);
+  }
+});
+
+test("missing runtime catalog uses LightningLoop product language", async () => {
+  const profile = profileForPreset("openai-codex");
+  const runtime = {
+    getModel: () => undefined,
+    registerProvider: () => assert.fail("built-in provider must not register a Keychain fallback"),
+    completeSimple: async () => assert.fail("not exercised"),
+  } as unknown as Pick<ModelRuntime, "completeSimple" | "getModel" | "registerProvider">;
+
+  await assert.rejects(PiProviderAdapter.create(profile, async () => runtime), (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    assert.match(message, /LightningLoop runtime does not currently catalog/u);
+    assert.match(message, /runtime model picker/u);
+    assert.match(message, /provider sign-in with \/login/u);
+    assert.doesNotMatch(message, /\bPi\b/u);
+    return true;
+  });
 });
 
 test("custom-provider credentials are redacted from successful model content", async () => {
@@ -42,7 +84,7 @@ test("custom-provider credentials are redacted from successful model content", a
   });
   const runtime = {
     registerProvider: (_providerID: string, options: { apiKey?: string }) => assert.equal(options.apiKey, credential),
-    getModel: () => ({}),
+    getModel: () => runtimeModel(profile),
     completeSimple: async () => ({
       stopReason: "stop",
       content: [{ type: "text", text: `Provider reflected ${credential} in a successful response.` }],
@@ -78,7 +120,7 @@ test("adapter rejects credential-bearing request.user before provider invocation
   let providerCalls = 0;
   const runtime = {
     registerProvider: () => undefined,
-    getModel: () => ({}),
+    getModel: () => runtimeModel(profile),
     completeSimple: async () => {
       providerCalls += 1;
       return {
@@ -105,7 +147,7 @@ test("adapter rejects provider-shaped request.user before provider invocation", 
   let providerCalls = 0;
   const runtime = {
     registerProvider: () => assert.fail("built-in provider must not register"),
-    getModel: () => ({}),
+    getModel: () => runtimeModel(profile),
     completeSimple: async () => {
       providerCalls += 1;
       throw new Error("Unexpected provider invocation");
@@ -139,7 +181,7 @@ test("adapter rejects a repeatedly encoded credential reflected by the provider 
   });
   const runtime = {
     registerProvider: () => undefined,
-    getModel: () => ({}),
+    getModel: () => runtimeModel(profile),
     completeSimple: async () => ({
       stopReason: "stop",
       content: [{ type: "text", text: `Reflected ${encodedCredential}` }],

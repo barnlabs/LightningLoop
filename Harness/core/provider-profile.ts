@@ -6,6 +6,14 @@ import { lightningLoopDataPath } from "./platform-paths.js";
 
 export const PROVIDER_CONFIG_VERSION = 1 as const;
 
+/**
+ * Cerebras lists this public-preview model in its catalog. It remains a
+ * preferred starting point only; a LightningLoop run must still find the ID
+ * in the installed runtime catalog before it can launch.
+ */
+export const CEREBRAS_GEMMA_4_31B_ID = "gemma-4-31b";
+export const CEREBRAS_GEMMA_4_31B_NAME = "Gemma 4 31B";
+
 export type ProviderPreset = "cerebras" | "groq" | "fireworks" | "xai" | "openai-codex" | "anthropic" | "custom" | "selection-required";
 
 export interface ProviderProfile {
@@ -173,7 +181,7 @@ export function parseProviderProfile(value: unknown): ProviderProfile {
 export function profileForPreset(preset: Exclude<ProviderPreset, "custom" | "selection-required">): ProviderProfile {
   const base = presets[preset];
   const defaults: Record<Exclude<ProviderPreset, "custom" | "selection-required">, Pick<ProviderProfile, "modelID" | "modelName" | "supportsImages" | "contextWindow" | "maxOutputTokens">> = {
-    cerebras: { modelID: "gpt-oss-120b", modelName: "GPT OSS 120B", supportsImages: false, contextWindow: 131_072, maxOutputTokens: 32_768 },
+    cerebras: { modelID: CEREBRAS_GEMMA_4_31B_ID, modelName: CEREBRAS_GEMMA_4_31B_NAME, supportsImages: true, contextWindow: 131_072, maxOutputTokens: 40_960 },
     groq: { modelID: "openai/gpt-oss-120b", modelName: "GPT-OSS 120B", supportsImages: false, contextWindow: 131_072, maxOutputTokens: 32_768 },
     fireworks: { modelID: "accounts/fireworks/models/kimi-k2p6", modelName: "Kimi K2.6", supportsImages: true, contextWindow: 262_000, maxOutputTokens: 32_768 },
     xai: { modelID: "grok-4.5", modelName: "Grok 4.5", supportsImages: true, contextWindow: 256_000, maxOutputTokens: 32_768 },
@@ -181,6 +189,13 @@ export function profileForPreset(preset: Exclude<ProviderPreset, "custom" | "sel
     anthropic: { modelID: "claude-sonnet-4-6", modelName: "Claude Sonnet 4.6", supportsImages: true, contextWindow: 200_000, maxOutputTokens: 64_000 },
   };
   return { ...base, ...defaults[preset], piProviderID: preset };
+}
+
+export function runtimeModelSelectionNotice(profile: ProviderProfile): string | undefined {
+  if (profile.preset === "cerebras" && profile.modelID === CEREBRAS_GEMMA_4_31B_ID) {
+    return "Gemma 4 31B is a public-preview preference. It is not treated as catalogued until the installed LightningLoop runtime catalog lists it.";
+  }
+  return undefined;
 }
 
 export function loadProviderProfile(path = providerConfigPath()): ProviderProfile {
@@ -246,13 +261,17 @@ export function providerCredentialService(profile: ProviderProfile): string {
  * credential after the user switches providers. The unsuffixed custom service
  * is the macOS compatibility service used by earlier LightningLoop builds.
  */
+export const historicalReadOnlyProviderCredentialServices = [
+  "com.barnlabs.LightningLoop.provider.xai.apiKey",
+  "com.barnlabs.LightningLoop.provider.openai-codex.apiKey",
+  "com.barnlabs.LightningLoop.provider.anthropic.apiKey",
+] as const;
+
 export const fixedLightningLoopCredentialServices = [
   "com.barnlabs.LightningLoop.provider.cerebras.apiKey",
   "com.barnlabs.LightningLoop.provider.groq.apiKey",
   "com.barnlabs.LightningLoop.provider.fireworks.apiKey",
-  "com.barnlabs.LightningLoop.provider.xai.apiKey",
-  "com.barnlabs.LightningLoop.provider.openai-codex.apiKey",
-  "com.barnlabs.LightningLoop.provider.anthropic.apiKey",
+  ...historicalReadOnlyProviderCredentialServices,
   "com.barnlabs.LightningLoop.provider.custom.apiKey",
   "com.barnlabs.LightningLoop.search.exa",
   "com.barnlabs.LightningLoop.search.brave",
@@ -323,6 +342,8 @@ export function lightningLoopCredentialServices(profile: ProviderProfile, regist
   return [...new Set([...fixedLightningLoopCredentialServices, ...loadHistoricalCustomCredentialServices(registryPath), ...activeCustomService])];
 }
 
-export function providerHeaders(profile: ProviderProfile): Record<string, string> {
-  return profile.preset === "cerebras" ? { "X-Cerebras-Version-Patch": "2" } : {};
+export function providerHeaders(_profile: ProviderProfile): Record<string, string> {
+  // Cerebras API v2 became the default on 2026-07-21, so the transition-only
+  // X-Cerebras-Version-Patch header is intentionally no longer sent.
+  return {};
 }

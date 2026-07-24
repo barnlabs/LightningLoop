@@ -67,7 +67,7 @@ export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
 
   if (!profile.piProviderID) {
     if (process.platform !== "darwin") {
-      throw new Error("Custom provider Keychain profiles are macOS-only. Configure a Pi built-in provider for cross-platform use.");
+      throw new Error("Custom provider Keychain profiles are macOS-only. Configure a runtime-managed built-in provider for cross-platform use.");
     }
     pi.registerProvider(providerID, {
       name: `LightningLoop / ${profile.displayName}`,
@@ -111,7 +111,7 @@ export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
           const brand = `${theme.bold(theme.fg("accent", "ϟ  LIGHTNINGLOOP"))}${theme.fg("dim", "  /  BARNLABS")}`;
           const loop = `${theme.fg("muted", `${profile.displayName} · ${profile.modelName}`)}  ${theme.fg("dim", "clarify → challenge → implement → verify")}`;
           const identity = theme.fg("dim", profile.piProviderID
-            ? "Provider-neutral · authentication and model catalog managed by Pi"
+            ? "Provider-neutral · authentication and model catalog managed by the LightningLoop runtime"
             : "Custom provider · credential stays in macOS Keychain");
           return [
             truncateToWidth(rule, width),

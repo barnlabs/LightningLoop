@@ -67,7 +67,7 @@ enum KeychainStoreError: LocalizedError, Equatable {
         case .invalidData:
             "The stored credential could not be read."
         case .piManagedProfile:
-            "This preset is managed by Pi. Start the shared LightningLoop harness and complete Pi's official provider login instead of storing a LightningLoop API key."
+            "This preset is managed by the LightningLoop runtime. Start the shared runtime and complete the provider sign-in flow instead of storing a LightningLoop API key."
         case .invalidService:
             "The requested credential service is not owned by LightningLoop."
         case .invalidCredentialLength:

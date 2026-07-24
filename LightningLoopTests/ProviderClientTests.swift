@@ -51,9 +51,15 @@ final class ProviderClientTests: XCTestCase {
 
             await XCTAssertProviderThrowsAsync(try await client.complete(.init(messages: [.init(role: .user, content: "hello")]))) { error in
                 XCTAssertEqual(error as? ProviderClientError, .piManagedProfile)
+                let description = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                XCTAssertTrue(description.contains("managed by the LightningLoop runtime"))
+                XCTAssertNil(description.range(of: "\\bpi\\b", options: [.regularExpression, .caseInsensitive]))
             }
             await XCTAssertProviderThrowsAsync(try await client.listModels()) { error in
                 XCTAssertEqual(error as? ProviderClientError, .piManagedProfile)
+                let description = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                XCTAssertTrue(description.contains("managed by the LightningLoop runtime"))
+                XCTAssertNil(description.range(of: "\\bpi\\b", options: [.regularExpression, .caseInsensitive]))
             }
             XCTAssertEqual(credentialReads.value, 0, "\(preset.rawValue) reached native credential lookup")
             XCTAssertEqual(networkRequests.value, 0, "\(preset.rawValue) reached native networking")

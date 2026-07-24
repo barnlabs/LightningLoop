@@ -304,6 +304,85 @@ final class MemoryEvolutionTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoricalOfficialProviderCredentialsAreSanitizedWithoutBecomingCurrentAuth() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = "com.barnlabs.LightningLoop.provider.openai-codex.apiKey"
+        let secret = "historical-openai-codex-value"
+        let memoryArchive = MemoryArchive(fileURL: root.appendingPathComponent("memory.json"))
+        XCTAssertTrue(memoryArchive.save([
+            MemoryRecord(scope: .project, statement: "Historical \(secret)", tags: [], sourceArtifact: "fixture", promotionApprovedByUser: true)
+        ]))
+        let evolutionArchive = EvolutionArchive(fileURL: root.appendingPathComponent("evolutions.json"))
+        XCTAssertTrue(evolutionArchive.save([
+            EvolutionProposal(kind: .systemPrompt, name: "Historical", source: "fixture", reason: "filter", exactDiff: secret)
+        ]))
+        let providerStore = ProviderConfigurationStore(fileURL: root.appendingPathComponent("provider.json"))
+        try providerStore.save(.preset(.openaiCodex))
+        let model = AppModel(
+            engine: LedgerMutationTestService(),
+            memoryArchive: memoryArchive,
+            evolutionArchive: evolutionArchive,
+            providerStore: providerStore,
+            credentialRegistry: .init(fileURL: root.appendingPathComponent("services.json")),
+            credentialReader: { $0 == service ? secret : nil },
+            skipCredentialRefresh: true
+        )
+        XCTAssertFalse(String(describing: model.memories).contains(secret))
+        XCTAssertFalse(String(describing: model.evolutions).contains(secret))
+        XCTAssertTrue(String(describing: model.memories).contains("REDACTED"))
+        XCTAssertTrue(ProviderConfiguration.preset(.openaiCodex).usesPiAuthentication)
+        XCTAssertFalse(ProviderConfiguration.preset(.openaiCodex).allowsNativeConnectionTesting)
+    }
+
+    @MainActor
+    func testCredentialReadFailureLeavesMemoryEvolutionDiskAndInMemoryBytesUnchanged() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let memoryURL = root.appendingPathComponent("memory.json")
+        let evolutionURL = root.appendingPathComponent("evolutions.json")
+        let memoryArchive = MemoryArchive(fileURL: memoryURL)
+        let evolutionArchive = EvolutionArchive(fileURL: evolutionURL)
+        let memory = MemoryRecord(scope: .project, statement: "Preserve memory", tags: ["stable"], sourceArtifact: "fixture", promotionApprovedByUser: false)
+        var evolution = EvolutionProposal(kind: .systemPrompt, name: "Preserve evolution", source: "fixture", reason: "stable", exactDiff: "+stable")
+        evolution.evaluationSuite = "suite"
+        XCTAssertTrue(memoryArchive.save([memory]))
+        XCTAssertTrue(evolutionArchive.save([evolution]))
+        let diskMemoryBefore = try Data(contentsOf: memoryURL)
+        let diskEvolutionBefore = try Data(contentsOf: evolutionURL)
+        let model = AppModel(
+            engine: LedgerMutationTestService(),
+            memoryArchive: memoryArchive,
+            evolutionArchive: evolutionArchive,
+            credentialRegistry: .init(fileURL: root.appendingPathComponent("services.json")),
+            credentialReader: { _ in throw CredentialReadFixtureError.failed },
+            skipCredentialRefresh: true
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        let visibleMemoryBefore = try encoder.encode(model.memories)
+        let visibleEvolutionBefore = try encoder.encode(model.evolutions)
+
+        model.addMemory(statement: "new", source: "fixture", tags: "", scope: .project)
+        model.approveMemoryPromotion(memory.id)
+        model.deleteMemory(memory.id)
+        model.addEvolution(kind: .skill, name: "new", source: "fixture", reason: "test", exactDiff: "+new")
+        model.updateEvolutionEvidence(evolution.id, evaluationSuite: "changed", evaluationSummary: "changed", rollbackTarget: "changed", permissions: "network", reviewerHasMaterialFinding: false)
+        model.advanceEvolution(evolution.id)
+        model.rollBackEvolution(evolution.id)
+        model.deleteEvolutionDraft(evolution.id)
+
+        XCTAssertEqual(try encoder.encode(model.memories), visibleMemoryBefore)
+        XCTAssertEqual(try encoder.encode(model.evolutions), visibleEvolutionBefore)
+        XCTAssertEqual(try Data(contentsOf: memoryURL), diskMemoryBefore)
+        XCTAssertEqual(try Data(contentsOf: evolutionURL), diskEvolutionBefore)
+        XCTAssertTrue(model.settingsMessage.contains("Credential enumeration or reading failed"))
+    }
+
+    @MainActor
     func testInvalidCredentialRegistryFailsClosedForLedgerReadsAndMutations() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -337,10 +416,10 @@ final class MemoryEvolutionTests: XCTestCase {
         )
         model.addMemory(statement: "safe", source: "test", tags: "", scope: .project)
         XCTAssertTrue(model.memories.isEmpty)
-        XCTAssertTrue(model.settingsMessage.contains("malformed or unsafe"))
+        XCTAssertTrue(model.settingsMessage.contains("Credential enumeration or reading failed"))
         model.addEvolution(kind: .skill, name: "safe", source: "test", reason: "test", exactDiff: "+safe")
         XCTAssertTrue(model.evolutions.isEmpty)
-        XCTAssertTrue(model.settingsMessage.contains("malformed or unsafe"))
+        XCTAssertTrue(model.settingsMessage.contains("Credential enumeration or reading failed"))
         XCTAssertEqual(try Data(contentsOf: memoryURL), originalMemory)
         XCTAssertEqual(try Data(contentsOf: evolutionURL), originalEvolution)
     }
@@ -414,13 +493,13 @@ final class MemoryEvolutionTests: XCTestCase {
         let blocked = AppModel(
             engine: LedgerMutationTestService(),
             credentialReader: { _ in nil },
-            runtimeLabel: "Shared Pi harness unavailable · loop execution blocked",
+            runtimeLabel: "Shared LightningLoop runtime unavailable · loop execution blocked",
             skipCredentialRefresh: true
         )
         let shared = AppModel(
             engine: LedgerMutationTestService(),
             credentialReader: { _ in nil },
-            runtimeLabel: "Shared Pi harness",
+            runtimeLabel: "Shared LightningLoop runtime",
             skipCredentialRefresh: true
         )
 
@@ -428,6 +507,10 @@ final class MemoryEvolutionTests: XCTestCase {
         XCTAssertFalse(blocked.hasAPIKey)
         XCTAssertTrue(shared.supportsAutomaticResearch)
     }
+}
+
+private enum CredentialReadFixtureError: Error {
+    case failed
 }
 
 private final class DynamicCredentialStore: @unchecked Sendable {
@@ -444,6 +527,6 @@ private final class DynamicCredentialStore: @unchecked Sendable {
 }
 
 private struct LedgerMutationTestService: LoopServicing {
-    func clarify(goal: String, attachments: [ImageAttachment], runID: UUID?) async throws -> ClarificationResult { throw CancellationError() }
-    func execute(goal: String, summary: String, questions: [ClarifyingQuestion], answers: [String: String], maxReviewCycles: Int, attachments: [ImageAttachment], researchProvider: String?, artifactWorkspace: String?, approveArtifactWrites: Bool, approveVerificationCommands: Bool, runID: UUID?, emit: @escaping @Sendable (LoopEngineEvent) async -> Void) async throws -> LoopExecutionResult { throw CancellationError() }
+    func clarify(goal: String, attachments: [ImageAttachment], expectedModelSelection: ExpectedModelSelection, runID: UUID?) async throws -> ClarificationResult { throw CancellationError() }
+    func execute(goal: String, summary: String, questions: [ClarifyingQuestion], answers: [String: String], maxReviewCycles: Int, attachments: [ImageAttachment], researchProvider: String?, artifactWorkspace: String?, approveArtifactWrites: Bool, approveVerificationCommands: Bool, expectedModelSelection: ExpectedModelSelection, runID: UUID?, emit: @escaping @Sendable (LoopEngineEvent) async -> Void) async throws -> LoopExecutionResult { throw CancellationError() }
 }

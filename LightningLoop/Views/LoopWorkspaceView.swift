@@ -90,9 +90,10 @@ struct LoopWorkspaceView: View {
                 if model.isRunning {
                     ProgressView().controlSize(.small)
                     Button("Cancel", action: model.cancelCurrentOperation)
-                } else if session.stage == .paused {
-                    Button("Run Again") { model.startLoop() }
+                } else if session.stage == .paused || session.stage == .failed {
+                    Button("Try Again") { model.startLoop() }
                         .disabled(!model.allQuestionsAnswered)
+                        .help(model.allQuestionsAnswered ? "Start another bounded run" : "Answer every clarification question before trying again")
                 }
             }
         }
@@ -133,11 +134,34 @@ struct LoopWorkspaceView: View {
     @ViewBuilder private var output: some View {
         if session.implementation.isEmpty {
             SurfaceCard {
-                VStack(spacing: 14) {
-                    ProgressView().controlSize(.large)
-                    Text(session.statusMessage).font(.headline)
-                    Text("Switch to Trace to watch each agent handoff.")
-                        .foregroundStyle(.secondary)
+                VStack(spacing: 16) {
+                    if model.isRunning {
+                        ProgressView().controlSize(.large)
+                    } else {
+                        Image(systemName: emptyOutputSymbol)
+                            .font(.system(size: 34, weight: .semibold))
+                            .foregroundStyle(emptyOutputColor)
+                            .accessibilityHidden(true)
+                    }
+                    VStack(spacing: 6) {
+                        Text(emptyOutputTitle).font(.title3.bold())
+                        Text(session.statusMessage)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 620)
+                    }
+                    Text(emptyOutputGuidance)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 580)
+                        .accessibilityIdentifier("blocked.recovery.guidance")
+                    if !model.isRunning && (session.stage == .paused || session.stage == .failed) {
+                        SettingsLink {
+                            Label("Open Settings", systemImage: "gearshape")
+                        }
+                        .accessibilityIdentifier("open.settings.blocked")
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(36)
@@ -169,6 +193,40 @@ struct LoopWorkspaceView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var emptyOutputTitle: String {
+        if model.isRunning { return "Work is in progress" }
+        return switch session.stage {
+        case .paused: "Paused before a deliverable was produced"
+        case .failed: "Stopped safely before producing output"
+        default: "No deliverable yet"
+        }
+    }
+
+    private var emptyOutputGuidance: String {
+        if model.isRunning { return "Switch to Trace to inspect each completed handoff." }
+        return switch session.stage {
+        case .paused: "Resolve the named blocker, then use Try Again. The prior loop history remains preserved."
+        case .failed: "Review the status and trace before retrying. LightningLoop does not turn an error into a partial success."
+        default: "The output area will populate only after the implementation stage begins."
+        }
+    }
+
+    private var emptyOutputSymbol: String {
+        switch session.stage {
+        case .paused: "pause.circle.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        default: "doc.badge.ellipsis"
+        }
+    }
+
+    private var emptyOutputColor: Color {
+        switch session.stage {
+        case .failed: .red
+        case .paused: .orange
+        default: LoopBrand.blue
         }
     }
 

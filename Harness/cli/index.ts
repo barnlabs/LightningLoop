@@ -84,7 +84,7 @@ export function usage(): string {
 An independent BarnLabs open-source project.
 
 Usage:
-  llp | lloop | lightningloop [tui] [--workspace PATH] [--allow-execution] [-- PI_OPTIONS...]
+  llp | lloop | lightningloop [tui] [--workspace PATH] [--allow-execution] [-- RUNTIME_OPTIONS...]
   lightningloop auth
   lightningloop provider list
   lightningloop provider select <cerebras|groq|fireworks|xai|openai-codex|anthropic>
@@ -106,7 +106,7 @@ Running llp or lloop with no arguments opens the interactive TUI.
 The loop command is text-only by default. Artifact writes require an explicit empty directory and approval flag.
 Verification commands additionally require --approve-verification-commands and run allowlisted programs in the network-denied OS sandbox.
 MCP verification requires a versioned integrity manifest and an explicit approval flag for that exact invocation.
-Provider login is managed by Pi. Run 'lightningloop auth', then use Pi's /login command.
+Provider sign-in uses the managed LightningLoop runtime. Run 'lightningloop auth', then use its /login command.
 Choose a first-run provider with 'lightningloop provider list' and 'lightningloop provider select PRESET'.
 LightningLoop never copies OAuth credentials into its own settings or managed overlay.`;
 }
@@ -282,7 +282,7 @@ export function parse(args: string[]): CliOptions {
       if (arg !== "serve" || artifactAction) throw new Error("Artifact action must be serve.");
       artifactAction = "serve";
     } else {
-      throw new Error(`Unknown LightningLoop option: ${arg}. Put Pi options after --.`);
+      throw new Error(`Unknown LightningLoop option: ${arg}. Put runtime options after --.`);
     }
   }
   const goal = goalParts.join(" ").trim();
@@ -339,7 +339,7 @@ function runSkillGovernance(options: CliOptions): void {
   process.stdout.write("LightningLoop managed skills\n");
   for (const skill of skills) process.stdout.write(`  ${skill.enabled ? "ENABLED" : "DISABLED"} ${terminalSafe(skill.id)} · sha256 ${skill.sha256}\n`);
   if (skills.length === 0) process.stdout.write("  No managed skills installed. Shipped project skills are unchanged.\n");
-  process.stdout.write("  Pi global packages/settings changed: NO\n");
+  process.stdout.write("  Provider runtime packages/settings changed: NO\n");
 }
 
 async function runArtifactHandoff(options: CliOptions): Promise<void> {
@@ -387,7 +387,7 @@ function runHarnessGovernance(options: CliOptions): void {
   process.stdout.write(`  Root: ${terminalSafe(status.root)}\n`);
   process.stdout.write(`  Current: ${status.current.files.length} files · ${status.current.totalBytes} bytes\n`);
   for (const backup of status.backups) process.stdout.write(`  Backup ${backup.slot}: ${backup.snapshot ? `${backup.snapshot.files.length} files · ${backup.snapshot.totalBytes} bytes` : "empty"}\n`);
-  process.stdout.write("  Pi auth/settings changed: NO\n");
+  process.stdout.write("  Provider runtime auth/settings changed: NO\n");
 }
 
 async function runMcp(options: CliOptions): Promise<void> {
@@ -451,7 +451,7 @@ export async function doctor(runtimeOnly = false): Promise<number> {
   process.stdout.write(selectionRequired
     ? "  Active provider: SELECTION REQUIRED · run 'lightningloop provider list' then 'lightningloop provider select PRESET'\n"
     : `  Active provider: ${terminalSafe(profile.displayName)} · ${terminalSafe(profile.modelID)}\n`);
-  process.stdout.write(`  Pi-native provider auth: ${piManaged ? "PI-MANAGED/UNKNOWN" : "NOT APPLICABLE"}\n`);
+  process.stdout.write(`  Provider sign-in: ${piManaged ? "MANAGED BY RUNTIME/UNKNOWN" : "NOT APPLICABLE"}\n`);
   const researchStatus = (environmentName: string, service: string): string => process.env[environmentName]?.trim()
     || keychainConfigured(service) ? "CONFIGURED" : "MISSING";
   process.stdout.write(`  Exa research credential: ${researchStatus("EXA_API_KEY", "com.barnlabs.LightningLoop.search.exa")}\n`);
@@ -471,7 +471,7 @@ function runProviderCommand(options: CliOptions): void {
     if (!options.providerArgument) throw new Error("Provider select requires a reviewed preset.");
     const selected = saveProviderPreset(options.providerArgument);
     process.stdout.write(`Selected ${terminalSafe(selected.displayName)} · ${terminalSafe(selected.modelName)}\n`);
-    process.stdout.write("Credential stored by LightningLoop: NO. Use 'lightningloop auth' for Pi-managed login.\n");
+    process.stdout.write("Credential stored by LightningLoop: NO. Use 'lightningloop auth' to start provider sign-in.\n");
     return;
   }
   process.stdout.write("LightningLoop provider presets\n");
@@ -544,7 +544,7 @@ async function runAuth(options: CliOptions): Promise<void> {
   process.chdir(workspace);
   process.env.PI_OFFLINE = "1";
   scrubSensitiveEnvironment(process.env);
-  process.stdout.write("LightningLoop authentication is owned by Pi. Use /login, choose OpenAI Codex, Anthropic, or xAI, and complete the provider's browser/device flow. Use /logout to revoke a Pi credential.\n");
+  process.stdout.write("LightningLoop starts the provider sign-in flow. Use /login, choose OpenAI Codex, Anthropic, or xAI, and complete the provider's browser/device flow. Use /logout to revoke a provider credential.\n");
   await runPi(["--session-dir", SESSION_DIR, "--tools", "read", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files"]);
 }
 
@@ -681,7 +681,7 @@ async function entry(): Promise<void> {
   }
   if (options.command === "update") {
     const status = updateChannelStatus(DEFAULT_UPDATE_POLICY);
-    process.stdout.write(`LightningLoop update · ${status.state}\n  ${status.message}\n  Pi package pin: ${DEFAULT_UPDATE_POLICY.piPackageVersion}\n  Managed overlay changed: NO\n`);
+    process.stdout.write(`LightningLoop update · ${status.state}\n  ${status.message}\n  LightningLoop runtime package pin: ${DEFAULT_UPDATE_POLICY.piPackageVersion}\n  Managed overlay changed: NO\n`);
     return;
   }
   if (options.command === "artifact") {

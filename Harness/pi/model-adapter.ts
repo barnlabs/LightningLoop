@@ -28,6 +28,20 @@ function readMacCredential(profile: ProviderProfile): string | undefined {
   return credential || undefined;
 }
 
+function assertRuntimeModelSnapshot(
+  model: NonNullable<ReturnType<ModelRuntime["getModel"]>>,
+  profile: ProviderProfile,
+): void {
+  const supportsImages = Array.isArray(model.input) && model.input.includes("image");
+  if (supportsImages !== profile.supportsImages
+      || model.contextWindow !== profile.contextWindow
+      || model.maxTokens !== profile.maxOutputTokens) {
+    throw new Error(
+      `The runtime catalog metadata for ${profile.modelID} changed after selection. Refresh the exact model snapshot before starting LightningLoop.`,
+    );
+  }
+}
+
 export class PiProviderAdapter implements AgentAdapter {
   readonly supportsImages: boolean;
   private constructor(
@@ -75,8 +89,9 @@ export class PiProviderAdapter implements AgentAdapter {
     }
     const model = runtime.getModel(resolvedProviderID, profile.modelID);
     if (!model) throw new Error(profile.piProviderID
-      ? `Pi does not currently catalog ${profile.modelID} for ${profile.displayName}. Choose a model shown by Pi's /model picker, then authenticate with /login if Pi requests it.`
-      : `Pi does not currently catalog ${profile.modelID} for ${profile.displayName}. Choose a model shown by Pi's /model picker.`);
+      ? `The LightningLoop runtime does not currently catalog ${profile.modelID} for ${profile.displayName}. Choose a model shown by the runtime model picker, then complete provider sign-in with /login if requested.`
+      : `The LightningLoop runtime does not currently catalog ${profile.modelID} for ${profile.displayName}. Choose a model shown by the runtime model picker.`);
+    assertRuntimeModelSnapshot(model, profile);
     return new PiProviderAdapter(runtime, model, profile, new SecretRedactor(credential ? [credential] : []));
   }
 

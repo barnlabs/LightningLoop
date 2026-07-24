@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 enum HarnessProcessError: LocalizedError {
     case unavailable
@@ -7,42 +8,127 @@ enum HarnessProcessError: LocalizedError {
     case invalidResponse(String)
     case remote(String)
     case outputTooLarge
+    case deadlineExceeded
 
     var errorDescription: String? {
         switch self {
         case .unavailable:
-            "The shared Pi harness is unavailable. Build it with npm run build:harness."
+            "The shared LightningLoop runtime is unavailable. Build it with npm run build:harness."
         case .busy:
-            "The shared Pi harness is already processing another request."
+            "The shared LightningLoop runtime is already processing another request."
         case .launchFailed(let detail):
-            "The shared Pi harness could not run: \(detail)"
+            "The shared LightningLoop runtime could not run: \(detail)"
         case .invalidResponse(let detail):
-            "The shared Pi harness returned an invalid response: \(detail)"
+            "The shared LightningLoop runtime returned an invalid response: \(detail)"
         case .remote(let detail):
             detail
         case .outputTooLarge:
-            "The shared Pi harness exceeded its 8 MiB response limit."
+            "The shared LightningLoop runtime exceeded its bounded response limit."
+        case .deadlineExceeded:
+            "The shared LightningLoop runtime exceeded its execution deadline."
         }
     }
 }
 
-private final class HarnessSubprocessRunner: @unchecked Sendable {
+/// Credential-free catalog information returned by the shared LightningLoop
+/// runtime. It never contains provider secrets or account identifiers.
+struct HarnessRuntimeModelCatalog: Decodable, Equatable, Sendable {
+    let providerID: String
+    let models: [ProviderModelOption]
+    let selectedModelID: String
+    let selectedModelCatalogued: Bool
+    let catalogScope: String
+    let selectionNotice: String?
+}
+
+struct HarnessSubprocessResult: Sendable {
+    let stdout: Data
+    let stderr: Data
+    let processIdentifier: Int32
+    let terminationStatus: Int32
+}
+
+private final class BoundedProcessOutput: @unchecked Sendable {
+    private let lock = NSLock()
+    private let limit: Int
+    private var standardOutput = Data()
+    private var standardError = Data()
+    private var aggregateCount = 0
+    private(set) var overflowed = false
+    private(set) var readError: Error?
+
+    init(limit: Int) { self.limit = limit }
+
+    func append(_ data: Data, isError: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !overflowed else { return }
+        guard data.count <= limit - aggregateCount else {
+            overflowed = true
+            return
+        }
+        aggregateCount += data.count
+        if isError { standardError.append(data) } else { standardOutput.append(data) }
+    }
+
+    func record(_ error: Error) {
+        lock.lock()
+        if readError == nil { readError = error }
+        lock.unlock()
+    }
+
+    func snapshot() -> (stdout: Data, stderr: Data, overflowed: Bool, error: Error?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (standardOutput, standardError, overflowed, readError)
+    }
+}
+
+final class HarnessSubprocessRunner: @unchecked Sendable {
     private let lock = NSLock()
     private var process: Process?
     private var cancellationRequested = false
+    private var lastProcessIdentifier: Int32 = 0
 
     func execute(nodeURL: URL, scriptURL: URL, rootURL: URL, input: Data) throws -> Data {
-        let task = Process()
-        task.executableURL = nodeURL
-        task.arguments = [scriptURL.path, "serve"]
-        task.currentDirectoryURL = rootURL
-        task.environment = Self.restrictedEnvironment(nodeURL: nodeURL)
+        let result = try executeCommand(
+            executableURL: nodeURL,
+            arguments: [scriptURL.path, "serve"],
+            rootURL: rootURL,
+            environment: Self.restrictedEnvironment(nodeURL: nodeURL),
+            input: input,
+            outputLimit: 8 * 1_048_576,
+            deadline: 300
+        )
+        guard result.terminationStatus == 0 else {
+            throw HarnessProcessError.launchFailed("process exited with status \(result.terminationStatus); provider output was withheld")
+        }
+        return result.stdout
+    }
 
+    func executeCommand(
+        executableURL: URL,
+        arguments: [String],
+        rootURL: URL,
+        environment: [String: String],
+        input: Data = Data(),
+        outputLimit: Int,
+        deadline: TimeInterval
+    ) throws -> HarnessSubprocessResult {
+        guard outputLimit > 0, deadline > 0 else {
+            throw HarnessProcessError.launchFailed("invalid subprocess bounds")
+        }
+        let task = Process()
+        task.executableURL = executableURL
+        task.arguments = arguments
+        task.currentDirectoryURL = rootURL
+        task.environment = environment
         let standardInput = Pipe()
         let standardOutput = Pipe()
+        let standardError = Pipe()
         task.standardInput = standardInput
         task.standardOutput = standardOutput
-        task.standardError = FileHandle.nullDevice
+        task.standardError = standardError
 
         lock.lock()
         guard process == nil else {
@@ -52,38 +138,117 @@ private final class HarnessSubprocessRunner: @unchecked Sendable {
         process = task
         cancellationRequested = false
         lock.unlock()
-
         defer {
             lock.lock()
             process = nil
             lock.unlock()
         }
 
-        do {
-            try task.run()
-        } catch {
-            throw HarnessProcessError.launchFailed(error.localizedDescription)
+        do { try task.run() }
+        catch { throw HarnessProcessError.launchFailed(error.localizedDescription) }
+        let pid = task.processIdentifier
+        lock.lock()
+        lastProcessIdentifier = pid
+        lock.unlock()
+        let output = BoundedProcessOutput(limit: outputLimit)
+        let drains = DispatchGroup()
+        func startDrain(_ handle: FileHandle, isError: Bool) {
+            drains.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                defer { drains.leave() }
+                do {
+                    while let chunk = try handle.read(upToCount: 16_384), !chunk.isEmpty {
+                        output.append(chunk, isError: isError)
+                    }
+                } catch { output.record(error) }
+            }
+        }
+        startDrain(standardOutput.fileHandleForReading, isError: false)
+        startDrain(standardError.fileHandleForReading, isError: true)
+
+        let writer = DispatchGroup()
+        writer.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            defer {
+                try? standardInput.fileHandleForWriting.close()
+                writer.leave()
+            }
+            do {
+                if !input.isEmpty { try standardInput.fileHandleForWriting.write(contentsOf: input) }
+            } catch { output.record(error) }
         }
 
         lock.lock()
         let cancelImmediately = cancellationRequested
         lock.unlock()
-        if cancelImmediately, task.isRunning { task.terminate() }
+        let expiresAt = Date().addingTimeInterval(deadline)
+        var terminationRequestedAt: Date?
+        var timedOut = false
+        var overflowed = false
+        if cancelImmediately, task.isRunning {
+            task.terminate()
+            terminationRequestedAt = Date()
+        }
 
-        try standardInput.fileHandleForWriting.write(contentsOf: input)
-        try standardInput.fileHandleForWriting.close()
-        let output = standardOutput.fileHandleForReading.readDataToEndOfFile()
+        while task.isRunning {
+            let snapshot = output.snapshot()
+            lock.lock()
+            let cancelled = cancellationRequested
+            lock.unlock()
+            if snapshot.overflowed, terminationRequestedAt == nil {
+                overflowed = true
+                task.terminate()
+                terminationRequestedAt = Date()
+                try? standardInput.fileHandleForWriting.close()
+            } else if cancelled, terminationRequestedAt == nil {
+                task.terminate()
+                terminationRequestedAt = Date()
+                try? standardInput.fileHandleForWriting.close()
+            } else if Date() >= expiresAt, terminationRequestedAt == nil {
+                timedOut = true
+                task.terminate()
+                terminationRequestedAt = Date()
+                try? standardInput.fileHandleForWriting.close()
+            } else if let terminationRequestedAt,
+                      Date().timeIntervalSince(terminationRequestedAt) >= 0.5,
+                      task.isRunning {
+                _ = Darwin.kill(pid, SIGKILL)
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
         task.waitUntilExit()
+        writer.wait()
+        drains.wait()
 
         lock.lock()
         let wasCancelled = cancellationRequested
         lock.unlock()
+        let snapshot = output.snapshot()
         if wasCancelled { throw CancellationError() }
-        guard output.count <= 8 * 1_048_576 else { throw HarnessProcessError.outputTooLarge }
-        guard task.terminationStatus == 0 else {
-            throw HarnessProcessError.launchFailed("process exited with status \(task.terminationStatus); provider output was withheld")
+        if overflowed || snapshot.overflowed { throw HarnessProcessError.outputTooLarge }
+        if timedOut { throw HarnessProcessError.deadlineExceeded }
+        if let error = snapshot.error, task.terminationStatus == 0 {
+            throw HarnessProcessError.launchFailed(error.localizedDescription)
         }
-        return output
+        return HarnessSubprocessResult(
+            stdout: snapshot.stdout,
+            stderr: snapshot.stderr,
+            processIdentifier: pid,
+            terminationStatus: task.terminationStatus
+        )
+    }
+
+    func activeProcessIdentifier() -> Int32? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let process, process.isRunning else { return nil }
+        return process.processIdentifier
+    }
+
+    func mostRecentProcessIdentifier() -> Int32 {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastProcessIdentifier
     }
 
     func cancel() {
@@ -186,6 +351,16 @@ struct HarnessProcessClient: LoopServicing, Sendable {
         self.runner = HarnessSubprocessRunner()
     }
 
+    static func validateJSONLForTesting(
+        _ output: Data,
+        runID: String,
+        requestID: String,
+        requestType: String
+    ) throws -> [String] {
+        let client = HarnessProcessClient(rootURL: URL(fileURLWithPath: "/"), nodeURL: URL(fileURLWithPath: "/usr/bin/false"))
+        return try client.parse(output: output, runID: runID, requestID: requestID, requestType: requestType).map(\.type)
+    }
+
     static func discover() -> HarnessProcessClient? {
         let environment = ProcessInfo.processInfo.environment
         var roots: [URL] = []
@@ -238,30 +413,35 @@ struct HarnessProcessClient: LoopServicing, Sendable {
         return try requiredString(payload["product"], label: "product")
     }
 
+    func runtimeModelCatalog() async throws -> HarnessRuntimeModelCatalog {
+        let runID = UUID().uuidString
+        let envelopes = try await request(type: "providerModels", runID: runID, payload: [:])
+        let payload = try responsePayload(in: envelopes, requestType: "providerModels")
+        return try decode(HarnessRuntimeModelCatalog.self, from: payload, label: "runtime model catalog")
+    }
+
     func runManagedHarnessCommand(_ arguments: [String]) async throws -> String {
         let allowed = ["status", "backup", "restore", "reset"]
         guard let action = arguments.first, allowed.contains(action), arguments.allSatisfy({ !$0.contains("\0") && $0.count <= 80 }) else {
             throw HarnessProcessError.launchFailed("management arguments were rejected")
         }
+        let runner = self.runner
         return try await Task.detached {
-            let task = Process()
-            task.executableURL = nodeURL
-            task.arguments = [scriptURL.path, "harness"] + arguments
-            task.currentDirectoryURL = rootURL
-            task.environment = HarnessSubprocessRunner.restrictedEnvironment(nodeURL: nodeURL)
-            let output = Pipe()
-            let errors = Pipe()
-            task.standardOutput = output
-            task.standardError = errors
-            try task.run()
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            let errorData = errors.fileHandleForReading.readDataToEndOfFile()
-            task.waitUntilExit()
-            guard data.count + errorData.count <= 262_144 else { throw HarnessProcessError.outputTooLarge }
-            guard task.terminationStatus == 0 else {
-                throw HarnessProcessError.launchFailed(String(data: errorData, encoding: .utf8) ?? "management command failed")
+            let result = try runner.executeCommand(
+                executableURL: nodeURL,
+                arguments: [scriptURL.path, "harness"] + arguments,
+                rootURL: rootURL,
+                environment: HarnessSubprocessRunner.restrictedEnvironment(nodeURL: nodeURL),
+                outputLimit: 262_144,
+                deadline: 60
+            )
+            guard result.terminationStatus == 0 else {
+                throw HarnessProcessError.launchFailed(String(data: result.stderr, encoding: .utf8) ?? "management command failed")
             }
-            return String(data: data, encoding: .utf8) ?? "Harness command completed."
+            guard let text = String(data: result.stdout, encoding: .utf8) else {
+                throw HarnessProcessError.invalidResponse("management output was not strict UTF-8")
+            }
+            return text
         }.value
     }
 
@@ -312,12 +492,22 @@ struct HarnessProcessClient: LoopServicing, Sendable {
         }.value
     }
 
-    func clarify(goal: String, attachments: [ImageAttachment], runID: UUID?) async throws -> ClarificationResult {
+    func clarify(
+        goal: String,
+        attachments: [ImageAttachment],
+        expectedModelSelection: ExpectedModelSelection,
+        runID: UUID?
+    ) async throws -> ClarificationResult {
         let trimmed = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw LoopEngineError.emptyGoal }
         let protocolRunID = runID?.uuidString ?? UUID().uuidString
         let envelopes = try await request(type: "createRun", runID: protocolRunID, payload: [
             "goal": trimmed,
+            "expectedProviderID": expectedModelSelection.providerID,
+            "expectedModelID": expectedModelSelection.modelID,
+            "expectedSupportsImages": expectedModelSelection.supportsImages,
+            "expectedContextWindow": expectedModelSelection.contextWindow,
+            "expectedMaxOutputTokens": expectedModelSelection.maxOutputTokens,
             "imagePaths": attachments.map(\.fileURL.path)
         ])
         let payload = try responsePayload(in: envelopes, requestType: "createRun")
@@ -330,7 +520,7 @@ struct HarnessProcessClient: LoopServicing, Sendable {
             questions: questions,
             timeline: TimelineEntry(
                 role: .orchestrator,
-                title: "Clarified through the shared Pi harness",
+                title: "Clarified through the shared LightningLoop runtime",
                 summary: "Raised \(questions.count) decision-critical question\(questions.count == 1 ? "" : "s").",
                 metrics: .init()
             )
@@ -348,6 +538,7 @@ struct HarnessProcessClient: LoopServicing, Sendable {
         artifactWorkspace: String?,
         approveArtifactWrites: Bool,
         approveVerificationCommands: Bool,
+        expectedModelSelection: ExpectedModelSelection,
         runID: UUID?,
         emit: @escaping @Sendable (LoopEngineEvent) async -> Void
     ) async throws -> LoopExecutionResult {
@@ -359,6 +550,11 @@ struct HarnessProcessClient: LoopServicing, Sendable {
             "goal": goal,
             "clarification": ["summary": summary, "questions": clarificationQuestions],
             "answers": answers,
+            "expectedProviderID": expectedModelSelection.providerID,
+            "expectedModelID": expectedModelSelection.modelID,
+            "expectedSupportsImages": expectedModelSelection.supportsImages,
+            "expectedContextWindow": expectedModelSelection.contextWindow,
+            "expectedMaxOutputTokens": expectedModelSelection.maxOutputTokens,
             "maxReviewCycles": maxReviewCycles,
             "imagePaths": attachments.map(\.fileURL.path),
             "approveArtifactWrites": approveArtifactWrites,
@@ -404,7 +600,7 @@ struct HarnessProcessClient: LoopServicing, Sendable {
     }
 }
 
-private extension HarnessProcessClient {
+extension HarnessProcessClient {
     struct Envelope {
         let type: String
         let runID: String
@@ -519,28 +715,145 @@ private extension HarnessProcessClient {
             runner.cancel()
         }
         try Task.checkCancellation()
-        let envelopes = try parse(output: output, runID: runID, requestID: requestID)
+        let envelopes = try parse(output: output, runID: runID, requestID: requestID, requestType: type)
         if let error = envelopes.first(where: { $0.type == "error" }) {
             throw HarnessProcessError.remote(try requiredString(error.payload["message"], label: "error.message"))
         }
         return envelopes
     }
 
-    func parse(output: Data, runID: String, requestID: String) throws -> [Envelope] {
-        let text = String(decoding: output, as: UTF8.self)
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
-        guard !lines.isEmpty else { throw HarnessProcessError.invalidResponse("empty JSONL stream") }
-        return try lines.map { line in
+    func parse(output: Data, runID: String, requestID: String, requestType: String) throws -> [Envelope] {
+        guard output.count <= 8 * 1_048_576,
+              output.last == 0x0A,
+              let text = String(data: output, encoding: .utf8) else {
+            throw HarnessProcessError.invalidResponse("JSONL must be bounded, newline-terminated strict UTF-8")
+        }
+        let rawLines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        guard rawLines.last?.isEmpty == true else { throw HarnessProcessError.invalidResponse("unterminated JSONL stream") }
+        let lines = rawLines.dropLast()
+        guard !lines.isEmpty, lines.count <= 10_000, lines.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 1_048_576 }) else {
+            throw HarnessProcessError.invalidResponse("empty, overlong, or overpopulated JSONL stream")
+        }
+        let expectedFields: Set<String> = ["protocolVersion", "type", "runID", "requestID", "timestamp", "payload"]
+        let envelopes = try lines.map { line -> Envelope in
             guard let root = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  Set(root.keys) == expectedFields,
                   root["protocolVersion"] as? Int == Self.protocolVersion,
                   root["runID"] as? String == runID,
                   root["requestID"] as? String == requestID,
+                  let timestamp = root["timestamp"] as? String,
+                  timestamp.count <= 64,
+                  Self.isValidTimestamp(timestamp),
                   let type = root["type"] as? String,
+                  !type.isEmpty, type.count <= 64,
                   let payload = root["payload"] as? [String: Any] else {
-                throw HarnessProcessError.invalidResponse("uncorrelated or malformed envelope")
+                throw HarnessProcessError.invalidResponse("uncorrelated, non-exact, or malformed envelope")
             }
             return Envelope(type: type, runID: runID, requestID: requestID, payload: payload)
         }
+        try validateSequence(envelopes, requestType: requestType)
+        return envelopes
+    }
+
+    func validateSequence(_ envelopes: [Envelope], requestType: String) throws {
+        let allowedTypes: Set<String> = ["response", "error", "stageChanged", "runCompleted", "runPaused"]
+        guard envelopes.allSatisfy({ allowedTypes.contains($0.type) }) else {
+            throw HarnessProcessError.invalidResponse("unknown JSONL envelope type")
+        }
+        if let error = envelopes.first(where: { $0.type == "error" }) {
+            guard envelopes.count == 1,
+                  Set(error.payload.keys) == ["code", "message", "retryable"],
+                  let code = error.payload["code"] as? String, !code.isEmpty, code.count <= 128,
+                  let message = error.payload["message"] as? String, !message.isEmpty, message.count <= 1_000,
+                  error.payload["retryable"] is Bool else {
+                throw HarnessProcessError.invalidResponse("malformed or non-terminal error envelope")
+            }
+            return
+        }
+        guard let responseIndex = envelopes.indices.last,
+              envelopes[responseIndex].type == "response",
+              envelopes.filter({ $0.type == "response" }).count == 1,
+              envelopes[responseIndex].payload["requestType"] as? String == requestType else {
+            throw HarnessProcessError.invalidResponse("response must be the unique final envelope")
+        }
+        let response = envelopes[responseIndex]
+        let exactResponseFields: Set<String>
+        switch requestType {
+        case "hello": exactResponseFields = ["requestType", "product", "protocolVersion", "provider", "model", "capabilities", "identity"]
+        case "providerModels":
+            exactResponseFields = response.payload["selectionNotice"] == nil
+                ? ["requestType", "providerID", "models", "selectedModelID", "selectedModelCatalogued", "catalogScope"]
+                : ["requestType", "providerID", "models", "selectedModelID", "selectedModelCatalogued", "catalogScope", "selectionNotice"]
+        case "credentialStatus": exactResponseFields = ["requestType", "activeProvider", "providers", "valuesExposed"]
+        case "cancelRun": exactResponseFields = ["requestType", "cancelled"]
+        case "createRun": exactResponseFields = ["requestType", "stage", "clarification"]
+        case "continueRun": exactResponseFields = ["requestType", "result"]
+        default: throw HarnessProcessError.invalidResponse("unknown request sequence")
+        }
+        guard Set(response.payload.keys) == exactResponseFields else {
+            throw HarnessProcessError.invalidResponse("response payload fields were not exact")
+        }
+
+        let preceding = Array(envelopes[..<responseIndex])
+        guard requestType == "continueRun" else {
+            guard preceding.isEmpty else { throw HarnessProcessError.invalidResponse("unexpected pre-response envelopes") }
+            return
+        }
+        let terminals = preceding.filter { $0.type == "runCompleted" || $0.type == "runPaused" }
+        guard terminals.count == 1, preceding.last?.type == terminals[0].type,
+              let result = response.payload["result"] as? [String: Any],
+              Self.canonicalJSON(result) == Self.canonicalJSON(terminals[0].payload) else {
+            throw HarnessProcessError.invalidResponse("continueRun requires one matching terminal result before its response")
+        }
+        let stages = preceding.dropLast()
+        guard !stages.isEmpty, stages.allSatisfy({ $0.type == "stageChanged" }) else {
+            throw HarnessProcessError.invalidResponse("continueRun requires only ordered stage events before its terminal result")
+        }
+        var seen = Set<String>()
+        var terminalStage: String?
+        for envelope in stages {
+            let keys = Set(envelope.payload.keys)
+            guard keys == ["stage", "role", "message"] || keys == ["stage", "role", "round", "message"],
+                  let stage = envelope.payload["stage"] as? String,
+                  let role = envelope.payload["role"] as? String,
+                  ["orchestrator", "reviewer", "implementer"].contains(role),
+                  let message = envelope.payload["message"] as? String,
+                  !message.isEmpty, message.count <= 10_000,
+                  envelope.payload["round"].map({ ($0 as? Int).map { (1...8).contains($0) } == true }) ?? true else {
+                throw HarnessProcessError.invalidResponse("stage event fields or bounds were invalid")
+            }
+            if terminalStage != nil { throw HarnessProcessError.invalidResponse("stage event followed the terminal stage") }
+            if seen.isEmpty && stage != "planning" { throw HarnessProcessError.invalidResponse("the first stage must be planning") }
+            if stage == "reviewing_plan" && !seen.contains("planning") { throw HarnessProcessError.invalidResponse("plan review preceded planning") }
+            if stage == "implementing" && !seen.contains("reviewing_plan") { throw HarnessProcessError.invalidResponse("implementation preceded plan review") }
+            if ["verifying", "reviewing_implementation"].contains(stage) && !seen.contains("implementing") {
+                throw HarnessProcessError.invalidResponse("implementation review preceded implementation")
+            }
+            if stage == "gold" && !seen.contains("reviewing_implementation") { throw HarnessProcessError.invalidResponse("Gold preceded implementation review") }
+            guard ["planning", "reviewing_plan", "implementing", "verifying", "reviewing_implementation", "gold", "paused"].contains(stage) else {
+                throw HarnessProcessError.invalidResponse("unknown run stage")
+            }
+            if stage == "gold" || stage == "paused" { terminalStage = stage }
+            seen.insert(stage)
+        }
+        let expectedTerminalStage = terminals[0].type == "runCompleted" ? "gold" : "paused"
+        guard terminalStage == expectedTerminalStage,
+              terminals[0].payload["stage"] as? String == expectedTerminalStage else {
+            throw HarnessProcessError.invalidResponse("terminal stage and terminal result disagreed")
+        }
+    }
+
+    static func canonicalJSON(_ value: Any) -> Data? {
+        guard JSONSerialization.isValidJSONObject(value) else { return nil }
+        return try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+    }
+
+    static func isValidTimestamp(_ value: String) -> Bool {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if formatter.date(from: value) != nil { return true }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value) != nil
     }
 
     func responsePayload(in envelopes: [Envelope], requestType: String) throws -> [String: Any] {

@@ -39,6 +39,65 @@ write_file() {
   printf '%s\n' "$2" > "$1"
 }
 
+original_root_dir="$ROOT_DIR"
+canonical_root="$(mktemp -d "${TMPDIR:-/tmp}/lightningloop-canonical-checkout.XXXXXX")"
+git -C "$canonical_root" init -q -b main
+write_file "$canonical_root/fixture.txt" "reviewed source"
+git -C "$canonical_root" add fixture.txt
+git -C "$canonical_root" -c user.name=Fixture -c user.email=fixture@example.test commit -q -m fixture
+git -C "$canonical_root" remote add origin https://github.com/barnlabs/LightningLoop.git
+git -C "$canonical_root" update-ref refs/remotes/origin/main HEAD
+ROOT_DIR="$canonical_root"
+require_canonical_checkout
+for remote in \
+  https://github.com/barnlabs/LightningLoop \
+  https://github.com/barnlabs/LightningLoop.git \
+  git@github.com:barnlabs/LightningLoop.git \
+  ssh://git@github.com/barnlabs/LightningLoop.git; do
+  git -C "$canonical_root" remote set-url origin "$remote"
+  require_canonical_checkout
+done
+git -C "$canonical_root" remote set-url origin https://github.com/attacker/LightningLoop.git
+if (require_canonical_checkout) 2>/dev/null; then
+  echo "forked origin unexpectedly passed canonical checkout authentication." >&2
+  exit 1
+fi
+git -C "$canonical_root" remote remove origin
+if (require_canonical_checkout) 2>/dev/null; then
+  echo "missing origin unexpectedly passed canonical checkout authentication." >&2
+  exit 1
+fi
+git -C "$canonical_root" remote add origin https://github.com/barnlabs/LightningLoop.git
+git -C "$canonical_root" update-ref refs/remotes/origin/main HEAD
+git -C "$canonical_root" switch -q -c topic
+if (require_canonical_checkout) 2>/dev/null; then
+  echo "topic branch unexpectedly passed canonical checkout authentication." >&2
+  exit 1
+fi
+git -C "$canonical_root" switch -q main
+printf '%s\n' "dirty" >> "$canonical_root/fixture.txt"
+if (require_canonical_checkout) 2>/dev/null; then
+  echo "dirty checkout unexpectedly passed canonical checkout authentication." >&2
+  exit 1
+fi
+git -C "$canonical_root" restore fixture.txt
+git -C "$canonical_root" update-ref -d refs/remotes/origin/main
+if (require_canonical_checkout) 2>/dev/null; then
+  echo "checkout without fetched canonical main unexpectedly passed authentication." >&2
+  exit 1
+fi
+git -C "$canonical_root" update-ref refs/remotes/origin/main HEAD
+write_file "$canonical_root/ahead.txt" "unfetched local commit"
+git -C "$canonical_root" add ahead.txt
+git -C "$canonical_root" -c user.name=Fixture -c user.email=fixture@example.test commit -q -m ahead
+if (require_canonical_checkout) 2>/dev/null; then
+  echo "HEAD ahead of fetched canonical main unexpectedly passed authentication." >&2
+  exit 1
+fi
+ROOT_DIR="$original_root_dir"
+rm -rf -- "$canonical_root"
+echo "PASS: source installation binds a clean main checkout to fetched canonical origin/main."
+
 # Values assigned here are consumed by functions in the sourced installer.
 # shellcheck disable=SC2034
 prepare_case() {

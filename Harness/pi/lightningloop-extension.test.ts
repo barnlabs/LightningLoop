@@ -42,3 +42,45 @@ test("extension rejects a credential-bearing goal before session naming, UI resu
   assert.equal(notifications.some((message) => message.includes(credential)), false);
   assert.equal(notifications.some((message) => message.includes(encodedCredential)), false);
 });
+
+test("TUI identity presents runtime-managed provider ownership as LightningLoop", async () => {
+  let sessionStart: ((event: unknown, context: unknown) => Promise<void> | void) | undefined;
+  let headerFactory: ((tui: unknown, theme: { fg(name: string, value: string): string; bold(value: string): string }) => { render(width: number): string[] }) | undefined;
+  const fakePi = {
+    registerTool: () => undefined,
+    registerFlag: () => undefined,
+    registerProvider: () => undefined,
+    on: (event: string, handler: (event: unknown, context: unknown) => Promise<void> | void) => {
+      if (event === "session_start") sessionStart = handler;
+    },
+    getFlag: () => false,
+    registerCommand: () => undefined,
+  };
+  lightningLoopExtension(fakePi as unknown as ExtensionAPI);
+  assert.ok(sessionStart);
+  await sessionStart({}, {
+    cwd: process.cwd(),
+    mode: "tui",
+    ui: {
+      setTitle: () => undefined,
+      setStatus: () => undefined,
+      setHeader: (value: (tui: unknown, theme: { fg(name: string, value: string): string; bold(value: string): string }) => { render(width: number): string[] }) => { headerFactory = value; },
+      setFooter: () => undefined,
+      setWorkingMessage: () => undefined,
+      setWorkingIndicator: () => undefined,
+      setHiddenThinkingLabel: () => undefined,
+      theme: {
+        fg: (_name: string, value: string) => value,
+        bold: (value: string) => value,
+      },
+    },
+  });
+  assert.ok(headerFactory);
+  const theme = {
+    fg: (_name: string, value: string) => value,
+    bold: (value: string) => value,
+  };
+  const rendered = headerFactory({}, theme).render(120).join("\n");
+  assert.match(rendered, /authentication and model catalog managed by the LightningLoop runtime/u);
+  assert.doesNotMatch(rendered, /\bPi\b/u);
+});

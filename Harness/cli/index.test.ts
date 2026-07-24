@@ -21,6 +21,9 @@ test("help remains a noninteractive command", () => {
   assert.equal(parse(["help"]).command, "help");
   assert.equal(parse(["--help"]).command, "help");
   assert.match(usage(), /llp \| lloop \| lightningloop \[tui\]/u);
+  assert.match(usage(), /RUNTIME_OPTIONS/u);
+  assert.match(usage(), /Provider sign-in uses the managed LightningLoop runtime/u);
+  assert.doesNotMatch(usage(), /\bPi\b/u);
 });
 
 test("provider and install-doctor commands parse as bounded first-run operations", () => {
@@ -70,7 +73,7 @@ test("doctor's Node gate matches the installer minimum", () => {
   assert.equal(isSupportedNodeVersion("not-a-version"), false);
 });
 
-test("doctor reports built-in Pi authentication as opaque without probing it", { concurrency: false }, async () => {
+test("doctor reports runtime-managed provider sign-in as opaque without probing it", { concurrency: false }, async () => {
   const configDirectory = await mkdtemp(join(tmpdir(), "lightningloop-cli-provider-"));
   const configPath = join(configDirectory, "provider.json");
   const originalConfigPath = process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
@@ -95,7 +98,8 @@ test("doctor reports built-in Pi authentication as opaque without probing it", {
       return true;
     }) as typeof process.stdout.write;
     assert.equal(await doctor(), 0);
-    assert.match(output, /Pi-native provider auth: PI-MANAGED\/UNKNOWN/u);
+    assert.match(output, /Provider sign-in: MANAGED BY RUNTIME\/UNKNOWN/u);
+    assert.doesNotMatch(output, /\bPi\b/u);
   } finally {
     process.stdout.write = originalWrite;
     if (originalConfigPath === undefined) delete process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
@@ -125,6 +129,10 @@ test("runtime-only doctor passes supported installation before provider onboardi
     else process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH = originalConfigPath;
     await rm(configDirectory, { recursive: true, force: true });
   }
+});
+
+test("CLI parser directs unsupported runtime options after the passthrough separator", () => {
+  assert.throws(() => parse(["--unsupported-runtime-option"]), /Put runtime options after --\./u);
 });
 
 test("clean cross-platform data flow requires selection, lists presets, and stores no credential", async () => {

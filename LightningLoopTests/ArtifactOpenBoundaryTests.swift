@@ -6,9 +6,13 @@ import XCTest
 @MainActor
 final class ArtifactOpenBoundaryTests: XCTestCase {
     func testEngineErrorIsRedactedBeforeItIsPersistedInSessionState() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let providerStore = try makeCustomProviderStore(in: directory)
         let model = AppModel(
             engine: SecretErrorLoopService(),
-            runtimeLabel: "Shared Pi harness",
+            providerStore: providerStore,
+            runtimeLabel: "Shared LightningLoop runtime",
             skipCredentialRefresh: true
         )
         model.updateGoal("A safe goal")
@@ -23,9 +27,13 @@ final class ArtifactOpenBoundaryTests: XCTestCase {
 
     func testEveryNestedEngineEventFieldIsRedactedBeforeSessionPersistence() async throws {
         let secret = "csk-abcdefghijklmnopqrstuvwx"
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let providerStore = try makeCustomProviderStore(in: directory)
         let model = AppModel(
             engine: SecretEventLoopService(secret: secret),
-            runtimeLabel: "Shared Pi harness",
+            providerStore: providerStore,
+            runtimeLabel: "Shared LightningLoop runtime",
             skipCredentialRefresh: true
         )
         model.updateGoal("A safe goal")
@@ -45,10 +53,14 @@ final class ArtifactOpenBoundaryTests: XCTestCase {
 
     func testNotificationBoundaryHasNoObservableSecretDuringSuspension() async throws {
         let secret = "csk-abcdefghijklmnopqrstuvwx"
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let providerStore = try makeCustomProviderStore(in: directory)
         let notifications = SuspendingNotificationRecorder()
         let model = AppModel(
             engine: SecretErrorLoopService(),
-            runtimeLabel: "Shared Pi harness",
+            providerStore: providerStore,
+            runtimeLabel: "Shared LightningLoop runtime",
             skipCredentialRefresh: true,
             notificationSend: { title, body in await notifications.send(title: title, body: body) }
         )
@@ -78,7 +90,7 @@ final class ArtifactOpenBoundaryTests: XCTestCase {
         let engine = GoldClaimingLoopService()
         for runtimeLabel in [
             "Native direct fallback · explicitly selected custom profile",
-            "Shared Pi harness unavailable · loop execution blocked"
+            "Shared LightningLoop runtime unavailable · loop execution blocked"
         ] {
             let model = AppModel(
                 engine: engine,
@@ -111,18 +123,101 @@ final class ArtifactOpenBoundaryTests: XCTestCase {
         XCTAssertEqual(executions, 0)
     }
 
+    func testUncataloguedBuiltInModelBlocksClarificationBeforeEngineUse() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let providerStore = ProviderConfigurationStore(fileURL: directory.appendingPathComponent("provider.json"))
+        try providerStore.save(.preset(.cerebras))
+        let engine = GoldClaimingLoopService()
+        let model = AppModel(
+            engine: engine,
+            providerStore: providerStore,
+            runtimeLabel: "Shared LightningLoop runtime",
+            skipCredentialRefresh: true
+        )
+        model.updateGoal("Use the guarded default model")
+
+        model.startClarification()
+
+        XCTAssertEqual(model.selectedSession?.stage, .paused)
+        XCTAssertTrue(model.selectedSession?.statusMessage.contains("public-preview preference") == true)
+        let clarificationCount = await engine.clarificationCount()
+        XCTAssertEqual(clarificationCount, 0)
+    }
+
+    func testProviderModelSelectionIsCapturedBeforeEachOperationTask() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let providerStore = ProviderConfigurationStore(fileURL: directory.appendingPathComponent("provider.json"))
+        var firstSelection = ProviderConfiguration.preset(.custom)
+        firstSelection.id = "first-provider"
+        firstSelection.modelID = "first-model"
+        firstSelection.modelName = "First model"
+        try providerStore.save(firstSelection)
+        var secondSelection = firstSelection
+        secondSelection.id = "second-provider"
+        secondSelection.modelID = "second-model"
+        secondSelection.modelName = "Second model"
+
+        let engine = ModelSelectionRecordingLoopService()
+        let model = AppModel(
+            engine: engine,
+            providerStore: providerStore,
+            credentialReader: { _ in nil },
+            runtimeLabel: "Shared LightningLoop runtime",
+            skipCredentialRefresh: true,
+            notificationSend: { _, _ in }
+        )
+        model.updateGoal("Capture the selected model")
+        model.startClarification()
+        model.providerProfile = secondSelection
+        for _ in 0..<80 where model.isRunning { try await Task.sleep(for: .milliseconds(10)) }
+        let capturedClarificationSelection = await engine.clarificationSelection()
+        XCTAssertEqual(
+            capturedClarificationSelection,
+            ExpectedModelSelection(
+                providerID: firstSelection.id,
+                modelID: firstSelection.modelID,
+                supportsImages: firstSelection.supportsImages,
+                contextWindow: firstSelection.contextWindow,
+                maxOutputTokens: firstSelection.maxOutputTokens
+            )
+        )
+
+        let questionID = try XCTUnwrap(model.selectedSession?.questions.first?.id)
+        model.updateAnswer(questionID: questionID, value: "Continue")
+        model.providerProfile = firstSelection
+        model.startLoop()
+        model.providerProfile = secondSelection
+        for _ in 0..<80 where model.isRunning { try await Task.sleep(for: .milliseconds(10)) }
+        let capturedExecutionSelection = await engine.executionSelection()
+        XCTAssertEqual(
+            capturedExecutionSelection,
+            ExpectedModelSelection(
+                providerID: firstSelection.id,
+                modelID: firstSelection.modelID,
+                supportsImages: firstSelection.supportsImages,
+                contextWindow: firstSelection.contextWindow,
+                maxOutputTokens: firstSelection.maxOutputTokens
+            )
+        )
+    }
+
     func testCredentialBearingGoalAndAnswerNeverReachEngineObservableOrPersistedState() async throws {
         let secret = "ordinary-private-value-1234"
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let sessionsURL = directory.appendingPathComponent("sessions.json")
+        let providerStore = try makeCustomProviderStore(in: directory)
         let engine = InputRecordingLoopService()
         let model = AppModel(
             engine: engine,
             archive: SessionArchive(fileURL: sessionsURL),
+            providerStore: providerStore,
             credentialReader: { _ in secret },
-            runtimeLabel: "Shared Pi harness",
+            runtimeLabel: "Shared LightningLoop runtime",
             skipCredentialRefresh: true
         )
 
@@ -201,6 +296,13 @@ final class ArtifactOpenBoundaryTests: XCTestCase {
         XCTAssertTrue(model.settingsMessage.contains("immutable reviewed snapshot"))
     }
 
+    private func makeCustomProviderStore(in directory: URL) throws -> ProviderConfigurationStore {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = ProviderConfigurationStore(fileURL: directory.appendingPathComponent("provider.json"))
+        try store.save(.preset(.custom))
+        return store
+    }
+
     private func artifactModel(workspace: URL, recorder: OpenRecorder) -> AppModel {
         let model = AppModel(
             engine: ArtifactTestLoopService(),
@@ -234,7 +336,7 @@ private final class OpenRecorder {
 }
 
 private struct ArtifactTestLoopService: LoopServicing {
-    func clarify(goal: String, attachments: [ImageAttachment], runID: UUID?) async throws -> ClarificationResult {
+    func clarify(goal: String, attachments: [ImageAttachment], expectedModelSelection: ExpectedModelSelection, runID: UUID?) async throws -> ClarificationResult {
         throw CancellationError()
     }
 
@@ -249,6 +351,7 @@ private struct ArtifactTestLoopService: LoopServicing {
         artifactWorkspace: String?,
         approveArtifactWrites: Bool,
         approveVerificationCommands: Bool,
+        expectedModelSelection: ExpectedModelSelection,
         runID: UUID?,
         emit: @escaping @Sendable (LoopEngineEvent) async -> Void
     ) async throws -> LoopExecutionResult {
@@ -257,11 +360,11 @@ private struct ArtifactTestLoopService: LoopServicing {
 }
 
 private struct SecretErrorLoopService: LoopServicing {
-    func clarify(goal: String, attachments: [ImageAttachment], runID: UUID?) async throws -> ClarificationResult {
+    func clarify(goal: String, attachments: [ImageAttachment], expectedModelSelection: ExpectedModelSelection, runID: UUID?) async throws -> ClarificationResult {
         throw NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "upstream rejected csk-abcdefghijklmnopqrstuvwx"])
     }
 
-    func execute(goal: String, summary: String, questions: [ClarifyingQuestion], answers: [String: String], maxReviewCycles: Int, attachments: [ImageAttachment], researchProvider: String?, artifactWorkspace: String?, approveArtifactWrites: Bool, approveVerificationCommands: Bool, runID: UUID?, emit: @escaping @Sendable (LoopEngineEvent) async -> Void) async throws -> LoopExecutionResult {
+    func execute(goal: String, summary: String, questions: [ClarifyingQuestion], answers: [String: String], maxReviewCycles: Int, attachments: [ImageAttachment], researchProvider: String?, artifactWorkspace: String?, approveArtifactWrites: Bool, approveVerificationCommands: Bool, expectedModelSelection: ExpectedModelSelection, runID: UUID?, emit: @escaping @Sendable (LoopEngineEvent) async -> Void) async throws -> LoopExecutionResult {
         throw CancellationError()
     }
 }
@@ -269,7 +372,7 @@ private struct SecretErrorLoopService: LoopServicing {
 private struct SecretEventLoopService: LoopServicing {
     let secret: String
 
-    func clarify(goal: String, attachments: [ImageAttachment], runID: UUID?) async throws -> ClarificationResult {
+    func clarify(goal: String, attachments: [ImageAttachment], expectedModelSelection: ExpectedModelSelection, runID: UUID?) async throws -> ClarificationResult {
         .init(
             summary: "summary \(secret)",
             questions: [.init(id: "question-\(secret)", question: "question \(secret)", whyItMatters: "why \(secret)")],
@@ -288,6 +391,7 @@ private struct SecretEventLoopService: LoopServicing {
         artifactWorkspace: String?,
         approveArtifactWrites: Bool,
         approveVerificationCommands: Bool,
+        expectedModelSelection: ExpectedModelSelection,
         runID: UUID?,
         emit: @escaping @Sendable (LoopEngineEvent) async -> Void
     ) async throws -> LoopExecutionResult {
@@ -345,7 +449,7 @@ private actor GoldClaimingLoopService: LoopServicing {
     private var clarifications = 0
     private var executions = 0
 
-    func clarify(goal: String, attachments: [ImageAttachment], runID: UUID?) async throws -> ClarificationResult {
+    func clarify(goal: String, attachments: [ImageAttachment], expectedModelSelection: ExpectedModelSelection, runID: UUID?) async throws -> ClarificationResult {
         clarifications += 1
         return .init(
             summary: "Ready",
@@ -365,6 +469,7 @@ private actor GoldClaimingLoopService: LoopServicing {
         artifactWorkspace: String?,
         approveArtifactWrites: Bool,
         approveVerificationCommands: Bool,
+        expectedModelSelection: ExpectedModelSelection,
         runID: UUID?,
         emit: @escaping @Sendable (LoopEngineEvent) async -> Void
     ) async throws -> LoopExecutionResult {
@@ -381,12 +486,58 @@ private actor GoldClaimingLoopService: LoopServicing {
     func executionCount() -> Int { executions }
 }
 
+private actor ModelSelectionRecordingLoopService: LoopServicing {
+    private var recordedClarificationSelection: ExpectedModelSelection?
+    private var recordedExecutionSelection: ExpectedModelSelection?
+
+    func clarify(
+        goal: String,
+        attachments: [ImageAttachment],
+        expectedModelSelection: ExpectedModelSelection,
+        runID: UUID?
+    ) async throws -> ClarificationResult {
+        recordedClarificationSelection = expectedModelSelection
+        return .init(
+            summary: "Ready",
+            questions: [.init(id: "Q1", question: "Continue?", whyItMatters: "Scope")],
+            timeline: .init(role: .orchestrator, title: "Ready", summary: "Ready", metrics: .init())
+        )
+    }
+
+    func execute(
+        goal: String,
+        summary: String,
+        questions: [ClarifyingQuestion],
+        answers: [String: String],
+        maxReviewCycles: Int,
+        attachments: [ImageAttachment],
+        researchProvider: String?,
+        artifactWorkspace: String?,
+        approveArtifactWrites: Bool,
+        approveVerificationCommands: Bool,
+        expectedModelSelection: ExpectedModelSelection,
+        runID: UUID?,
+        emit: @escaping @Sendable (LoopEngineEvent) async -> Void
+    ) async throws -> LoopExecutionResult {
+        recordedExecutionSelection = expectedModelSelection
+        return .init(
+            planning: .init(criteria: [], plan: [], risks: [], acceptanceTest: ""),
+            implementation: .init(deliverable: "Captured", notes: []),
+            completed: false,
+            finalMessage: "Paused"
+        )
+    }
+
+    func clarificationSelection() -> ExpectedModelSelection? { recordedClarificationSelection }
+    func executionSelection() -> ExpectedModelSelection? { recordedExecutionSelection }
+}
+
 private actor InputRecordingLoopService: LoopServicing {
     private var clarificationGoal = ""
     private var executionGoal = ""
     private var executionAnswers: [String: String] = [:]
 
-    func clarify(goal: String, attachments: [ImageAttachment], runID: UUID?) async throws -> ClarificationResult {
+    func clarify(goal: String, attachments: [ImageAttachment], expectedModelSelection: ExpectedModelSelection, runID: UUID?) async throws -> ClarificationResult {
         clarificationGoal = goal
         return .init(
             summary: "Ready",
@@ -406,6 +557,7 @@ private actor InputRecordingLoopService: LoopServicing {
         artifactWorkspace: String?,
         approveArtifactWrites: Bool,
         approveVerificationCommands: Bool,
+        expectedModelSelection: ExpectedModelSelection,
         runID: UUID?,
         emit: @escaping @Sendable (LoopEngineEvent) async -> Void
     ) async throws -> LoopExecutionResult {

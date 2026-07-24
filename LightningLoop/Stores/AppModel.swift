@@ -15,10 +15,18 @@ final class AppModel {
     var settingsMessage = ""
     var connectionMetrics: InferenceMetrics?
     var providerProfile: ProviderConfiguration
+    /// Custom-provider discovery results (OpenAI-compatible `/models` IDs).
     var availableModels: [String] = []
+    /// Richer view of custom discovery (display name defaults to the model ID).
+    var discoveredCustomModels: [ProviderModelOption] = []
+    var runtimeModels: [ProviderModelOption] = []
+    private(set) var runtimeModelCatalogProviderID: String?
+    private(set) var runtimeModelCatalogScope = ""
     let runtimeLabel: String
     private(set) var credentialStates: [CredentialProvider: Bool] = [:]
     private(set) var activeInferenceCredentialConfigured = false
+
+    static let autoTitleLLMPreferenceKey = "autoTitleLLMEnabled"
 
     private let engine: any LoopServicing
     private let keychain: KeychainStore
@@ -38,7 +46,7 @@ final class AppModel {
     init(
         engine: any LoopServicing,
         keychain: KeychainStore = .init(),
-        archive: SessionArchive = .init(),
+        archive: SessionArchive? = nil,
         memoryArchive: MemoryArchive? = nil,
         evolutionArchive: EvolutionArchive? = nil,
         providerStore: ProviderConfigurationStore = .init(),
@@ -55,7 +63,8 @@ final class AppModel {
         self.engine = engine
         self.runtimeLabel = runtimeLabel
         self.keychain = keychain
-        self.archive = archive
+        let resolvedArchive = archive ?? .init()
+        self.archive = resolvedArchive
         self.memoryArchive = memoryArchive ?? .init(credentialRegistry: credentialRegistry)
         self.evolutionArchive = evolutionArchive ?? .init(credentialRegistry: credentialRegistry)
         self.providerStore = providerStore
@@ -65,12 +74,18 @@ final class AppModel {
         self.artifactOpenURL = artifactOpenURL
         self.notificationSend = notificationSend
         self.providerProfile = providerStore.load()
-        let loaded = archive.load().map { session in
+        let loaded = resolvedArchive.load().map { session in
             var migrated = session
-            let legacy = session.goal.replacingOccurrences(of: "\n", with: " ")
-                .trimmingCharacters(in: .whitespaces)
-            if !legacy.isEmpty, session.title == String(legacy.prefix(52)) {
-                migrated.title = Self.sessionTitle(for: legacy)
+            let legacy = SessionTitle.collapseWhitespace(session.goal)
+            // Migrate pre-title-system archives that stored a raw goal prefix.
+            if !legacy.isEmpty,
+               session.titleSource == .provisional,
+               !session.titleLocked,
+               (session.title == String(legacy.prefix(52))
+                || session.title == String(legacy.prefix(91)) + "…"
+                || session.title == legacy) {
+                migrated.title = SessionTitle.provisional(from: legacy)
+                migrated.titleSource = .provisional
             }
             return migrated
         }
@@ -92,12 +107,33 @@ final class AppModel {
 
     static func live() -> AppModel {
         let keychain = KeychainStore()
-        let providerStore = ProviderConfigurationStore()
         if NSClassFromString("XCTestCase") != nil || ProcessInfo.processInfo.environment["LIGHTNINGLOOP_UI_TESTING"] == "1" {
+            let fixtureRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("LightningLoopTests-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+            let credentialRegistry = CustomCredentialServiceRegistry(
+                fileURL: fixtureRoot.appendingPathComponent("custom-credential-services.json")
+            )
+            let providerStore = ProviderConfigurationStore(fileURL: fixtureRoot.appendingPathComponent("provider.json"))
             let model = AppModel(
-                engine: LoopEngine(agent: ProviderClient(keychain: keychain, profileStore: providerStore)),
+                engine: LoopEngine(agent: ProviderClient(
+                    keychain: keychain,
+                    profileStore: providerStore,
+                    credentialReader: { _ in nil }
+                )),
                 keychain: keychain,
+                archive: SessionArchive(fileURL: fixtureRoot.appendingPathComponent("sessions.json")),
+                memoryArchive: MemoryArchive(
+                    fileURL: fixtureRoot.appendingPathComponent("memory.json"),
+                    credentialRegistry: credentialRegistry
+                ),
+                evolutionArchive: EvolutionArchive(
+                    fileURL: fixtureRoot.appendingPathComponent("evolutions.json"),
+                    credentialRegistry: credentialRegistry
+                ),
                 providerStore: providerStore,
+                credentialRegistry: credentialRegistry,
+                credentialReader: { _ in nil },
+                attachmentStore: ImageAttachmentStore(rootURL: fixtureRoot.appendingPathComponent("attachments", isDirectory: true)),
                 runtimeLabel: "Native test engine",
                 skipCredentialRefresh: ProcessInfo.processInfo.environment["LIGHTNINGLOOP_UI_TESTING"] == "1"
             )
@@ -106,16 +142,24 @@ final class AppModel {
             if let root = ProcessInfo.processInfo.environment["LIGHTNINGLOOP_EVIDENCE_DEMO_ROOT"] {
                 model.installEvidenceDemo(rootPath: root)
             }
+#if DEBUG
+            if let scenario = ProcessInfo.processInfo.environment["LIGHTNINGLOOP_UI_SCENARIO"] {
+                model.installUITestScenario(scenario)
+            }
+#endif
             return model
         }
+        let providerStore = ProviderConfigurationStore()
         if let harness = HarnessProcessClient.discover() {
-            return AppModel(engine: harness, keychain: keychain, providerStore: providerStore, runtimeLabel: "Shared Pi harness")
+            let model = AppModel(engine: harness, keychain: keychain, providerStore: providerStore, runtimeLabel: "Shared LightningLoop runtime")
+            Task { await model.refreshRuntimeModelCatalog() }
+            return model
         }
         return AppModel(
             engine: NativeFallbackBlockedService(),
             keychain: keychain,
             providerStore: providerStore,
-            runtimeLabel: "Shared Pi harness unavailable · loop execution blocked"
+            runtimeLabel: "Shared LightningLoop runtime unavailable · loop execution blocked"
         )
     }
 
@@ -125,12 +169,67 @@ final class AppModel {
     }
 
     var hasAPIKey: Bool {
-        runtimeLabel == "Shared Pi harness"
+        runtimeLabel == "Shared LightningLoop runtime"
             && !providerProfile.requiresProviderSelection
             && (activeInferenceCredentialConfigured || providerProfile.usesPiAuthentication)
+            && activeRuntimeModelSelectionBlocker == nil
     }
-    var supportsAutomaticResearch: Bool { runtimeLabel == "Shared Pi harness" }
-    var supportsWorkspaceArtifacts: Bool { runtimeLabel == "Shared Pi harness" }
+    var supportsAutomaticResearch: Bool { runtimeLabel == "Shared LightningLoop runtime" }
+    var supportsWorkspaceArtifacts: Bool { runtimeLabel == "Shared LightningLoop runtime" }
+
+    var loopReadinessMessage: String? {
+        guard runtimeLabel == "Shared LightningLoop runtime" else {
+            return "The shared LightningLoop runtime is unavailable. You can draft a goal, but running the loop is blocked."
+        }
+        if providerProfile.requiresProviderSelection {
+            return "Choose an inference provider and model before running this loop."
+        }
+        if let activeRuntimeModelSelectionBlocker {
+            return activeRuntimeModelSelectionBlocker
+        }
+        guard hasAPIKey else {
+            return "Provider access is not ready. Use the provider's official sign-in flow before running this loop."
+        }
+        return nil
+    }
+
+    var selectedRuntimeModelCatalogued: Bool? {
+        guard runtimeModelCatalogProviderID == providerProfile.id else { return nil }
+        return runtimeModels.contains(where: { $0.modelID == providerProfile.modelID })
+    }
+
+    private var activeRuntimeModelSelectionBlocker: String? {
+        guard providerProfile.usesPiAuthentication else { return nil }
+        if providerProfile.requiresRuntimeModelVerification, selectedRuntimeModelCatalogued != true {
+            return providerProfile.runtimeModelSelectionNotice
+        }
+        guard runtimeModelCatalogProviderID == providerProfile.id,
+              selectedRuntimeModelCatalogued == true else {
+            return "\(providerProfile.modelName) is not catalogued by the installed LightningLoop runtime. Choose a listed model."
+        }
+        return nil
+    }
+
+    private var expectedModelSelection: ExpectedModelSelection? {
+        if providerProfile.usesPiAuthentication {
+            guard runtimeModelCatalogProviderID == providerProfile.id,
+                  let model = runtimeModels.first(where: { $0.modelID == providerProfile.modelID }) else { return nil }
+            return ExpectedModelSelection(
+                providerID: providerProfile.id,
+                modelID: model.modelID,
+                supportsImages: model.supportsImages,
+                contextWindow: model.contextWindow,
+                maxOutputTokens: model.maxOutputTokens
+            )
+        }
+        return ExpectedModelSelection(
+            providerID: providerProfile.id,
+            modelID: providerProfile.modelID,
+            supportsImages: providerProfile.supportsImages,
+            contextWindow: providerProfile.contextWindow,
+            maxOutputTokens: providerProfile.maxOutputTokens
+        )
+    }
 
     func hasCredential(_ provider: CredentialProvider) -> Bool {
         credentialStates[provider] == true
@@ -206,6 +305,73 @@ final class AppModel {
         selectedSessionID = session.id
     }
 
+    /// Deterministic, credential-free visual states for DEBUG screenshot and UI
+    /// test evidence. Production launches cannot reach this path without the
+    /// separate LIGHTNINGLOOP_UI_TESTING guard in `live()`.
+#if DEBUG
+    private func installUITestScenario(_ scenario: String) {
+        switch scenario {
+        case "new-loop":
+            providerProfile = .onboarding
+            let session = LoopSession()
+            sessions = [session]
+            selectedSessionID = session.id
+        case "settings-model", "settings-update":
+            providerProfile = .preset(.cerebras)
+            runtimeModels = [
+                ProviderConfiguration.cerebrasGemma4_31B,
+                .init(
+                    modelID: "gpt-oss-120b",
+                    modelName: "GPT-OSS 120B",
+                    supportsImages: false,
+                    contextWindow: 131_072,
+                    maxOutputTokens: 32_768
+                )
+            ]
+            runtimeModelCatalogProviderID = providerProfile.id
+            runtimeModelCatalogScope = "Installed runtime catalog · credential-free metadata"
+            settingsMessage = "Gemma 4 31B is catalogued by the installed LightningLoop runtime. Provider sign-in is checked only when a run starts."
+        case "working":
+            var session = LoopSession(goal: "Prepare a launch brief with source-backed claims")
+            session.title = "Prepare a source-backed launch brief"
+            session.stage = .clarifying
+            session.statusMessage = "Orchestrator is isolating the decisions that matter…"
+            session.updatedAt = Date()
+            sessions = [session]
+            selectedSessionID = session.id
+            isRunning = true
+        case "blocked-history":
+            var blocked = LoopSession(goal: "Audit a release candidate")
+            blocked.title = "Audit the release candidate"
+            blocked.stage = .paused
+            blocked.statusMessage = "Paused: the selected model is no longer present in the installed runtime catalog."
+            blocked.questions = [
+                .init(id: "Q1", question: "Which release candidate should be audited?", whyItMatters: "The evidence must bind to one exact build.")
+            ]
+            blocked.answers = ["Q1": "Current local candidate"]
+            blocked.updatedAt = Date()
+
+            var failed = LoopSession(goal: "Verify installer rollback")
+            failed.title = "Verify installer rollback"
+            failed.stage = .failed
+            failed.statusMessage = "Stopped safely: the rollback fixture returned an incomplete byte-state match."
+            failed.updatedAt = Date().addingTimeInterval(-1_800)
+
+            var completed = LoopSession(goal: "Write a concise project brief")
+            completed.title = "Write a concise project brief"
+            completed.stage = .completed
+            completed.statusMessage = "Gold after two review rounds."
+            completed.implementation = "# Project brief\n\nA bounded, reviewed deliverable with criterion-linked evidence."
+            completed.updatedAt = Date().addingTimeInterval(-7_200)
+
+            sessions = [blocked, failed, completed]
+            selectedSessionID = blocked.id
+        default:
+            break
+        }
+    }
+#endif
+
     func newSession() {
         let session = LoopSession()
         sessions.insert(session, at: 0)
@@ -229,17 +395,120 @@ final class AppModel {
         let safeGoal = sanitizer.sanitize(goal)
         mutateSelected { session in
             session.goal = safeGoal
-            session.title = Self.sessionTitle(for: safeGoal)
+            if SessionTitle.shouldAutoUpdate(source: session.titleSource, locked: session.titleLocked),
+               session.titleSource == .provisional {
+                session.title = SessionTitle.provisional(from: safeGoal)
+            }
             session.updatedAt = Date()
         }
+        persist()
+    }
+
+    /// User rename locks auto-title until unlocked.
+    func renameSelectedSession(to rawTitle: String) {
+        guard let sanitizer = currentCredentialSanitizer() else {
+            settingsMessage = "Rename is blocked because the credential catalog is unavailable."
+            return
+        }
+        let cleaned = SessionTitle.collapseWhitespace(sanitizer.sanitize(rawTitle))
+        guard !cleaned.isEmpty else { return }
+        let title = SessionTitle.truncate(cleaned, maxLength: SessionTitle.maxLength)
+        mutateSelected { session in
+            session.title = title
+            session.titleSource = .manual
+            session.titleLocked = true
+            session.updatedAt = Date()
+        }
+        persist()
+    }
+
+    func unlockSelectedSessionTitle() {
+        mutateSelected { session in
+            session.titleLocked = false
+            if session.titleSource == .manual {
+                session.titleSource = .provisional
+                session.title = SessionTitle.structured(
+                    goal: session.goal,
+                    clarifiedSummary: session.clarifiedSummary,
+                    criteria: session.criteria,
+                    plan: session.plan
+                )
+                session.titleSource = session.plan.isEmpty && session.criteria.isEmpty ? .provisional : .structured
+            }
+            session.updatedAt = Date()
+        }
+        persist()
     }
 
     private static func sessionTitle(for goal: String) -> String {
-        let singleLine = goal.replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !singleLine.isEmpty else { return "New loop" }
-        guard singleLine.count > 92 else { return singleLine }
-        return String(singleLine.prefix(91)).trimmingCharacters(in: .whitespaces) + "…"
+        SessionTitle.provisional(from: goal)
+    }
+
+    private func applyAutoTitle(to session: inout LoopSession, preferLLM: Bool) {
+        guard SessionTitle.shouldAutoUpdate(source: session.titleSource, locked: session.titleLocked) else { return }
+        let structured = SessionTitle.structured(
+            goal: session.goal,
+            clarifiedSummary: session.clarifiedSummary,
+            criteria: session.criteria,
+            plan: session.plan
+        )
+        if !session.plan.isEmpty || !session.criteria.isEmpty || !session.clarifiedSummary.isEmpty {
+            session.title = structured
+            session.titleSource = .structured
+        } else {
+            session.title = SessionTitle.provisional(from: session.goal)
+            session.titleSource = .provisional
+        }
+        if preferLLM {
+            // LLM path is async; structured title stays until it returns.
+            scheduleLLMTitleIfEnabled(for: session.id)
+        }
+    }
+
+    var autoTitleLLMEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.autoTitleLLMPreferenceKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.autoTitleLLMPreferenceKey) }
+    }
+
+    private func scheduleLLMTitleIfEnabled(for sessionID: UUID) {
+        guard autoTitleLLMEnabled else { return }
+        // Built-in providers keep credentials in the runtime; only custom Keychain profiles can run a local title complete.
+        guard providerProfile.allowsNativeConnectionTesting else { return }
+        guard hasCredential(providerProfile) else { return }
+        Task { [weak self] in
+            await self?.generateLLMTitle(for: sessionID)
+        }
+    }
+
+    private func generateLLMTitle(for sessionID: UUID) async {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
+        let session = sessions[index]
+        guard SessionTitle.shouldAutoUpdate(source: session.titleSource, locked: session.titleLocked) else { return }
+        guard providerProfile.allowsNativeConnectionTesting else { return }
+        do {
+            let client = ProviderClient(keychain: keychain, profileStore: providerStore)
+            let request = LoopPrompts.sessionTitle(
+                goal: session.goal,
+                clarifiedSummary: session.clarifiedSummary,
+                planTitles: session.plan.map(\.title),
+                criterionTitles: session.criteria.map(\.title)
+            )
+            let reply = try await client.complete(request)
+            let sanitize = makeTextSanitizer()
+            guard let parsed = SessionTitle.parseLLMTitle(sanitize(reply.content)) else { return }
+            mutateSession(sessionID) { current in
+                guard SessionTitle.shouldAutoUpdate(source: current.titleSource, locked: current.titleLocked) else { return }
+                current.title = parsed
+                current.titleSource = .llm
+                current.updatedAt = Date()
+            }
+            persist()
+        } catch {
+            // Fail soft for Gold/pause — surface a redacted non-blocking notice only.
+            settingsMessage = sanitizeSensitiveText(
+                "Optional LLM title skipped: \(error.localizedDescription). Sidebar keeps the structured or provisional title."
+            )
+        }
     }
 
     func updateAnswer(questionID: String, value: String) {
@@ -257,13 +526,26 @@ final class AppModel {
 
     func startClarification() {
         guard !isRunning, let session = selectedSession else { return }
-        guard runtimeLabel == "Shared Pi harness" else {
+        guard runtimeLabel == "Shared LightningLoop runtime" else {
             mutateSession(session.id) {
                 $0.stage = .paused
                 $0.statusMessage = "Paused: clarification and completion require the shared LightningLoop harness. Native provider connection testing remains available in Settings."
                 $0.updatedAt = Date()
             }
             persist()
+            return
+        }
+        if let blocker = activeRuntimeModelSelectionBlocker {
+            mutateSession(session.id) {
+                $0.stage = .paused
+                $0.statusMessage = "Paused: \(blocker)"
+                $0.updatedAt = Date()
+            }
+            persist()
+            return
+        }
+        guard let expectedModelSelection else {
+            settingsMessage = "The exact runtime model snapshot is unavailable. Refresh the catalog before starting clarification."
             return
         }
         guard let inputSanitizer = currentCredentialSanitizer() else {
@@ -288,7 +570,12 @@ final class AppModel {
                     return
                 }
                 let boundarySession = self.sanitizedSession(safeSession, using: boundarySanitizer.sanitize)
-                let result = try await self.engine.clarify(goal: boundarySession.goal, attachments: boundarySession.attachments, runID: sessionID)
+                let result = try await self.engine.clarify(
+                    goal: boundarySession.goal,
+                    attachments: boundarySession.attachments,
+                    expectedModelSelection: expectedModelSelection,
+                    runID: sessionID
+                )
                 let sanitize = self.makeTextSanitizer()
                 let safeSummary = sanitize(result.summary)
                 let safeQuestions = result.questions.enumerated().map { index, question in
@@ -307,10 +594,13 @@ final class AppModel {
                     current.metrics = current.metrics + safeTimeline.metrics
                     current.stage = .awaitingAnswers
                     current.statusMessage = "Answer the questions, then start the strict loop."
+                    self.applyAutoTitle(to: &current, preferLLM: true)
                     current.updatedAt = Date()
                 }
                 let notificationTitle = sanitize("LightningLoop needs input")
-                let notificationBody = sanitize("Clarifying questions are ready for \(Self.sessionTitle(for: boundarySession.goal)).")
+                let titled = self.sessions.first(where: { $0.id == sessionID })?.title
+                    ?? Self.sessionTitle(for: boundarySession.goal)
+                let notificationBody = sanitize("Clarifying questions are ready for \(titled).")
                 await self.notificationSend(notificationTitle, notificationBody)
             } catch is CancellationError {
                 self.markCancelled(sessionID)
@@ -328,13 +618,26 @@ final class AppModel {
 
     func startLoop() {
         guard !isRunning, allQuestionsAnswered, let session = selectedSession else { return }
-        guard runtimeLabel == "Shared Pi harness" else {
+        guard runtimeLabel == "Shared LightningLoop runtime" else {
             mutateSession(session.id) {
                 $0.stage = .paused
                 $0.statusMessage = "Paused: reaching Gold requires the shared LightningLoop harness. Native provider connection testing remains available in Settings."
                 $0.updatedAt = Date()
             }
             persist()
+            return
+        }
+        if let blocker = activeRuntimeModelSelectionBlocker {
+            mutateSession(session.id) {
+                $0.stage = .paused
+                $0.statusMessage = "Paused: \(blocker)"
+                $0.updatedAt = Date()
+            }
+            persist()
+            return
+        }
+        guard let expectedModelSelection else {
+            settingsMessage = "The exact runtime model snapshot is unavailable. Refresh the catalog before starting the loop."
             return
         }
         guard let inputSanitizer = currentCredentialSanitizer() else {
@@ -367,6 +670,7 @@ final class AppModel {
                     artifactWorkspace: boundarySession.artifactWorkspacePath,
                     approveArtifactWrites: boundarySession.artifactWorkspacePath != nil,
                     approveVerificationCommands: boundarySession.artifactWorkspacePath != nil && boundarySession.artifactVerificationCommands == true,
+                    expectedModelSelection: expectedModelSelection,
                     runID: sessionID
                 ) { [weak self] event in
                     await self?.apply(event, to: sessionID)
@@ -386,10 +690,13 @@ final class AppModel {
                     current.artifactReport = safeArtifactReport
                     current.stage = result.completed ? .completed : .paused
                     current.statusMessage = safeFinalMessage
+                    self.applyAutoTitle(to: &current, preferLLM: true)
                     current.updatedAt = Date()
                 }
                 let notificationTitle = sanitize(result.completed ? "LightningLoop reached Gold" : "LightningLoop paused")
-                let notificationBody = sanitize(result.completed ? Self.sessionTitle(for: boundarySession.goal) : result.finalMessage)
+                let titled = self.sessions.first(where: { $0.id == sessionID })?.title
+                    ?? Self.sessionTitle(for: boundarySession.goal)
+                let notificationBody = sanitize(result.completed ? titled : result.finalMessage)
                 await self.notificationSend(notificationTitle, notificationBody)
             } catch is CancellationError {
                 self.markCancelled(sessionID)
@@ -425,7 +732,7 @@ final class AppModel {
 
     func saveCredential(_ value: String, for profile: ProviderConfiguration) {
         guard profile.allowsNativeConnectionTesting else {
-            settingsMessage = "\(profile.displayName) is managed by Pi. Start the shared LightningLoop harness and use Pi's official provider login."
+            settingsMessage = "\(profile.displayName) is managed by the LightningLoop runtime. Start the shared runtime and use its official provider sign-in."
             return
         }
         do {
@@ -470,7 +777,7 @@ final class AppModel {
 
     func removeCredential(for profile: ProviderConfiguration) {
         guard profile.allowsNativeConnectionTesting else {
-            settingsMessage = "\(profile.displayName) is managed by Pi; LightningLoop has no direct credential to remove."
+            settingsMessage = "\(profile.displayName) is managed by the LightningLoop runtime; LightningLoop has no direct credential to remove."
             return
         }
         do {
@@ -488,24 +795,128 @@ final class AppModel {
     }
 
     func testConnection() async {
-        guard providerProfile.allowsNativeConnectionTesting || runtimeLabel == "Shared Pi harness" else {
-            settingsMessage = "The selected built-in provider is managed by Pi. Start the shared LightningLoop harness and complete Pi's official login."
+        guard providerProfile.allowsNativeConnectionTesting else {
+            await refreshRuntimeModelCatalog()
             return
         }
         settingsMessage = "Discovering \(providerProfile.displayName) models and testing \(providerProfile.modelName)…"
         do {
             let client = ProviderClient(keychain: keychain, profileStore: providerStore)
-            availableModels = try await client.listModels()
+            let ids = try await client.listModels()
+            availableModels = ids
+            discoveredCustomModels = ids.map {
+                ProviderModelOption(
+                    modelID: $0,
+                    modelName: $0,
+                    supportsImages: providerProfile.supportsImages,
+                    contextWindow: providerProfile.contextWindow,
+                    maxOutputTokens: providerProfile.maxOutputTokens
+                )
+            }
             guard availableModels.contains(providerProfile.modelID) else {
-                throw ProviderClientError.server(provider: providerProfile.displayName, status: 0, message: "Model \(providerProfile.modelID) was not returned by /models. Choose an available model.")
+                throw ProviderClientError.server(
+                    provider: providerProfile.displayName,
+                    status: 0,
+                    message: "Model \(providerProfile.modelID) was not returned by /models. Pick a discovered model, then retest."
+                )
             }
             let reply = try await client.complete(LoopPrompts.connectionProbe())
             connectionMetrics = reply.metrics
-            settingsMessage = "Connected to \(reply.model). Discovered \(availableModels.count) model\(availableModels.count == 1 ? "" : "s")."
+            settingsMessage = "Connected to \(reply.model). Discovered \(availableModels.count) model\(availableModels.count == 1 ? "" : "s") from the provider /models list (account-visible IDs, not a marketing catalog)."
         } catch {
             connectionMetrics = nil
+            availableModels = []
+            discoveredCustomModels = []
             settingsMessage = sanitizeSensitiveText(error.localizedDescription)
         }
+    }
+
+    /// Apply a discovered custom model ID into a draft profile (display name defaults to the ID).
+    func applyDiscoveredCustomModel(_ modelID: String, to profile: inout ProviderConfiguration) {
+        guard availableModels.contains(modelID) else { return }
+        if let option = discoveredCustomModels.first(where: { $0.modelID == modelID }) {
+            profile = profile.applyingRuntimeModel(option)
+        } else {
+            profile.modelID = modelID
+            profile.modelName = modelID
+        }
+    }
+
+    func refreshRuntimeModelCatalog() async {
+        guard providerProfile.usesPiAuthentication else {
+            settingsMessage = "Custom model discovery is available only through the user-triggered connection test."
+            return
+        }
+        guard let harness = engine as? HarnessProcessClient else {
+            settingsMessage = "Model selection requires the shared LightningLoop runtime. Start it, complete provider sign-in, and then refresh its model catalog."
+            return
+        }
+        let requestedProviderID = providerProfile.id
+        let requestedModelID = providerProfile.modelID
+        settingsMessage = "Refreshing the LightningLoop runtime model catalog for \(providerProfile.displayName)…"
+        do {
+            let catalog = try await harness.runtimeModelCatalog()
+            applyRuntimeModelCatalog(catalog, requestedProviderID: requestedProviderID, requestedModelID: requestedModelID)
+        } catch {
+            runtimeModels = []
+            runtimeModelCatalogProviderID = nil
+            runtimeModelCatalogScope = ""
+            settingsMessage = sanitizeSensitiveText(error.localizedDescription)
+        }
+    }
+
+    func applyRuntimeModelCatalog(
+        _ catalog: HarnessRuntimeModelCatalog,
+        requestedProviderID: String,
+        requestedModelID: String
+    ) {
+        guard catalog.providerID == requestedProviderID,
+              catalog.selectedModelID == requestedModelID,
+              providerProfile.id == requestedProviderID,
+              providerProfile.modelID == requestedModelID else {
+            runtimeModels = []
+            runtimeModelCatalogProviderID = nil
+            runtimeModelCatalogScope = ""
+            settingsMessage = "The provider or model changed while its runtime catalog was loading. Refresh the current selection again."
+            return
+        }
+        let selectedModelCatalogued = catalog.models.contains { $0.modelID == requestedModelID }
+        guard catalog.selectedModelCatalogued == selectedModelCatalogued else {
+            runtimeModels = []
+            runtimeModelCatalogProviderID = nil
+            runtimeModelCatalogScope = ""
+            settingsMessage = "The LightningLoop runtime returned inconsistent model-selection metadata. Refresh before running a loop."
+            return
+        }
+        runtimeModels = catalog.models
+        runtimeModelCatalogProviderID = catalog.providerID
+        runtimeModelCatalogScope = catalog.catalogScope
+        if selectedModelCatalogued {
+            settingsMessage = "Runtime catalog refreshed: \(providerProfile.modelName) is catalogued by the installed LightningLoop runtime."
+        } else if let notice = catalog.selectionNotice {
+            settingsMessage = "\(notice) Choose a model listed by the LightningLoop runtime before running a loop."
+        } else {
+            settingsMessage = "\(providerProfile.modelName) is not catalogued by the installed LightningLoop runtime. Choose a listed model before running a loop."
+        }
+    }
+
+    func canSaveProviderConfiguration(_ profile: ProviderConfiguration) -> Bool {
+        guard profile.usesPiAuthentication,
+              runtimeModelCatalogProviderID == profile.id else { return true }
+        return runtimeModels.contains { $0.modelID == profile.modelID }
+    }
+
+    func runtimeModelSelectionMessage(for profile: ProviderConfiguration) -> String? {
+        guard profile.usesPiAuthentication else { return nil }
+        guard runtimeModelCatalogProviderID == profile.id else {
+            return profile.runtimeModelSelectionNotice
+                ?? "Refresh the installed LightningLoop runtime catalog to confirm this model."
+        }
+        if let model = runtimeModels.first(where: { $0.modelID == profile.modelID }) {
+            return "\(model.modelName) is catalogued by the installed LightningLoop runtime."
+        }
+        return profile.runtimeModelSelectionNotice
+            ?? "\(profile.modelName) is not catalogued by the installed LightningLoop runtime. Choose a listed model."
     }
 
     func selectProviderPreset(_ preset: ProviderPreset) {
@@ -533,16 +944,29 @@ final class AppModel {
     }
 
     func saveProviderConfiguration(_ profile: ProviderConfiguration) {
+        guard canSaveProviderConfiguration(profile) else {
+            settingsMessage = runtimeModelSelectionMessage(for: profile)
+                ?? "Choose a model listed by the LightningLoop runtime before saving this provider."
+            return
+        }
         do {
             try providerStore.save(profile)
             providerProfile = providerStore.load()
             availableModels = []
+            discoveredCustomModels = []
+            runtimeModels = []
+            runtimeModelCatalogProviderID = nil
+            runtimeModelCatalogScope = ""
             connectionMetrics = nil
             let scrubbed = scrubHistoricalStateWithCurrentCredentials()
-            settingsMessage = scrubbed
+            let savedMessage = scrubbed
                 ? "Active provider saved: \(providerProfile.displayName) · \(providerProfile.modelID). Historical state was rechecked."
                 : "Active provider saved, but protected history could not be rewritten; it remains hidden or sanitized."
+            settingsMessage = providerProfile.runtimeModelSelectionNotice.map { "\(savedMessage) \($0)" } ?? savedMessage
             refreshCredentialState()
+            if providerProfile.usesPiAuthentication {
+                Task { await refreshRuntimeModelCatalog() }
+            }
         } catch {
             settingsMessage = sanitizeSensitiveText(error.localizedDescription)
         }
@@ -744,13 +1168,13 @@ final class AppModel {
     }
 
     func addMemory(statement: String, source: String, tags: String, scope: MemoryScope) {
-        guard refreshMemoryForMutation() else { return }
+        guard let credentialSanitizer = refreshMemoryForMutation() else { return }
         let cleanStatement = statement.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanSource = source.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanStatement.isEmpty,
               !containsSecretShape(cleanStatement),
               !containsSecretShape(cleanSource),
-              !containsConfiguredCredential([cleanStatement, cleanSource, tags]) else {
+              !credentialSanitizer.containsCredential(in: [cleanStatement, cleanSource, tags]) else {
             settingsMessage = "Memory rejected: empty or secret-like content is prohibited."
             return
         }
@@ -771,7 +1195,7 @@ final class AppModel {
     }
 
     func approveMemoryPromotion(_ id: UUID) {
-        guard refreshMemoryForMutation() else { return }
+        guard refreshMemoryForMutation() != nil else { return }
         guard let index = memories.firstIndex(where: { $0.id == id }), memories[index].scope != .run else { return }
         let prior = memories[index]
         memories[index].promotionApprovedByUser = true
@@ -783,7 +1207,7 @@ final class AppModel {
     }
 
     func deleteMemory(_ id: UUID) {
-        guard refreshMemoryForMutation() else { return }
+        guard refreshMemoryForMutation() != nil else { return }
         let prior = memories
         memories.removeAll { $0.id == id }
         if !memoryArchive.save(memories) {
@@ -793,13 +1217,13 @@ final class AppModel {
     }
 
     func addEvolution(kind: EvolutionKind, name: String, source: String, reason: String, exactDiff: String) {
-        guard refreshEvolutionsForMutation() else { return }
+        guard let credentialSanitizer = refreshEvolutionsForMutation() else { return }
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanDiff = exactDiff.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanName.isEmpty,
               !cleanDiff.isEmpty,
               !containsSecretShape(cleanDiff),
-              !containsConfiguredCredential([cleanName, source, reason, cleanDiff]) else {
+              !credentialSanitizer.containsCredential(in: [cleanName, source, reason, cleanDiff]) else {
             settingsMessage = "Evolution rejected: a name, non-secret diff, and source are required."
             return
         }
@@ -818,7 +1242,7 @@ final class AppModel {
     }
 
     func deleteEvolutionDraft(_ id: UUID) {
-        guard refreshEvolutionsForMutation() else { return }
+        guard refreshEvolutionsForMutation() != nil else { return }
         let prior = evolutions
         evolutions.removeAll { $0.id == id && $0.state == .draft }
         if !evolutionArchive.save(evolutions) {
@@ -835,7 +1259,7 @@ final class AppModel {
         permissions: String,
         reviewerHasMaterialFinding: Bool
     ) {
-        guard refreshEvolutionsForMutation() else { return }
+        guard let credentialSanitizer = refreshEvolutionsForMutation() else { return }
         guard let index = evolutions.firstIndex(where: { $0.id == id }), evolutions[index].state != .active else { return }
         let prior = evolutions[index]
         evolutions[index].evaluationSuite = String(evaluationSuite.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2_000))
@@ -850,7 +1274,7 @@ final class AppModel {
         evolutions[index].reviewerHasMaterialFinding = reviewerHasMaterialFinding
         guard !containsSecretShape(evolutions[index].evaluationSummary ?? ""),
               !containsSecretShape(evolutions[index].rollbackTarget ?? ""),
-              !containsConfiguredCredential([
+              !credentialSanitizer.containsCredential(in: [
                 evolutions[index].evaluationSuite,
                 evolutions[index].evaluationSummary ?? "",
                 evolutions[index].rollbackTarget ?? "",
@@ -869,7 +1293,7 @@ final class AppModel {
     }
 
     func advanceEvolution(_ id: UUID) {
-        guard refreshEvolutionsForMutation() else { return }
+        guard refreshEvolutionsForMutation() != nil else { return }
         guard let index = evolutions.firstIndex(where: { $0.id == id }), let next = evolutions[index].state.next else { return }
         let proposal = evolutions[index]
         switch next {
@@ -902,7 +1326,7 @@ final class AppModel {
     }
 
     func rollBackEvolution(_ id: UUID) {
-        guard refreshEvolutionsForMutation() else { return }
+        guard refreshEvolutionsForMutation() != nil else { return }
         guard let index = evolutions.firstIndex(where: { $0.id == id }), evolutions[index].state != .rolledBack else { return }
         let prior = evolutions
         evolutions[index].state = .rolledBack
@@ -957,6 +1381,7 @@ final class AppModel {
                 session.plan = safe.plan
                 session.risks = safe.risks
                 session.acceptanceTest = safe.acceptanceTest
+                applyAutoTitle(to: &session, preferLLM: true)
             case .review(let record):
                 session.reviews.append(sanitizedReview(record, using: sanitize))
             case .implementation(let draft):
@@ -1044,24 +1469,30 @@ final class AppModel {
         if let current = evolutionArchive.loadForMutation() { evolutions = current.map { sanitizedEvolution($0, using: sanitizer.sanitize) } }
     }
 
-    private func refreshMemoryForMutation() -> Bool {
+    private func refreshMemoryForMutation() -> CredentialTextSanitizer? {
+        guard let sanitizer = currentCredentialSanitizer() else {
+            settingsMessage = "Credential enumeration or reading failed. Memory was not changed in memory or on disk."
+            return nil
+        }
         guard let current = memoryArchive.loadForMutation() else {
             settingsMessage = "Memory storage is malformed or unsafe. Nothing was overwritten; restore or repair the protected ledger first."
-            return false
+            return nil
         }
-        let sanitize = makeTextSanitizer()
-        memories = current.map { sanitizedMemory($0, using: sanitize) }
-        return true
+        memories = current.map { sanitizedMemory($0, using: sanitizer.sanitize) }
+        return sanitizer
     }
 
-    private func refreshEvolutionsForMutation() -> Bool {
+    private func refreshEvolutionsForMutation() -> CredentialTextSanitizer? {
+        guard let sanitizer = currentCredentialSanitizer() else {
+            settingsMessage = "Credential enumeration or reading failed. Evolution history was not changed in memory or on disk."
+            return nil
+        }
         guard let current = evolutionArchive.loadForMutation() else {
             settingsMessage = "Evolution storage is malformed or unsafe. Nothing was overwritten; restore or repair the protected ledger first."
-            return false
+            return nil
         }
-        let sanitize = makeTextSanitizer()
-        evolutions = current.map { sanitizedEvolution($0, using: sanitize) }
-        return true
+        evolutions = current.map { sanitizedEvolution($0, using: sanitizer.sanitize) }
+        return sanitizer
     }
 
     private func refreshCredentialState() {
@@ -1246,6 +1677,7 @@ final class AppModel {
     private func sanitizedSession(_ original: LoopSession, using sanitize: (String) -> String) -> LoopSession {
         var session = original
         session.title = sanitize(session.title)
+        // titleSource / titleLocked are structural, not free text.
         session.goal = sanitize(session.goal)
         session.clarifiedSummary = sanitize(session.clarifiedSummary)
         session.questions = session.questions.map {
@@ -1334,11 +1766,11 @@ private struct NativeFallbackBlockedService: LoopServicing {
         ])
     }
 
-    func clarify(goal: String, attachments: [ImageAttachment], runID: UUID?) async throws -> ClarificationResult {
+    func clarify(goal: String, attachments: [ImageAttachment], expectedModelSelection: ExpectedModelSelection, runID: UUID?) async throws -> ClarificationResult {
         throw unavailable()
     }
 
-    func execute(goal: String, summary: String, questions: [ClarifyingQuestion], answers: [String: String], maxReviewCycles: Int, attachments: [ImageAttachment], researchProvider: String?, artifactWorkspace: String?, approveArtifactWrites: Bool, approveVerificationCommands: Bool, runID: UUID?, emit: @escaping @Sendable (LoopEngineEvent) async -> Void) async throws -> LoopExecutionResult {
+    func execute(goal: String, summary: String, questions: [ClarifyingQuestion], answers: [String: String], maxReviewCycles: Int, attachments: [ImageAttachment], researchProvider: String?, artifactWorkspace: String?, approveArtifactWrites: Bool, approveVerificationCommands: Bool, expectedModelSelection: ExpectedModelSelection, runID: UUID?, emit: @escaping @Sendable (LoopEngineEvent) async -> Void) async throws -> LoopExecutionResult {
         throw unavailable()
     }
 }

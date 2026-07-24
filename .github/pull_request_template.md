@@ -1,4 +1,4 @@
-## Contract
+## LightningLoop contribution contract
 
 - User-visible outcome:
 - Exact files/systems in scope:
@@ -19,6 +19,6 @@
 
 ## Release boundary
 
-- [ ] No provider credential, Pi state, managed user content, or generated secret is included.
+- [ ] No provider credential, runtime state, managed user content, or generated secret is included.
 - [ ] Installation/update behavior preserves user-managed state and has a rollback boundary.
 - [ ] This PR does not merge, release, sign, notarize, alter repository settings, or deploy by itself.

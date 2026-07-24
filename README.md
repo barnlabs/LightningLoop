@@ -4,11 +4,28 @@
 
 # LightningLoop
 
-**Fast inference. Relentless refinement.**
+**Fast models. Strict evidence.**
 
-LightningLoop is an open-source BarnLabs macOS app plus macOS/Windows terminal interface built on the Pi harness. Agents traverse bounded promise/duty graphs that clarify, plan, challenge, implement, gather proof, and repair until every acceptance criterion passes—or the graph stops honestly.
+LightningLoop is BarnLabs’ open-source macOS app and cross-platform terminal interface for disciplined agent work. It turns a goal into a bounded loop: clarify, plan, challenge, implement, gather proof, and pause honestly when the available evidence cannot prove the outcome.
 
-![LightningLoop native macOS interface](docs/screenshots/lightningloop-native.png)
+![LightningLoop native macOS first-run interface](docs/screenshots/lightningloop-current-new-loop.png)
+
+## Start here
+
+- **macOS GUI + terminal:** follow the [source-install path](#macos-gui-and-tui).
+- **Windows terminal:** follow the [Windows TUI path](#windows-tui).
+- **First loop:** complete [first-run setup](#first-run), state the result you need, then answer the clarifying questions.
+- **Agent handoff:** copy a safe [setup, access, update, or repair prompt](docs/AGENT_SETUP_AND_MAINTENANCE.md).
+
+LightningLoop is the product. BarnLabs is the open-source project steward. Provider and runtime details support the product; they are not its public identity.
+
+## Product surfaces
+
+| Exact runtime model selection | Fail-closed update readiness |
+|---|---|
+| ![LightningLoop runtime model picker showing the catalogued Gemma 4 31B selection](docs/screenshots/lightningloop-current-settings-model.png) | ![LightningLoop update settings showing automatic updates off and the channel unconfigured](docs/screenshots/lightningloop-current-settings-update.png) |
+
+The settings captures use deterministic, credential-free UI fixtures from the current Debug build. They demonstrate the interface contract—not provider entitlement, signed-release readiness, or live accessibility approval. The complete [UI evidence record](docs/UI_EVIDENCE_2026-07-21.md) also preserves current working and blocked-state captures with their build identity and limitations.
 
 ## Why it exists
 
@@ -29,13 +46,13 @@ flowchart LR
 ## What is included
 
 - A native SwiftUI macOS client with local history, source-image attachments, visible criteria, plan, reviews, trace, and run metrics.
-- Pi-native provider catalogs and official login flows for **OpenAI Codex**, **Anthropic Claude**, and **xAI/Grok**, plus API-key providers including **Cerebras Inference**, **Groq**, and **Fireworks**. BarnLabs remains the product and repository identity; providers are replaceable inference dependencies.
+- A shared runtime integration for provider catalogs and official sign-in flows, while LightningLoop keeps its product, history, and evidence boundaries independent from providers.
 - Bounded promise/duty graphs with named requirements, outputs, routes, evidence traces, per-node visit caps, and total-step caps.
-- Pi owns catalogs and model selection for every named built-in provider. Only an explicitly selected Custom macOS profile uses LightningLoop's native `/models` discovery and connection test; that path cannot execute a loop without the shared harness.
+- The shared runtime owns catalogs and model selection for every named built-in provider. Only an explicitly selected Custom macOS profile uses LightningLoop's native `/models` discovery and connection test; that path cannot execute a loop without the shared harness.
 - Optional iterative research through Exa, Brave, or Firecrawl in the shared harness. The orchestrator researches before planning, and harsh reviewers may request narrow follow-up queries between repair rounds. Queries, URLs, and result counts are deduplicated and capped per run. Search snippets remain unverified; the harness can open the leading HTTPS sources with redirects disabled, preserve retrieval time/content hash/source class, and bind factual criteria to an exact opened URL. The parity-tested native research implementation is not reachable from production loop execution while no-harness execution is blocked.
 - A shared TypeScript state machine used by the CLI and, when discoverable, the native app through a versioned JSONL subprocess protocol.
-- A policy-wrapped Pi TUI that starts read-only. Optional execution uses a separate OS-sandboxed, per-call-confirmed path.
-- A platform-native managed overlay for skills, MCP manifests, tools, graphs, and prompts, with secret/tamper checks, three rotating backups, and explicit managed-skill install/enable/disable commands that never touch Pi state. Imported skills start disabled. Enable verifies a unique non-active staging tree before one atomic rename; disable atomically quarantines the active copy even when the inactive installation contains secret-shaped or symlink drift.
+- A policy-wrapped terminal interface that starts read-only. Optional execution uses a separate OS-sandboxed, per-call-confirmed path.
+- A platform-native managed overlay for skills, MCP manifests, tools, graphs, and prompts, with secret/tamper checks, three rotating backups, and explicit managed-skill install/enable/disable commands that never cross into runtime-owned state. Imported skills start disabled. Enable verifies a unique non-active staging tree before one atomic rename; disable atomically quarantines the active copy even when the inactive installation contains secret-shaped or symlink drift.
 - Permissioned macOS notifications plus cross-platform terminal/hook notifications for Gold, blockers, and required input.
 - A fail-closed Ed25519 update-manifest foundation; automatic installation stays disabled until signed platform release channels exist.
 - An opt-in **Evidence Lab** that creates run-owned files in a dedicated empty directory, proactively selects bounded single-process Python and JavaScript checks, runs only structured single-process verification in the network-denied macOS sandbox, captures duration and redacted output, serves HTML on an ephemeral `127.0.0.1` endpoint, renders CSP-confined PNG proof, and feeds only harness-observed evidence back to the reviewer. Multi-process compilers and test runners, including Cargo, fail closed in autonomous verification.
@@ -45,11 +62,11 @@ flowchart LR
 
 ## Providers and images
 
-Choose a preset in **Settings**. Every named built-in preset is Pi-managed: use `lightningloop auth` and Pi’s `/login` when supported, or Pi's official environment-variable resolution; LightningLoop never copies the resulting OAuth or API-key credential. Cerebras remains an optional Pi-managed inference provider with the official OpenAI-compatible `https://api.cerebras.ai/v1` endpoint and `gpt-oss-120b` default. Historical LightningLoop-owned Keychain service identifiers are retained only so local memory, evolution, errors, and migration paths can reject credential values without enumerating Pi state. A custom provider is a macOS-only, explicit user-trusted public HTTPS hostname and its connection can be tested in Settings, but loop clarification, execution, and Gold all require the shared harness.
+Choose a preset in **Settings**. Built-in presets use the shared runtime’s official sign-in or environment-variable resolution; LightningLoop never copies the resulting OAuth or API-key credential. Historical LightningLoop-owned Keychain service identifiers are retained only so local memory, evolution, errors, and migration paths can reject credential values without enumerating runtime-owned state. A custom provider is a macOS-only, explicit user-trusted public HTTPS hostname and its connection can be tested in Settings, but loop clarification, execution, and Gold all require the shared harness.
 
 Image inputs are deliberately bounded: PNG, JPEG, WebP, or GIF; up to four files; 10 MB each. LightningLoop validates the decoded image type, copies it into protected app storage, and sends it only to the active provider during the run. Text-only models reject image-bearing runs before inference.
 
-Provider capabilities and model availability change. The presets are useful starting points, while `/models` discovery and a connection test are the source of truth for the user’s account.
+Provider capabilities and model availability change. For built-in providers, the installed runtime catalog is the source of truth for which model IDs LightningLoop may start; it does not prove provider sign-in or account entitlement. Only an explicitly selected Custom profile uses native `/models` discovery and a connection test.
 
 ## Research
 
@@ -62,15 +79,20 @@ Requirements:
 - macOS 14+ for the GUI; macOS or Windows for the TUI
 - Xcode 16+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen) for the GUI
 - Node.js 22.19+ for the shared harness and TUI. For a Finder-launchable macOS GUI install, Node must be executable at exactly `~/.local/node/bin/node`, `/opt/homebrew/bin/node`, or `/usr/local/bin/node`.
-- a Pi-supported login or API key for at least one inference provider
+- a compatible provider login or API key for at least one inference provider
 
 ### macOS GUI and TUI
 
-Clone the canonical BarnLabs repository, then use the checked-in executable installer. It verifies the complete harness, creates a universal Release build, ad-hoc signs that local build, and stages a locked, recoverable GUI/TUI transaction in `~/Applications` and `~/.local/bin`. This is not one filesystem-atomic set: an exclusive install lock prevents cooperating concurrent installers, each directory transition uses same-volume `renameatx_np(RENAME_EXCL)`, and a rollback snapshot restores the prior set on a failed commit. After the fresh root `npm ci --ignore-scripts` populates npm's content-addressed cache, the staging tool independently hashes each required production archive against its exact lockfile SRI before bounded create-new extraction; it never trusts the mutable root `node_modules` tree. Before manifest authority is written, the same archive-derived pass compares every staged path/mode/size/hash and binds real, stable dependency-container identities; symlink containers and generated `.bin` executables fail closed. The archive parser and runtime manifest bind all 46 packed paths/types/modes/sizes/hashes, archive/package/bin/engine metadata, and 136 dependency integrity/version/tree records, then verify the installed tree again before any CLI execution. The 2026-07-20 review packet records the completed local install and normal Finder-launch smoke. Shell-only Node managers such as nvm, fnm, asdf, and Volta are not sufficient for normal Finder launch unless their supported Node binary is linked or installed at `~/.local/node/bin/node`.
+Clone the canonical BarnLabs repository, bind the checkout's own `origin` fetch URL and clean `main` branch to that repository, then use the checked-in executable installer. An unrelated successful `gh repo view barnlabs/LightningLoop` query is not checkout authentication. The installer independently rejects an absent/forked origin, another branch, a dirty tree, or a HEAD that differs from the fetched canonical `origin/main` before any package or build step. It then verifies the complete harness, creates a universal Release build, ad-hoc signs that local build, and stages a locked, recoverable GUI/TUI transaction in `~/Applications` and `~/.local/bin`. This is not one filesystem-atomic set: an exclusive install lock prevents cooperating concurrent installers, each directory transition uses same-volume `renameatx_np(RENAME_EXCL)`, and a rollback snapshot restores the prior set on a failed commit. After the fresh root `npm ci --ignore-scripts` populates npm's content-addressed cache, the staging tool independently hashes each required production archive against its exact lockfile SRI before bounded create-new extraction; it never trusts the mutable root `node_modules` tree. Before manifest authority is written, the same archive-derived pass compares every staged path/mode/size/hash and binds real, stable dependency-container identities; symlink containers and generated `.bin` executables fail closed. The archive parser and runtime manifest bind all 46 packed paths/types/modes/sizes/hashes, archive/package/bin/engine metadata, and 136 dependency integrity/version/tree records, then verify the installed tree again before any CLI execution. The 2026-07-20 review packet records the completed local install and normal Finder-launch smoke. Shell-only Node managers such as nvm, fnm, asdf, and Volta are not sufficient for normal Finder launch unless their supported Node binary is linked or installed at `~/.local/node/bin/node`.
 
 ```bash
 git clone https://github.com/barnlabs/LightningLoop.git
 cd LightningLoop
+test "$(git remote get-url origin)" = "https://github.com/barnlabs/LightningLoop.git"
+git fetch --no-tags origin main
+git merge --ff-only FETCH_HEAD
+test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/main)"
+test -z "$(git status --porcelain=v1)"
 ./script/install_from_github.sh
 ```
 
@@ -84,9 +106,17 @@ To update later, keep the worktree clean and fast-forward from GitHub before rer
 
 ```bash
 cd LightningLoop
-git fetch --prune
-git switch main
-git pull --ff-only
+git status --short --branch
+test "$(git branch --show-current)" = "main"
+case "$(git remote get-url origin)" in
+  https://github.com/barnlabs/LightningLoop|https://github.com/barnlabs/LightningLoop.git|git@github.com:barnlabs/LightningLoop.git|ssh://git@github.com/barnlabs/LightningLoop.git) ;;
+  *) echo "origin is not barnlabs/LightningLoop" >&2; exit 1 ;;
+esac
+test -z "$(git status --porcelain=v1)"
+git fetch --no-tags origin main
+git merge --ff-only FETCH_HEAD
+test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/main)"
+test -z "$(git status --porcelain=v1)"
 ./script/install_from_github.sh
 ```
 
@@ -99,6 +129,11 @@ Use PowerShell with Node.js 22.19+ and Git for Windows installed. The checked-in
 ```powershell
 git clone https://github.com/barnlabs/LightningLoop.git
 Set-Location LightningLoop
+if ((git remote get-url origin) -cne "https://github.com/barnlabs/LightningLoop.git") { throw "origin is not barnlabs/LightningLoop" }
+git fetch --no-tags origin main
+git merge --ff-only FETCH_HEAD
+if ((git rev-parse HEAD) -cne (git rev-parse refs/remotes/origin/main)) { throw "HEAD is not fetched canonical main" }
+if (git status --porcelain=v1) { throw "checkout is dirty" }
 .\script\install_tui.ps1
 lightningloop provider list
 lightningloop provider select cerebras
@@ -110,9 +145,19 @@ Update with a clean fast-forward and rerun the installer:
 
 ```powershell
 Set-Location LightningLoop
-git fetch --prune
-git switch main
-git pull --ff-only
+if ((git branch --show-current) -cne "main") { throw "checkout is not on main" }
+$allowedOrigins = @(
+    "https://github.com/barnlabs/LightningLoop",
+    "https://github.com/barnlabs/LightningLoop.git",
+    "git@github.com:barnlabs/LightningLoop.git",
+    "ssh://git@github.com/barnlabs/LightningLoop.git"
+)
+if ((git remote get-url origin) -cnotin $allowedOrigins) { throw "origin is not barnlabs/LightningLoop" }
+if (git status --porcelain=v1) { throw "checkout is dirty" }
+git fetch --no-tags origin main
+git merge --ff-only FETCH_HEAD
+if ((git rev-parse HEAD) -cne (git rev-parse refs/remotes/origin/main)) { throw "HEAD is not fetched canonical main" }
+if (git status --porcelain=v1) { throw "checkout is dirty" }
 .\script\install_tui.ps1
 ```
 
@@ -120,14 +165,14 @@ The package remains private to the repository until a signed release channel exi
 
 ## First run
 
-The terminal interface has no silent default provider. On clean data, `llp` exits before invoking Pi and prints the two selection commands. Run `lightningloop provider list`, then `lightningloop provider select PRESET`; the bounded `provider.json` contains model/provider metadata only, never a credential. `doctor --runtime-only` is reserved for installer runtime health, while normal `doctor` continues to report incomplete provider onboarding.
+The terminal interface has no silent default provider. On clean data, `llp` exits before invoking the shared runtime and prints the two selection commands. Run `lightningloop provider list`, then `lightningloop provider select PRESET`; the bounded `provider.json` contains model/provider metadata only, never a credential. `doctor --runtime-only` is reserved for installer runtime health, while normal `doctor` continues to report incomplete provider onboarding.
 
 Then open **LightningLoop → Settings**:
 
 1. Choose Codex, Claude, Grok, Cerebras, Groq, Fireworks, or Custom.
-2. Select or enter a compatible model.
-3. Use Pi `/login` or Pi's official environment-variable resolution for every named built-in provider.
-4. Run **Discover Models & Test** for the explicit custom-provider fallback; Pi validates built-in provider authentication when the graph starts.
+2. Select a built-in model from the installed runtime catalog, or enter/discover a model for an explicitly selected Custom profile. Cerebras starts with the guarded public-preview `Gemma 4 31B` preference and cannot run it unless the exact `gemma-4-31b` ID appears in the installed catalog.
+3. Use the shared runtime’s official sign-in or environment-variable resolution for every named built-in provider.
+4. Run **Discover Models & Test** for the explicit custom-provider connection test; the shared runtime validates built-in provider authentication when the graph starts.
 5. Optionally enable research and save a search-provider key.
 6. Start a loop, attach source images if needed, and answer the clarifying questions.
 7. For real files, choose an empty output directory before starting the loop. The Evidence Lab—generated-code execution, bounded automatic checks, loopback HTML proof, and static picture capture—has a separate warning and approval.
@@ -148,11 +193,11 @@ Then open **LightningLoop → Settings**:
 
 Inside the TUI, `/loop GOAL` runs the complete clarify → research → plan/review → gap-research → implement/verify/review state machine. `/research exa|brave|firecrawl|off` selects bounded iterative research, `/image PATH` queues a validated image, `/artifacts /absolute/empty/output --verify` grants the Evidence Lab for subsequent loops, `/artifacts off` revokes it, and `/loop-cancel` stops an active run. Final TUI output includes static-preview paths, localhost status, hashes, automatic-versus-implementer runner provenance, duration, and pass/fail state. `/memory` lists the protected ledger; `/memory-add`, `/memory-promote`, and `/memory-delete` provide explicit durable-memory control. `/evolution` lists versioned changes; `/evolution-propose`, `/evolution-evidence`, `/evolution-advance`, and `/evolution-rollback` expose the same ordered lifecycle as the GUI. Every advance is one confirmed transition. Activating a tool or MCP record changes ledger state only—it never grants execution authority or bypasses the separately pinned manifest, sandbox, and per-invocation approval. `/quit` and `/exit` both close the interface. The TUI advertises provider, model, research, and artifact state, fits standard 80-column terminals, and keeps credentials outside the model/tool environment.
 
-Pi arguments after `--` are restricted to safe presentation/session options. Tool, extension, provider, model, and session-directory overrides are rejected so passthrough flags cannot weaken LightningLoop’s boundary.
+Runtime arguments after `--` are restricted to safe presentation/session options. Tool, extension, provider, model, and session-directory overrides are rejected so passthrough flags cannot weaken LightningLoop’s boundary.
 
 ## Safety and privacy
 
-- Pi owns built-in inference authentication and refresh. LightningLoop does not copy Pi credentials into source, settings JSON, sessions, exports, logs, or managed backups. Research keys use official environment variables cross-platform or device-only Keychain entries on macOS.
+- The shared runtime owns built-in inference authentication and refresh. LightningLoop does not copy runtime credentials into source, settings JSON, sessions, exports, logs, or managed backups. Research keys use official environment variables cross-platform or device-only Keychain entries on macOS.
 - Goals, attached images, answers, plans, reviews, drafts, and bounded research evidence may be sent to the provider(s) the user selects.
 - Local state lives under `~/Library/Application Support/LightningLoop/` with restrictive permissions.
 - Prompt content, managed memories, skill guidance, and web excerpts are treated as untrusted data. Model-level prompt injection remains a residual risk.
@@ -195,8 +240,8 @@ The native unit suite covers fail-closed no-harness clarification/execution, pro
 ## Architecture
 
 ```text
-LightningLoop/  SwiftUI app, Pi bridge, fail-closed native boundary, persistence, views
-Harness/        Pi adapter, promise graphs, CLI/TUI, search, sandbox, MCP, governance, updates
+LightningLoop/  SwiftUI app, runtime bridge, fail-closed native boundary, persistence, views
+Harness/        runtime adapter, promise graphs, CLI/TUI, search, sandbox, MCP, governance, updates
 Examples/       checked-in artifact workflow examples
 Tools/          reviewed built-in artifact generators
 docs/           architecture, capabilities, threat model, review, brand research
@@ -213,11 +258,11 @@ More detail: [Architecture](docs/ARCHITECTURE.md) · [Capabilities](docs/CAPABIL
 - `ponytail:` The isolated native keyboard/accessibility/screenshot journey compiles, but its live run is pending macOS Accessibility/automation approval. The OS canceled the runner while system authentication was active, and Computer Use also timed out attaching. No security control was weakened and no stale provider-branded screenshot is presented as proof.
 - Provider presets and default model IDs can age; model discovery and the provider’s current documentation remain authoritative.
 
-## Brand and third parties
+## Brand, runtime, and third parties
 
 LightningLoop uses BarnLabs’ forest, mint, paper, and signal-gold palette with a product-specific loop/bolt icon. The parent BarnLabs mark remains separate and unmodified.
 
-LightningLoop is an independent BarnLabs open-source project. Provider names and trademarks belong to their respective owners; compatibility does not imply affiliation, endorsement, sponsorship, or partnership. See [NOTICE.md](NOTICE.md).
+LightningLoop is an independent BarnLabs open-source project. Its pinned Pi runtime dependency is named here for technical attribution, not product branding. Provider names and trademarks belong to their respective owners; compatibility does not imply affiliation, endorsement, sponsorship, or partnership. See [NOTICE.md](NOTICE.md) and [the brand guide](docs/BRAND.md).
 
 ## Contributing
 

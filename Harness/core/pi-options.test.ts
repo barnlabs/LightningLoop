@@ -8,8 +8,13 @@ test("safe print options are allowed without exposing provider or tool policy", 
   ]);
 });
 
-test("Pi tool, extension, provider, and session overrides are denied", () => {
+test("runtime tool, extension, provider, and session overrides are denied", () => {
   for (const option of ["--tools", "--extension", "--provider", "--model", "--session-dir"]) {
-    assert.throws(() => validatePiPassthrough([option, "unsafe"]), /safe passthrough/);
+    assert.throws(() => validatePiPassthrough([option, "unsafe"]), /Runtime option .*safe passthrough/u);
   }
+});
+
+test("passthrough errors use LightningLoop runtime language", () => {
+  assert.throws(() => validatePiPassthrough([""]), /Empty runtime option/u);
+  assert.throws(() => validatePiPassthrough(["--thinking", "extreme"]), /Invalid runtime thinking level/u);
 });
