@@ -79,8 +79,17 @@ struct SettingsView: View {
                         }
                     }
                     LabeledContent("Credential") {
-                        Label(draft.usesPiAuthentication ? "Managed by runtime" : (model.hasCredential(draft) ? "Stored in Keychain" : "Not configured"), systemImage: (draft.usesPiAuthentication || model.hasCredential(draft)) ? "checkmark.circle.fill" : "exclamationmark.circle")
-                            .foregroundStyle((draft.usesPiAuthentication || model.hasCredential(draft)) ? .green : .orange)
+                        if draft.usesPiAuthentication {
+                            // Do not paint built-in auth as "ready" — catalogued ≠ signed-in.
+                            Label("Runtime-managed (sign-in unknown)", systemImage: "key.horizontal")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Label(
+                                model.hasCredential(draft) ? "Stored in Keychain" : "Not configured",
+                                systemImage: model.hasCredential(draft) ? "checkmark.circle.fill" : "exclamationmark.circle"
+                            )
+                            .foregroundStyle(model.hasCredential(draft) ? .green : .orange)
+                        }
                     }
                     HStack {
                         if draft.usesPiAuthentication {

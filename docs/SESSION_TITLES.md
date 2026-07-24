@@ -8,8 +8,10 @@ LightningLoop keeps loop titles short for the sidebar. Titles are **not** Gold e
 |-------|------|-----------|
 | Provisional | Goal edit (unlocked) | Offline heuristic: strip common prefixes, first sentence / ≤8 words, cap 56 chars |
 | Structured | After clarification summary or plan/criteria arrive | Prefer first plan step title, else criterion title, else summary/goal heuristic |
-| LLM (optional) | Same moments, Settings toggle on | Tiny completion via custom-provider `ProviderClient` only; JSON `{"title":"..."}`; fail soft |
-| Manual | User rename | Locks auto updates until **Unlock auto-title** |
+| LLM (optional) | Same moments, Settings toggle on | Tiny completion via custom-provider `ProviderClient` only; JSON `{"title":"..."}`; fail soft; **generation token** drops stale completions |
+| Manual | User rename | Locks auto updates until **Unlock auto-title**; invalidates in-flight LLM titles |
+
+Summary-only titles use source **structured** (not provisional) so later goal edits do not clobber them.
 
 ## Settings
 

@@ -55,17 +55,28 @@ enum SessionTitle {
         criteria: [Criterion],
         plan: [PlanStep]
     ) -> String {
+        resolved(goal: goal, clarifiedSummary: clarifiedSummary, criteria: criteria, plan: plan).title
+    }
+
+    /// Same title resolution as `structured`, plus the provenance that must be stored on the session.
+    /// Summary-only titles are `.structured` (not `.provisional`) so goal edits do not clobber them.
+    static func resolved(
+        goal: String,
+        clarifiedSummary: String,
+        criteria: [Criterion],
+        plan: [PlanStep]
+    ) -> (title: String, source: SessionTitleSource) {
         if let step = plan.first(where: { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
-            return truncate(collapseWhitespace(step.title), maxLength: maxLength)
+            return (truncate(collapseWhitespace(step.title), maxLength: maxLength), .structured)
         }
         if let criterion = criteria.first(where: { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
-            return truncate(collapseWhitespace(criterion.title), maxLength: maxLength)
+            return (truncate(collapseWhitespace(criterion.title), maxLength: maxLength), .structured)
         }
         let summary = collapseWhitespace(clarifiedSummary)
         if !summary.isEmpty {
-            return provisional(from: summary)
+            return (provisional(from: summary), .structured)
         }
-        return provisional(from: goal)
+        return (provisional(from: goal), .provisional)
     }
 
     /// Parse a model title response; returns nil when unusable so callers fall back.
@@ -100,7 +111,7 @@ enum SessionTitle {
     }
 
     static func sanitizeLLMTitle(_ title: String) -> String? {
-        var working = collapseWhitespace(title)
+        let working = collapseWhitespace(title)
         let lower = working.lowercased()
         let bannedPrefixes = [
             "alright", "sure", "here", "i need", "i'll", "i will", "the title",

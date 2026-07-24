@@ -164,7 +164,7 @@ No credentialed provider request was made. The repository does not claim indepen
 | Gate | Final result |
 |---|---|
 | `xcodegen generate` | PASS; project regenerated |
-| `xcodebuild -project LightningLoop.xcodeproj -scheme LightningLoop -derivedDataPath .build/NativeTests CODE_SIGNING_ALLOWED=NO test` | PASS; **80** tests, 0 failures, `TEST SUCCEEDED` (includes 7 `SessionTitleTests`; re-run 2026-07-23 delivery) |
+| `xcodebuild -project LightningLoop.xcodeproj -scheme LightningLoop -derivedDataPath .build/NativeTests CODE_SIGNING_ALLOWED=NO test` | PASS; **84** tests, 0 failures, `TEST SUCCEEDED` (includes 11 `SessionTitleTests` after title-race fixes; re-run 2026-07-23) |
 | `xcodebuild -project LightningLoop.xcodeproj -scheme LightningLoopUI -derivedDataPath .build/UIBuild CODE_SIGNING_ALLOWED=NO build-for-testing` | PASS; `TEST BUILD SUCCEEDED` (prior packet; UI journey compile not re-claimed as live a11y) |
 | `npm run build:harness && node --test dist/rpc/server.test.js dist/update/update-policy.test.js` | PASS; 24 tests, 24 pass, 0 fail, including both same-run concurrency probes and both query-bearing URL rejections |
 | `npm run verify:harness` | PASS; **207** tests, 207 pass, 0 fail (re-run 2026-07-23 delivery) |

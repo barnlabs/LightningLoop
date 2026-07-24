@@ -39,6 +39,20 @@ final class SessionTitleTests: XCTestCase {
         XCTAssertTrue(summaryTitle.contains("summary") || summaryTitle.contains("One sentence"))
     }
 
+    func testResolvedMarksSummaryOnlyAsStructured() {
+        let resolved = SessionTitle.resolved(
+            goal: "raw goal text that would be provisional",
+            clarifiedSummary: "Clarify the museum launch audience and proof.",
+            criteria: [],
+            plan: []
+        )
+        XCTAssertEqual(resolved.source, .structured)
+        XCTAssertNotEqual(resolved.title, SessionTitle.emptyTitle)
+
+        let empty = SessionTitle.resolved(goal: "please help me write a brief", clarifiedSummary: "", criteria: [], plan: [])
+        XCTAssertEqual(empty.source, .provisional)
+    }
+
     func testParseLLMTitleAcceptsJSONAndRejectsPreamble() {
         XCTAssertEqual(SessionTitle.parseLLMTitle("{\"title\":\"Museum Launch Brief\"}"), "Museum Launch Brief")
         XCTAssertNil(SessionTitle.parseLLMTitle("Alright, I need to create a concise title for this chat"))
@@ -58,19 +72,7 @@ final class SessionTitleTests: XCTestCase {
 
     @MainActor
     func testRenameLocksAndUnlockRestoresStructured() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let archive = SessionArchive(fileURL: root.appendingPathComponent("sessions.json"))
-        let providerStore = ProviderConfigurationStore(fileURL: root.appendingPathComponent("provider.json"))
-        let model = AppModel(
-            engine: TitleTestLoopService(),
-            archive: archive,
-            providerStore: providerStore,
-            credentialRegistry: CustomCredentialServiceRegistry(fileURL: root.appendingPathComponent("cred.json")),
-            credentialReader: { _ in nil },
-            skipCredentialRefresh: true
-        )
+        let model = try makeTitleTestModel()
         model.updateGoal("Please help me write a source-backed launch brief")
         XCTAssertEqual(model.selectedSession?.titleSource, .provisional)
         XCTAssertNotEqual(model.selectedSession?.title, SessionTitle.emptyTitle)
@@ -97,6 +99,92 @@ final class SessionTitleTests: XCTestCase {
         XCTAssertEqual(model.selectedSession?.title, "Ship launch brief")
     }
 
+    @MainActor
+    func testUnlockAfterSummaryOnlyDoesNotBecomeProvisional() throws {
+        let model = try makeTitleTestModel()
+        model.updateGoal("Please write a long goal that should not win after clarify")
+        model.sessions[0].clarifiedSummary = "Clarify the museum launch audience and proof."
+        model.sessions[0].title = "Manual"
+        model.sessions[0].titleSource = .manual
+        model.sessions[0].titleLocked = true
+        model.unlockSelectedSessionTitle()
+        XCTAssertEqual(model.selectedSession?.titleSource, .structured)
+        XCTAssertFalse(model.selectedSession?.titleLocked == true)
+
+        // Goal edit must not clobber summary-derived structured titles.
+        let before = model.selectedSession?.title
+        model.updateGoal("Completely different goal after unlock")
+        XCTAssertEqual(model.selectedSession?.title, before)
+        XCTAssertEqual(model.selectedSession?.titleSource, .structured)
+    }
+
+    @MainActor
+    func testStaleLLMTitleGenerationIsIgnored() throws {
+        let model = try makeTitleTestModel()
+        guard let sessionID = model.selectedSessionID else {
+            return XCTFail("missing session")
+        }
+        model.updateGoal("Initial goal for title race")
+        model.sessions[0].clarifiedSummary = "First clarification summary for the loop."
+
+        // Rename bumps generation; unlock bumps again. Capture both.
+        model.renameSelectedSession(to: "Locked")
+        let staleGeneration = model.titleGeneration(for: sessionID)
+        XCTAssertGreaterThan(staleGeneration, 0)
+        model.unlockSelectedSessionTitle()
+        let currentGeneration = model.titleGeneration(for: sessionID)
+        XCTAssertGreaterThan(currentGeneration, staleGeneration)
+
+        model.sessions[0].title = "Structured After Unlock"
+        model.sessions[0].titleSource = .structured
+        model.sessions[0].titleLocked = false
+        model.sessions[0].clarifiedSummary = "First clarification summary for the loop."
+
+        // Stale generation must not apply.
+        model.applyLLMTitleResult(sessionID: sessionID, generation: staleGeneration, title: "Stale LLM Title")
+        XCTAssertEqual(model.selectedSession?.title, "Structured After Unlock")
+        XCTAssertEqual(model.selectedSession?.titleSource, .structured)
+
+        // Matching generation applies.
+        model.applyLLMTitleResult(sessionID: sessionID, generation: currentGeneration, title: "Fresh LLM Title")
+        XCTAssertEqual(model.selectedSession?.title, "Fresh LLM Title")
+        XCTAssertEqual(model.selectedSession?.titleSource, .llm)
+
+        // Locked manual title rejects even matching generation after a new rename.
+        model.renameSelectedSession(to: "User Locked")
+        let lockedGen = model.titleGeneration(for: sessionID)
+        model.applyLLMTitleResult(sessionID: sessionID, generation: lockedGen, title: "Should Not Apply")
+        XCTAssertEqual(model.selectedSession?.title, "User Locked")
+        XCTAssertEqual(model.selectedSession?.titleSource, .manual)
+    }
+
+    @MainActor
+    func testUnboundCatalogBlockerAsksForRefresh() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let providerStore = ProviderConfigurationStore(fileURL: root.appendingPathComponent("provider.json"))
+        try providerStore.save(ProviderConfiguration.preset(.cerebras))
+        let catalogModel = AppModel(
+            engine: TitleTestLoopService(),
+            archive: SessionArchive(fileURL: root.appendingPathComponent("sessions.json")),
+            providerStore: providerStore,
+            credentialRegistry: CustomCredentialServiceRegistry(fileURL: root.appendingPathComponent("cred.json")),
+            credentialReader: { _ in nil },
+            runtimeLabel: "Shared LightningLoop runtime",
+            skipCredentialRefresh: true
+        )
+        let message = catalogModel.loopReadinessMessage
+        XCTAssertNotNil(message)
+        // Gemma preference notice when unbound, or explicit refresh wording for other models.
+        XCTAssertTrue(
+            message?.localizedCaseInsensitiveContains("refresh") == true
+                || message?.localizedCaseInsensitiveContains("public-preview") == true
+                || message?.localizedCaseInsensitiveContains("catalog") == true,
+            "expected refresh/catalog/preview notice, got: \(message ?? "nil")"
+        )
+    }
+
     func testLegacySessionDecodesWithoutTitleSource() throws {
         var session = LoopSession(goal: "legacy goal for decode")
         session.title = "Old title"
@@ -109,6 +197,23 @@ final class SessionTitleTests: XCTestCase {
         XCTAssertEqual(decoded.titleSource, .provisional)
         XCTAssertFalse(decoded.titleLocked)
         XCTAssertEqual(decoded.title, "Old title")
+    }
+
+    @MainActor
+    private func makeTitleTestModel() throws -> AppModel {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // Intentionally leak root until process exit for short unit tests; FileManager temp is cleaned by OS.
+        let archive = SessionArchive(fileURL: root.appendingPathComponent("sessions.json"))
+        let providerStore = ProviderConfigurationStore(fileURL: root.appendingPathComponent("provider.json"))
+        return AppModel(
+            engine: TitleTestLoopService(),
+            archive: archive,
+            providerStore: providerStore,
+            credentialRegistry: CustomCredentialServiceRegistry(fileURL: root.appendingPathComponent("cred.json")),
+            credentialReader: { _ in nil },
+            skipCredentialRefresh: true
+        )
     }
 }
 

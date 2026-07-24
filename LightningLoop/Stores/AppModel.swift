@@ -42,6 +42,9 @@ final class AppModel {
     private var operation: Task<Void, Never>?
     private var artifactBrowserSession: ArtifactBrowserSession?
     private var artifactOpenSnapshots: [URL] = []
+    /// Monotonic per-session token so stale optional LLM title completions cannot clobber newer titles.
+    private var titleGenerations: [UUID: UInt64] = [:]
+    private var titleTasks: [UUID: Task<Void, Never>] = [:]
 
     init(
         engine: any LoopServicing,
@@ -202,10 +205,13 @@ final class AppModel {
         guard providerProfile.usesPiAuthentication else { return nil }
         if providerProfile.requiresRuntimeModelVerification, selectedRuntimeModelCatalogued != true {
             return providerProfile.runtimeModelSelectionNotice
+                ?? "Gemma 4 31B is a public-preview preference. Refresh the installed runtime catalog and choose a listed model if it is absent."
         }
-        guard runtimeModelCatalogProviderID == providerProfile.id,
-              selectedRuntimeModelCatalogued == true else {
-            return "\(providerProfile.modelName) is not catalogued by the installed LightningLoop runtime. Choose a listed model."
+        if runtimeModelCatalogProviderID != providerProfile.id {
+            return "Refresh the installed LightningLoop runtime catalog before running a loop. Catalogued means the pinned runtime lists the model ID — not provider sign-in."
+        }
+        guard selectedRuntimeModelCatalogued == true else {
+            return "\(providerProfile.modelName) is not catalogued by the installed LightningLoop runtime. Choose a listed model from the runtime catalog."
         }
         return nil
     }
@@ -406,6 +412,7 @@ final class AppModel {
 
     /// User rename locks auto-title until unlocked.
     func renameSelectedSession(to rawTitle: String) {
+        guard !isRunning else { return }
         guard let sanitizer = currentCredentialSanitizer() else {
             settingsMessage = "Rename is blocked because the credential catalog is unavailable."
             return
@@ -413,6 +420,9 @@ final class AppModel {
         let cleaned = SessionTitle.collapseWhitespace(sanitizer.sanitize(rawTitle))
         guard !cleaned.isEmpty else { return }
         let title = SessionTitle.truncate(cleaned, maxLength: SessionTitle.maxLength)
+        guard let sessionID = selectedSessionID else { return }
+        // Invalidate any in-flight optional LLM title for this session.
+        invalidateTitleGeneration(for: sessionID)
         mutateSelected { session in
             session.title = title
             session.titleSource = .manual
@@ -423,17 +433,20 @@ final class AppModel {
     }
 
     func unlockSelectedSessionTitle() {
+        guard !isRunning else { return }
+        guard let sessionID = selectedSessionID else { return }
+        invalidateTitleGeneration(for: sessionID)
         mutateSelected { session in
             session.titleLocked = false
             if session.titleSource == .manual {
-                session.titleSource = .provisional
-                session.title = SessionTitle.structured(
+                let resolved = SessionTitle.resolved(
                     goal: session.goal,
                     clarifiedSummary: session.clarifiedSummary,
                     criteria: session.criteria,
                     plan: session.plan
                 )
-                session.titleSource = session.plan.isEmpty && session.criteria.isEmpty ? .provisional : .structured
+                session.title = resolved.title
+                session.titleSource = resolved.source
             }
             session.updatedAt = Date()
         }
@@ -446,21 +459,16 @@ final class AppModel {
 
     private func applyAutoTitle(to session: inout LoopSession, preferLLM: Bool) {
         guard SessionTitle.shouldAutoUpdate(source: session.titleSource, locked: session.titleLocked) else { return }
-        let structured = SessionTitle.structured(
+        let resolved = SessionTitle.resolved(
             goal: session.goal,
             clarifiedSummary: session.clarifiedSummary,
             criteria: session.criteria,
             plan: session.plan
         )
-        if !session.plan.isEmpty || !session.criteria.isEmpty || !session.clarifiedSummary.isEmpty {
-            session.title = structured
-            session.titleSource = .structured
-        } else {
-            session.title = SessionTitle.provisional(from: session.goal)
-            session.titleSource = .provisional
-        }
+        session.title = resolved.title
+        session.titleSource = resolved.source
         if preferLLM {
-            // LLM path is async; structured title stays until it returns.
+            // LLM path is async; structured/provisional title stays until a matching generation returns.
             scheduleLLMTitleIfEnabled(for: session.id)
         }
     }
@@ -470,17 +478,30 @@ final class AppModel {
         set { UserDefaults.standard.set(newValue, forKey: Self.autoTitleLLMPreferenceKey) }
     }
 
+    private func invalidateTitleGeneration(for sessionID: UUID) {
+        titleTasks[sessionID]?.cancel()
+        titleTasks[sessionID] = nil
+        titleGenerations[sessionID, default: 0] &+= 1
+    }
+
     private func scheduleLLMTitleIfEnabled(for sessionID: UUID) {
         guard autoTitleLLMEnabled else { return }
         // Built-in providers keep credentials in the runtime; only custom Keychain profiles can run a local title complete.
         guard providerProfile.allowsNativeConnectionTesting else { return }
         guard hasCredential(providerProfile) else { return }
-        Task { [weak self] in
-            await self?.generateLLMTitle(for: sessionID)
+        titleTasks[sessionID]?.cancel()
+        titleGenerations[sessionID, default: 0] &+= 1
+        let generation = titleGenerations[sessionID, default: 0]
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.generateLLMTitle(for: sessionID, generation: generation)
         }
+        titleTasks[sessionID] = task
     }
 
-    private func generateLLMTitle(for sessionID: UUID) async {
+    private func generateLLMTitle(for sessionID: UUID, generation: UInt64) async {
+        guard !Task.isCancelled else { return }
+        guard titleGenerations[sessionID] == generation else { return }
         guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
         let session = sessions[index]
         guard SessionTitle.shouldAutoUpdate(source: session.titleSource, locked: session.titleLocked) else { return }
@@ -494,21 +515,34 @@ final class AppModel {
                 criterionTitles: session.criteria.map(\.title)
             )
             let reply = try await client.complete(request)
+            guard !Task.isCancelled else { return }
+            guard titleGenerations[sessionID] == generation else { return }
             let sanitize = makeTextSanitizer()
             guard let parsed = SessionTitle.parseLLMTitle(sanitize(reply.content)) else { return }
-            mutateSession(sessionID) { current in
-                guard SessionTitle.shouldAutoUpdate(source: current.titleSource, locked: current.titleLocked) else { return }
-                current.title = parsed
-                current.titleSource = .llm
-                current.updatedAt = Date()
-            }
-            persist()
+            applyLLMTitleResult(sessionID: sessionID, generation: generation, title: parsed)
+        } catch is CancellationError {
+            return
         } catch {
-            // Fail soft for Gold/pause — surface a redacted non-blocking notice only.
-            settingsMessage = sanitizeSensitiveText(
-                "Optional LLM title skipped: \(error.localizedDescription). Sidebar keeps the structured or provisional title."
-            )
+            // Fail soft for Gold/pause — do not clobber operational settingsMessage.
+            return
         }
+    }
+
+    /// Testable application path for LLM titles (generation must still match).
+    func applyLLMTitleResult(sessionID: UUID, generation: UInt64, title: String) {
+        guard titleGenerations[sessionID] == generation else { return }
+        mutateSession(sessionID) { current in
+            guard SessionTitle.shouldAutoUpdate(source: current.titleSource, locked: current.titleLocked) else { return }
+            current.title = title
+            current.titleSource = .llm
+            current.updatedAt = Date()
+        }
+        persist()
+    }
+
+    /// Exposes the current title generation for unit tests.
+    func titleGeneration(for sessionID: UUID) -> UInt64 {
+        titleGenerations[sessionID, default: 0]
     }
 
     func updateAnswer(questionID: String, value: String) {
@@ -901,19 +935,25 @@ final class AppModel {
     }
 
     func canSaveProviderConfiguration(_ profile: ProviderConfiguration) -> Bool {
-        guard profile.usesPiAuthentication,
-              runtimeModelCatalogProviderID == profile.id else { return true }
-        return runtimeModels.contains { $0.modelID == profile.modelID }
+        // Custom profiles do not use the runtime catalog save gate.
+        guard profile.usesPiAuthentication else { return true }
+        // When a catalog is bound for this provider, only catalogued model IDs may be saved.
+        if runtimeModelCatalogProviderID == profile.id {
+            return runtimeModels.contains { $0.modelID == profile.modelID }
+        }
+        // Catalog not yet bound: allow selecting a built-in preset so onboarding can proceed.
+        // Execution remains fail-closed via activeRuntimeModelSelectionBlocker until refresh succeeds.
+        return profile.preset != .selectionRequired
     }
 
     func runtimeModelSelectionMessage(for profile: ProviderConfiguration) -> String? {
         guard profile.usesPiAuthentication else { return nil }
         guard runtimeModelCatalogProviderID == profile.id else {
             return profile.runtimeModelSelectionNotice
-                ?? "Refresh the installed LightningLoop runtime catalog to confirm this model."
+                ?? "Refresh the installed LightningLoop runtime catalog before saving. Catalogued is not sign-in or entitlement."
         }
         if let model = runtimeModels.first(where: { $0.modelID == profile.modelID }) {
-            return "\(model.modelName) is catalogued by the installed LightningLoop runtime."
+            return "\(model.modelName) is catalogued by the installed LightningLoop runtime. Catalogued is not account entitlement."
         }
         return profile.runtimeModelSelectionNotice
             ?? "\(profile.modelName) is not catalogued by the installed LightningLoop runtime. Choose a listed model."
