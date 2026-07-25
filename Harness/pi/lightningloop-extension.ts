@@ -136,7 +136,9 @@ export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
             ? "Provider-neutral · authentication and model catalog managed by the LightningLoop runtime"
             : profile.preset === "generalcompute"
               ? "GeneralCompute · LightningLoop-managed fixed provider · Keychain or GENERALCOMPUTE_API_KEY"
-              : "Custom provider · credential stays in macOS Keychain");
+              : profile.preset === "selection-required"
+                ? "Provider selection required · run lightningloop provider select"
+                : "Custom provider · credential stays in macOS Keychain");
           return [
             truncateToWidth(rule, width),
             truncateToWidth(brand, width),
