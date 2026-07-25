@@ -12,10 +12,12 @@ LightningLoop is BarnLabs’ open-source macOS app and cross-platform terminal i
 
 ## Start here
 
+- **Contributors (Mac, humans, AI agents):** begin at **[checklist.md](checklist.md) Phase 0**, then [CONTRIBUTING.md](CONTRIBUTING.md). Work one phase / one LL-ID at a time — do not one-shot production release rows.
 - **macOS GUI + terminal:** follow the [source-install path](#macos-gui-and-tui).
 - **Windows terminal:** follow the [Windows TUI path](#windows-tui).
 - **First loop:** complete [first-run setup](#first-run), state the result you need, then answer the clarifying questions.
 - **Agent handoff:** copy a safe [setup, access, update, or repair prompt](docs/AGENT_SETUP_AND_MAINTENANCE.md).
+- **Production ID table:** [PRODUCTION_READINESS_CHECKLIST.md](PRODUCTION_READINESS_CHECKLIST.md) (status ledger; not a one-shot task list).
 
 LightningLoop is the product. BarnLabs is the open-source project steward. Provider and runtime details support the product; they are not its public identity.
 
@@ -48,7 +50,7 @@ flowchart LR
 - A native SwiftUI macOS client with local history, source-image attachments, visible criteria, plan, reviews, trace, and run metrics.
 - A shared runtime integration for provider catalogs and official sign-in flows, while LightningLoop keeps its product, history, and evidence boundaries independent from providers.
 - Bounded promise/duty graphs with named requirements, outputs, routes, evidence traces, per-node visit caps, and total-step caps.
-- The shared runtime owns catalogs and model selection for every named built-in provider. Only an explicitly selected Custom macOS profile uses LightningLoop's native `/models` discovery and connection test; that path cannot execute a loop without the shared harness.
+- The shared runtime owns catalogs and model selection for every Pi-managed built-in provider. Custom and GeneralCompute profiles use LightningLoop's native `/models` discovery and connection test; that path cannot execute a loop without the shared harness.
 - Optional iterative research through Exa, Brave, or Firecrawl in the shared harness. The orchestrator researches before planning, and harsh reviewers may request narrow follow-up queries between repair rounds. Queries, URLs, and result counts are deduplicated and capped per run. Search snippets remain unverified; the harness can open the leading HTTPS sources with redirects disabled, preserve retrieval time/content hash/source class, and bind factual criteria to an exact opened URL. The parity-tested native research implementation is not reachable from production loop execution while no-harness execution is blocked.
 - A shared TypeScript state machine used by the CLI and, when discoverable, the native app through a versioned JSONL subprocess protocol.
 - A policy-wrapped terminal interface that starts read-only. Optional execution uses a separate OS-sandboxed, per-call-confirmed path.
@@ -62,11 +64,11 @@ flowchart LR
 
 ## Providers and images
 
-Choose a preset in **Settings**. Built-in presets use the shared runtime’s official sign-in or environment-variable resolution; LightningLoop never copies the resulting OAuth or API-key credential. Historical LightningLoop-owned Keychain service identifiers are retained only so local memory, evolution, errors, and migration paths can reject credential values without enumerating runtime-owned state. A custom provider is a macOS-only, explicit user-trusted public HTTPS hostname and its connection can be tested in Settings, but loop clarification, execution, and Gold all require the shared harness.
+Choose a preset in **Settings**. Pi-managed built-in presets use the shared runtime’s official sign-in or environment-variable resolution; LightningLoop never copies the resulting OAuth or API-key credential. **GeneralCompute** is LightningLoop-managed: fixed base URL, API key in Keychain or `GENERALCOMPUTE_API_KEY`, and Settings Discover Models & Test (not runtime `/login`). Historical LightningLoop-owned Keychain service identifiers are retained only so local memory, evolution, errors, and migration paths can reject credential values without enumerating runtime-owned state. A custom provider is a macOS-only, explicit user-trusted public HTTPS hostname and its connection can be tested in Settings, but loop clarification, execution, and Gold all require the shared harness.
 
 Image inputs are deliberately bounded: PNG, JPEG, WebP, or GIF; up to four files; 10 MB each. LightningLoop validates the decoded image type, copies it into protected app storage, and sends it only to the active provider during the run. Text-only models reject image-bearing runs before inference.
 
-Provider capabilities and model availability change. For built-in providers, the installed runtime catalog is the source of truth for which model IDs LightningLoop may start; it does not prove provider sign-in or account entitlement. Only an explicitly selected Custom profile uses native `/models` discovery and a connection test.
+Provider capabilities and model availability change. For Pi-managed built-in providers, the installed runtime catalog is the source of truth for which model IDs LightningLoop may start; it does not prove provider sign-in or account entitlement. Custom and GeneralCompute profiles use native `/models` discovery and a connection test.
 
 ## Research
 
@@ -169,10 +171,10 @@ The terminal interface has no silent default provider. On clean data, `llp` exit
 
 Then open **LightningLoop → Settings**:
 
-1. Choose Codex, Claude, Grok, Cerebras, Groq, Fireworks, or Custom.
-2. Select a built-in model from the installed runtime catalog, or enter/discover a model for an explicitly selected Custom profile. Cerebras starts with the guarded public-preview `Gemma 4 31B` preference and cannot run it unless the exact `gemma-4-31b` ID appears in the installed catalog.
-3. Use the shared runtime’s official sign-in or environment-variable resolution for every named built-in provider.
-4. Run **Discover Models & Test** for the explicit custom-provider connection test; the shared runtime validates built-in provider authentication when the graph starts.
+1. Choose Codex, Claude, Grok, Cerebras, Groq, Fireworks, GeneralCompute, or Custom.
+2. Select a built-in model from the installed runtime catalog, or enter/discover a model for Custom or GeneralCompute. Cerebras starts with the guarded public-preview `Gemma 4 31B` preference and cannot run it unless the exact `gemma-4-31b` ID appears in the installed catalog. GeneralCompute starts with `minimax-m2.7`.
+3. Use the shared runtime’s official sign-in or environment-variable resolution for every Pi-managed built-in provider. For GeneralCompute, save the API key in Settings or set `GENERALCOMPUTE_API_KEY`.
+4. Run **Discover Models & Test** for Custom or GeneralCompute; the shared runtime validates Pi-managed provider authentication when the graph starts.
 5. Optionally enable research and save a search-provider key.
 6. Start a loop, attach source images if needed, and answer the clarifying questions.
 7. For real files, choose an empty output directory before starting the loop. The Evidence Lab—generated-code execution, bounded automatic checks, loopback HTML proof, and static picture capture—has a separate warning and approval.

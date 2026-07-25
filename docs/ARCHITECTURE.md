@@ -99,7 +99,7 @@ A grant records scope, reason, run ID, approver, expiry, and whether it can be r
 
 ## Credentials
 
-Pi stores and refreshes credentials for every named built-in provider preset. LightningLoop stores no Pi credential values and does not inspect their presence: built-in-provider status is `Pi-managed/unknown` until Pi itself runs and reports success or an auth failure. Legacy/custom macOS API keys and macOS search-provider keys use isolated Keychain services; Windows research can use official environment variables. The native client may test an explicitly trusted custom-provider connection, but it does not run the loop or award Gold without the shared harness. Configuration and run records contain only non-secret provider IDs.
+Pi stores and refreshes credentials for Pi-managed named built-in provider presets (Cerebras, Groq, Fireworks, xAI, OpenAI Codex, Anthropic). LightningLoop stores no Pi credential values and does not inspect their presence: those providers surface as `Pi-managed/unknown` until Pi itself runs and reports success or an auth failure. GeneralCompute is LightningLoop-managed (fixed base URL, Keychain or `GENERALCOMPUTE_API_KEY`, Discover Models & Test). Custom macOS API keys and macOS search-provider keys use isolated Keychain services; Windows research can use official environment variables. The native client may test GeneralCompute or an explicitly trusted custom-provider connection, but it does not run the loop or award Gold without the shared harness. Configuration and run records contain only non-secret provider IDs.
 
 The harness must not:
 

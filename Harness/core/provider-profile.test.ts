@@ -67,7 +67,7 @@ test("reviewed presets can be selected without storing credentials", () => {
   const directory = mkdtempSync(join(tmpdir(), "lightningloop-provider-select-"));
   const config = join(directory, "provider.json");
   try {
-    assert.deepEqual(selectableProviderPresets, ["cerebras", "groq", "fireworks", "xai", "openai-codex", "anthropic"]);
+    assert.deepEqual(selectableProviderPresets, ["cerebras", "groq", "fireworks", "generalcompute", "xai", "openai-codex", "anthropic"]);
     const selected = saveProviderPreset("cerebras", config);
     assert.equal(selected.preset, "cerebras");
     assert.equal(loadProviderProfile(config).modelID, "gemma-4-31b");
@@ -88,10 +88,34 @@ test("reviewed presets can be selected without storing credentials", () => {
   }
 });
 
+test("GeneralCompute is a LightningLoop-managed fixed API-key preset without Pi ownership", () => {
+  const profile = profileForPreset("generalcompute");
+  assert.equal(profile.preset, "generalcompute");
+  assert.equal(profile.id, "generalcompute");
+  assert.equal(profile.displayName, "GeneralCompute");
+  assert.equal(profile.baseURL, "https://api.generalcompute.com/v1");
+  assert.equal(profile.modelID, "minimax-m2.7");
+  assert.equal(profile.modelName, "MiniMax M2.7");
+  assert.equal(profile.supportsImages, false);
+  assert.equal(profile.contextWindow, 192_000);
+  assert.equal(profile.maxOutputTokens, 131_072);
+  assert.equal(profile.piProviderID, undefined);
+  assert.equal(providerCredentialService(profile), "com.barnlabs.LightningLoop.provider.generalcompute.apiKey");
+  assert.ok(selectableProviderPresets.includes("generalcompute"));
+  assert.throws(
+    () => parseProviderProfile({ ...profile, baseURL: "https://example.com/v1" }),
+    /verified API base URL/,
+  );
+  const roundTrip = parseProviderProfile(profile);
+  assert.equal(roundTrip.piProviderID, undefined);
+  assert.equal(roundTrip.baseURL, "https://api.generalcompute.com/v1");
+});
+
 test("official login providers map directly onto Pi's built-in provider IDs", () => {
   assert.equal(profileForPreset("xai").piProviderID, "xai");
   assert.equal(profileForPreset("openai-codex").piProviderID, "openai-codex");
   assert.equal(profileForPreset("anthropic").piProviderID, "anthropic");
+  assert.equal(profileForPreset("generalcompute").piProviderID, undefined);
 });
 
 test("historical official-provider services remain filter-only and never become current auth", () => {

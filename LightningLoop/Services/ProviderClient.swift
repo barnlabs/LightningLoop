@@ -17,7 +17,7 @@ enum ProviderClientError: LocalizedError, Equatable {
         case .server(let provider, let status, _): "\(provider) request failed (HTTP \(status)); provider response text was withheld."
         case .emptyResponse: "The model returned no text content."
         case .imageReadFailed(let name): "The image \(name) could not be read. Remove it and attach it again."
-        case .piManagedProfile: "Built-in providers are managed by the LightningLoop runtime. Native direct requests are available only for an explicitly selected Custom profile."
+        case .piManagedProfile: "Built-in providers are managed by the LightningLoop runtime. Native direct requests are available only for GeneralCompute or an explicitly selected Custom profile."
         }
     }
 }

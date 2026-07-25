@@ -21,11 +21,15 @@ If the installed runtime does not catalogue that exact model ID, the GUI explain
 
 This reflects Cerebras' [model catalog](https://inference-docs.cerebras.ai/models/overview), which lists `gemma-4-31b` as Gemma 4 31B Preview, and its [image-input documentation](https://inference-docs.cerebras.ai/capabilities/image-inputs), which identifies that model as the current image-input preview. Preview availability may change; the pinned runtime catalog remains the local execution guard.
 
+## GeneralCompute
+
+GeneralCompute is a LightningLoop-managed fixed preset (not Pi-managed). Selecting it resets to preferred model `minimax-m2.7` (`MiniMax M2.7`) at base URL `https://api.generalcompute.com/v1` with 192k context and a schema-capped 131072 max output tokens, text-only. Store the API key in Settings (Keychain) or set `GENERALCOMPUTE_API_KEY`. Use **Discover Models & Test** for account-visible model IDs; the harness registers the profile via `registerProvider` and never claims Pi `/login` ownership. See [generalcompute-provider-2026-07-25.md](research/generalcompute-provider-2026-07-25.md).
+
 ## Custom providers
 
-Custom OpenAI-compatible profiles retain the existing user-triggered **Discover Models & Test** action. That is the only direct native provider operation: it requires the user’s custom credential, is not run automatically, and does not provide a fallback path for built-in providers.
+Custom OpenAI-compatible profiles and GeneralCompute retain the user-triggered **Discover Models & Test** action. That is the only direct native provider operation: it requires the user’s LightningLoop-managed API key, is not run automatically, and does not provide a fallback path for Pi-managed built-in providers.
 
-Discovery calls the host’s OpenAI-compatible `GET /models` endpoint and surfaces **account-visible model IDs**. The list is not a marketing catalog and usually does not include display names or capability metadata; context window and image support remain user-set until the host exposes richer fields. Selecting a discovered ID copies it into the draft profile and sets the display name to that ID by default.
+Discovery calls the host’s OpenAI-compatible `GET /models` endpoint and surfaces **account-visible model IDs**. The list is not a marketing catalog and usually does not include display names or capability metadata; context window and image support remain user-set until the host exposes richer fields. Selecting a discovered ID copies it into the draft profile and sets the display name to that ID by default. GeneralCompute’s org inventory may prefer `POST /v1/models/list`; if `GET /models` is unsupported, enter model IDs manually.
 
 ## UX copy
 

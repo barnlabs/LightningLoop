@@ -5,6 +5,7 @@ enum CredentialProvider: String, CaseIterable, Identifiable, Sendable {
     case cerebras
     case groq
     case fireworks
+    case generalcompute
     case custom
     case exa
     case brave
@@ -17,6 +18,7 @@ enum CredentialProvider: String, CaseIterable, Identifiable, Sendable {
         case .cerebras: "Cerebras Inference"
         case .groq: "Groq Inference"
         case .fireworks: "Fireworks Inference"
+        case .generalcompute: "GeneralCompute"
         case .custom: "Custom Inference"
         case .exa: "Exa Search"
         case .brave: "Brave Search"
@@ -29,6 +31,7 @@ enum CredentialProvider: String, CaseIterable, Identifiable, Sendable {
         case .cerebras: "Cerebras-hosted models"
         case .groq: "Groq-hosted models"
         case .fireworks: "Fireworks-hosted models"
+        case .generalcompute: "GeneralCompute OpenAI-compatible models"
         case .custom: "Your OpenAI-compatible endpoint"
         case .exa: "Neural and research-oriented search"
         case .brave: "Independent-index web search"
@@ -41,6 +44,7 @@ enum CredentialProvider: String, CaseIterable, Identifiable, Sendable {
         case .cerebras: "com.barnlabs.LightningLoop.provider.cerebras.apiKey"
         case .groq: "com.barnlabs.LightningLoop.provider.groq.apiKey"
         case .fireworks: "com.barnlabs.LightningLoop.provider.fireworks.apiKey"
+        case .generalcompute: "com.barnlabs.LightningLoop.provider.generalcompute.apiKey"
         case .custom: "com.barnlabs.LightningLoop.provider.custom.apiKey"
         case .exa: "com.barnlabs.LightningLoop.search.exa"
         case .brave: "com.barnlabs.LightningLoop.search.brave"
@@ -48,8 +52,7 @@ enum CredentialProvider: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-
-    static var inferenceCases: [CredentialProvider] { [.cerebras, .groq, .fireworks, .custom] }
+    static var inferenceCases: [CredentialProvider] { [.cerebras, .groq, .fireworks, .generalcompute, .custom] }
     static var searchCases: [CredentialProvider] { [.exa, .brave, .firecrawl] }
 }
 
@@ -141,6 +144,7 @@ struct KeychainStore: Sendable {
     }
 
     func saveCredential(_ value: String, for provider: CredentialProvider) throws {
+        // Pi-managed API-key presets only. GeneralCompute and custom are LightningLoop-owned.
         guard ![CredentialProvider.cerebras, .groq, .fireworks].contains(provider) else {
             throw KeychainStoreError.piManagedProfile
         }

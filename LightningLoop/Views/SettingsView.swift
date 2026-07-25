@@ -153,7 +153,7 @@ struct SettingsView: View {
                         Text(model.settingsMessage).font(.caption).foregroundStyle(.secondary)
                     }
                     if let metrics = model.connectionMetrics { MetricsStrip(metrics: metrics) }
-                    Text("Clarification, execution, and Gold require the shared LightningLoop runtime. For a Custom profile, Discover Models & Test is the only direct native provider operation.")
+                    Text("Clarification, execution, and Gold require the shared LightningLoop runtime. For GeneralCompute or Custom, Discover Models & Test is the only direct native provider operation.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

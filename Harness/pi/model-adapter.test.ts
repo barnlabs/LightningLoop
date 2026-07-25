@@ -68,6 +68,34 @@ test("missing runtime catalog uses LightningLoop product language", async () => 
   });
 });
 
+test("GeneralCompute accepts GENERALCOMPUTE_API_KEY without Pi ownership", async () => {
+  const credential = "gc-live-synthetic-generalcompute-key-112233";
+  const profile = profileForPreset("generalcompute");
+  assert.equal(profile.piProviderID, undefined);
+  const previous = process.env.GENERALCOMPUTE_API_KEY;
+  process.env.GENERALCOMPUTE_API_KEY = credential;
+  try {
+    let registeredKey: string | undefined;
+    const runtime = {
+      registerProvider: (_providerID: string, options: { apiKey?: string }) => {
+        registeredKey = options.apiKey;
+      },
+      getModel: (providerID: string, modelID: string) => {
+        assert.equal(providerID, "lightningloop-generalcompute");
+        assert.equal(modelID, "minimax-m2.7");
+        return runtimeModel(profile);
+      },
+      completeSimple: async () => assert.fail("not exercised"),
+    } as unknown as Pick<ModelRuntime, "completeSimple" | "getModel" | "registerProvider">;
+    const adapter = await PiProviderAdapter.create(profile, async () => runtime);
+    assert.equal(adapter.supportsImages, false);
+    assert.equal(registeredKey, credential);
+  } finally {
+    if (previous === undefined) delete process.env.GENERALCOMPUTE_API_KEY;
+    else process.env.GENERALCOMPUTE_API_KEY = previous;
+  }
+});
+
 test("custom-provider credentials are redacted from successful model content", async () => {
   const credential = "custom-credential-without-known-prefix-112233";
   const profile = parseProviderProfile({

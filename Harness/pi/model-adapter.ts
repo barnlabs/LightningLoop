@@ -28,6 +28,22 @@ function readMacCredential(profile: ProviderProfile): string | undefined {
   return credential || undefined;
 }
 
+/** LightningLoop-managed API-key credentials (never Pi /login). Env is checked for GeneralCompute. */
+export function readLightningLoopManagedCredential(profile: ProviderProfile): string | undefined {
+  if (profile.preset === "generalcompute") {
+    const fromEnv = process.env.GENERALCOMPUTE_API_KEY?.trim();
+    if (fromEnv) return fromEnv;
+  }
+  return readMacCredential(profile);
+}
+
+function missingManagedCredentialMessage(profile: ProviderProfile): string {
+  if (profile.preset === "generalcompute") {
+    return "GeneralCompute requires GENERALCOMPUTE_API_KEY or a LightningLoop Keychain credential (Settings on macOS). It is not managed by runtime /login.";
+  }
+  return "LightningLoop-managed API-key providers require a credential from the macOS Settings Keychain (Custom OpenAI-compatible). GeneralCompute also accepts GENERALCOMPUTE_API_KEY.";
+}
+
 function assertRuntimeModelSnapshot(
   model: NonNullable<ReturnType<ModelRuntime["getModel"]>>,
   profile: ProviderProfile,
@@ -54,7 +70,7 @@ export class PiProviderAdapter implements AgentAdapter {
   static async create(
     profile = loadProviderProfile(),
     createRuntime: () => Promise<PiRuntime> = () => ModelRuntime.create({ modelsPath: null, allowModelNetwork: false }),
-    credentialReader: ProfileCredentialReader = readMacCredential,
+    credentialReader: ProfileCredentialReader = readLightningLoopManagedCredential,
   ): Promise<PiProviderAdapter> {
     if (isProviderSelectionRequired(profile)) {
       throw new Error("Choose and save an inference provider before starting LightningLoop.");
@@ -64,7 +80,7 @@ export class PiProviderAdapter implements AgentAdapter {
     let credential: string | undefined;
     if (!providerID) {
       credential = credentialReader(profile);
-      if (!credential) throw new Error("Custom providers currently require a credential saved by the LightningLoop macOS GUI.");
+      if (!credential) throw new Error(missingManagedCredentialMessage(profile));
       registerRuntimeCredential(credential);
     }
     const resolvedProviderID = providerID ?? `lightningloop-${profile.id}`;

@@ -11,8 +11,8 @@ LightningLoop is a native macOS demonstration of fast iterative model orchestrat
 - Runtime: native macOS 14+ SwiftUI app; macOS/Windows terminal harness on Node >=22.19 and the underlying runtime's Bash requirement
 - Source install: `script/install_from_github.sh` installs the macOS GUI at `~/Applications/LightningLoop.app` and the shared TUI package under `~/.local`; `script/install_tui.ps1` verifies, packs, and installs the Windows TUI
 - Execution isolation: pinned Anthropic Sandbox Runtime; workspace-only writes and network denied by default
-- Model/API: runtime-managed provider/model catalog; Codex, Claude, and Grok sign-in plus API-key providers including Groq and Fireworks
-- Credentials: the underlying runtime owns built-in provider authentication; research uses official environment variables cross-platform or isolated macOS Keychain services
+- Model/API: runtime-managed provider/model catalog; Codex, Claude, and Grok sign-in plus API-key providers including Groq, Fireworks, and LightningLoop-managed GeneralCompute
+- Credentials: the underlying runtime owns Pi-managed built-in provider authentication; GeneralCompute uses Keychain or `GENERALCOMPUTE_API_KEY`; research uses official environment variables cross-platform or isolated macOS Keychain services
 - Local history: `~/Library/Application Support/LightningLoop/sessions.json`
 - Local ledgers: `memory.json` and `evolutions.json` in the same directory, written with owner-only permissions
 
@@ -43,7 +43,7 @@ For an end-to-end artifact probe, create a new empty directory and run `lightnin
 
 ### HTTP 401 or 403
 
-For a named built-in provider, use `lightningloop auth` and the runtime's `/login` flow (or repair that provider's official environment-variable configuration), then retry through the LightningLoop runtime. LightningLoop never reads or replaces runtime credentials. For an explicitly selected custom macOS profile, update its LightningLoop-owned credential in Settings and use **Test Connection**; this test does not authorize native loop execution. For Exa, Brave, or Firecrawl, repair only the matching research credential. Never paste any key into source, logs, an issue, or a loop prompt.
+For a Pi-managed named built-in provider, use `lightningloop auth` and the runtime's `/login` flow (or repair that provider's official environment-variable configuration), then retry through the LightningLoop runtime. LightningLoop never reads or replaces runtime credentials. For GeneralCompute, set `GENERALCOMPUTE_API_KEY` or save the key in Settings and use **Discover Models & Test** (not `/login`). For an explicitly selected custom macOS profile, update its LightningLoop-owned credential in Settings and use **Discover Models & Test**; this test does not authorize native loop execution without the shared harness. For Exa, Brave, or Firecrawl, repair only the matching research credential. Never paste any key into source, logs, an issue, or a loop prompt.
 
 ### Model output is malformed
 

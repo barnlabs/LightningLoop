@@ -38,6 +38,14 @@ function keychainCommand(services: string[]): string {
   return `!/bin/sh -c '${services.map((service) => `/usr/bin/security find-generic-password -s ${service} -w`).join(" || ")}'`;
 }
 
+/** macOS Keychain first, then a bounded env var (GeneralCompute). */
+function keychainThenEnvCommand(service: string, envVar: string): string {
+  if (!/^[A-Za-z0-9.-]+$/.test(service) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar)) {
+    throw new Error("Invalid Keychain service or environment variable name.");
+  }
+  return `!/bin/sh -c '/usr/bin/security find-generic-password -s ${service} -w 2>/dev/null || printf %s "$${envVar}"'`;
+}
+
 export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
   const profile = loadProviderProfile();
   const providerID = `lightningloop-${profile.id}`;
@@ -66,13 +74,27 @@ export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
   });
 
   if (!profile.piProviderID) {
+    const isGeneralCompute = profile.preset === "generalcompute";
+    const generalComputeEnv = isGeneralCompute ? process.env.GENERALCOMPUTE_API_KEY?.trim() : undefined;
     if (process.platform !== "darwin") {
-      throw new Error("Custom provider Keychain profiles are macOS-only. Configure a runtime-managed built-in provider for cross-platform use.");
+      if (!isGeneralCompute || !generalComputeEnv) {
+        throw new Error(
+          isGeneralCompute
+            ? "GeneralCompute on non-macOS requires GENERALCOMPUTE_API_KEY. It is not managed by runtime /login."
+            : "Custom provider Keychain profiles are macOS-only. Configure GeneralCompute with GENERALCOMPUTE_API_KEY or a runtime-managed built-in provider for cross-platform use.",
+        );
+      }
     }
+    // macOS prefers Keychain; GeneralCompute may also fall back to GENERALCOMPUTE_API_KEY.
+    const apiKey = process.platform === "darwin"
+      ? (isGeneralCompute
+        ? keychainThenEnvCommand(providerCredentialService(profile), "GENERALCOMPUTE_API_KEY")
+        : keychainCommand([providerCredentialService(profile)]))
+      : generalComputeEnv!;
     pi.registerProvider(providerID, {
       name: `LightningLoop / ${profile.displayName}`,
       baseUrl: profile.baseURL,
-      apiKey: keychainCommand([providerCredentialService(profile)]),
+      apiKey,
       api: "openai-completions",
       authHeader: true,
       headers: providerHeaders(profile),
@@ -112,7 +134,9 @@ export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
           const loop = `${theme.fg("muted", `${profile.displayName} · ${profile.modelName}`)}  ${theme.fg("dim", "clarify → challenge → implement → verify")}`;
           const identity = theme.fg("dim", profile.piProviderID
             ? "Provider-neutral · authentication and model catalog managed by the LightningLoop runtime"
-            : "Custom provider · credential stays in macOS Keychain");
+            : profile.preset === "generalcompute"
+              ? "GeneralCompute · LightningLoop-managed fixed provider · Keychain or GENERALCOMPUTE_API_KEY"
+              : "Custom provider · credential stays in macOS Keychain");
           return [
             truncateToWidth(rule, width),
             truncateToWidth(brand, width),

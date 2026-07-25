@@ -1,5 +1,6 @@
-# LightningLoop ownership. Mac Baney (@mac756) leads this initiative.
-# Keep repository settings and release/signing decisions human-owned.
+# LightningLoop ownership. Mac Baney (@mac756) leads day-to-day contribution review.
+# GitHub write (or triage) must match this file — pull-only cannot satisfy CODEOWNER checks.
+# Repository settings, release, and signing remain human-owned (Donovan / BarnLabs).
 * @mac756 @baney75
 
 /.github/ @mac756 @baney75

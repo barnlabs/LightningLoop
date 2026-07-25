@@ -87,7 +87,7 @@ Usage:
   llp | lloop | lightningloop [tui] [--workspace PATH] [--allow-execution] [-- RUNTIME_OPTIONS...]
   lightningloop auth
   lightningloop provider list
-  lightningloop provider select <cerebras|groq|fireworks|xai|openai-codex|anthropic>
+  lightningloop provider select <cerebras|groq|fireworks|generalcompute|xai|openai-codex|anthropic>
   lightningloop loop [GOAL] [--cycles 1-8] [--image PATH] [--research exa|brave|firecrawl]
     [--workspace EMPTY_DIR --approve-artifact-writes [--approve-verification-commands]]
   lightningloop search <exa|brave|firecrawl> QUERY [--limit 1-20]
@@ -446,6 +446,8 @@ export async function doctor(runtimeOnly = false): Promise<number> {
   const selectionRequired = isProviderSelectionRequired(profile);
   const piManaged = !selectionRequired && Boolean(profile.piProviderID);
   const keychainCredential = !selectionRequired && !piManaged && process.platform === "darwin" && keychainConfigured(providerCredentialService(profile));
+  const generalComputeEnv = !selectionRequired && profile.preset === "generalcompute" && Boolean(process.env.GENERALCOMPUTE_API_KEY?.trim());
+  const managedApiKeyReady = keychainCredential || generalComputeEnv;
   process.stdout.write("LightningLoop doctor\n");
   process.stdout.write(`  Node >=22.19: ${nodeOK ? "PASS" : "FAIL"} (${process.version})\n`);
   process.stdout.write(selectionRequired
@@ -462,7 +464,7 @@ export async function doctor(runtimeOnly = false): Promise<number> {
   if (runtimeOnly) process.stdout.write("  Install/runtime-only health: provider onboarding is reported but does not fail installation\n");
   // `doctor` verifies local prerequisites. It never probes Pi credentials;
   // Pi owns their status and reports an auth failure only during its own run.
-  return runtimeOnly ? (nodeOK ? 0 : 1) : (nodeOK && !selectionRequired && (piManaged || keychainCredential) ? 0 : 1);
+  return runtimeOnly ? (nodeOK ? 0 : 1) : (nodeOK && !selectionRequired && (piManaged || managedApiKeyReady) ? 0 : 1);
 }
 
 function runProviderCommand(options: CliOptions): void {
@@ -471,7 +473,11 @@ function runProviderCommand(options: CliOptions): void {
     if (!options.providerArgument) throw new Error("Provider select requires a reviewed preset.");
     const selected = saveProviderPreset(options.providerArgument);
     process.stdout.write(`Selected ${terminalSafe(selected.displayName)} · ${terminalSafe(selected.modelName)}\n`);
-    process.stdout.write("Credential stored by LightningLoop: NO. Use 'lightningloop auth' to start provider sign-in.\n");
+    if (selected.preset === "generalcompute") {
+      process.stdout.write("Credential: LightningLoop-managed API key (Settings Keychain on macOS, or GENERALCOMPUTE_API_KEY). Not Pi /login.\n");
+    } else {
+      process.stdout.write("Credential stored by LightningLoop: NO. Use 'lightningloop auth' to start provider sign-in.\n");
+    }
     return;
   }
   process.stdout.write("LightningLoop provider presets\n");

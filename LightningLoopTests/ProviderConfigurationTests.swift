@@ -55,6 +55,27 @@ final class ProviderConfigurationTests: XCTestCase {
         XCTAssertEqual(profile.maxOutputTokens, 131_072)
     }
 
+    func testGeneralComputeIsLightningLoopManagedWithFixedURLAndNativeTesting() {
+        let profile = ProviderConfiguration.preset(.generalcompute)
+        XCTAssertEqual(profile.preset, .generalcompute)
+        XCTAssertEqual(profile.displayName, "GeneralCompute")
+        XCTAssertEqual(profile.baseURL, "https://api.generalcompute.com/v1")
+        XCTAssertEqual(profile.modelID, "minimax-m2.7")
+        XCTAssertEqual(profile.modelName, "MiniMax M2.7")
+        XCTAssertFalse(profile.supportsImages)
+        XCTAssertEqual(profile.contextWindow, 192_000)
+        XCTAssertEqual(profile.maxOutputTokens, 131_072)
+        XCTAssertFalse(profile.usesPiAuthentication)
+        XCTAssertTrue(profile.allowsNativeConnectionTesting)
+        XCTAssertEqual(profile.credentialProvider, .generalcompute)
+        XCTAssertEqual(profile.credentialService, "com.barnlabs.LightningLoop.provider.generalcompute.apiKey")
+
+        let store = ProviderConfigurationStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        var redirected = profile
+        redirected.baseURL = "https://example.com/v1"
+        XCTAssertThrowsError(try store.save(redirected)) { XCTAssertEqual($0 as? ProviderConfigurationError, .wrongPresetURL) }
+    }
+
     func testCerebrasStartsWithGuardedGemmaPreferenceAndPersistsASelectedRuntimeModel() throws {
         let preferred = ProviderConfiguration.preset(.cerebras)
         XCTAssertEqual(preferred.modelID, "gemma-4-31b")

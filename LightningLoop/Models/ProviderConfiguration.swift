@@ -5,6 +5,7 @@ enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
     case cerebras
     case groq
     case fireworks
+    case generalcompute
     case xai
     case openaiCodex = "openai-codex"
     case anthropic
@@ -18,6 +19,7 @@ enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .cerebras: "Cerebras Inference"
         case .groq: "Groq"
         case .fireworks: "Fireworks"
+        case .generalcompute: "GeneralCompute"
         case .xai: "xAI / Grok (LightningLoop runtime sign-in)"
         case .openaiCodex: "OpenAI Codex (LightningLoop runtime sign-in)"
         case .anthropic: "Anthropic Claude (LightningLoop runtime sign-in)"
@@ -84,6 +86,8 @@ struct ProviderConfiguration: Codable, Hashable, Sendable {
             .init(schemaVersion: schemaVersion, id: "groq", preset: .groq, displayName: "Groq", baseURL: "https://api.groq.com/openai/v1", modelID: "openai/gpt-oss-120b", modelName: "GPT-OSS 120B", supportsImages: false, contextWindow: 131_072, maxOutputTokens: 32_768)
         case .fireworks:
             .init(schemaVersion: schemaVersion, id: "fireworks", preset: .fireworks, displayName: "Fireworks", baseURL: "https://api.fireworks.ai/inference/v1", modelID: "accounts/fireworks/models/kimi-k2p6", modelName: "Kimi K2.6", supportsImages: true, contextWindow: 262_000, maxOutputTokens: 32_768)
+        case .generalcompute:
+            .init(schemaVersion: schemaVersion, id: "generalcompute", preset: .generalcompute, displayName: "GeneralCompute", baseURL: "https://api.generalcompute.com/v1", modelID: "minimax-m2.7", modelName: "MiniMax M2.7", supportsImages: false, contextWindow: 192_000, maxOutputTokens: 131_072)
         case .xai:
             .init(schemaVersion: schemaVersion, id: "xai", preset: .xai, displayName: "xAI / Grok", baseURL: "https://api.x.ai/v1", modelID: "grok-4.5", modelName: "Grok 4.5", supportsImages: true, contextWindow: 256_000, maxOutputTokens: 32_768)
         case .openaiCodex:
@@ -124,24 +128,30 @@ struct ProviderConfiguration: Codable, Hashable, Sendable {
         case .cerebras: .cerebras
         case .groq: .groq
         case .fireworks: .fireworks
+        case .generalcompute: .generalcompute
         case .xai, .openaiCodex, .anthropic: .custom
         case .custom, .selectionRequired: .custom
         }
     }
 
-    /// Presets are selected and authenticated by Pi. LightningLoop never uses
-    /// its Keychain as a fallback for these profiles.
+    /// Pi-managed presets use the runtime /login path. GeneralCompute and custom
+    /// use LightningLoop-owned API keys (Keychain / env); never Pi /login.
     var usesPiAuthentication: Bool {
         switch preset {
-        case .custom, .selectionRequired: false
+        case .custom, .generalcompute, .selectionRequired: false
         default: true
         }
     }
 
-    var allowsNativeConnectionTesting: Bool { preset == .custom }
+    var allowsNativeConnectionTesting: Bool {
+        preset == .custom || preset == .generalcompute
+    }
 
     var credentialService: String {
         if usesPiAuthentication { return "com.barnlabs.LightningLoop.pi-managed.\(id)" }
+        if preset == .generalcompute {
+            return CredentialProvider.generalcompute.service
+        }
         guard preset == .custom, let host = URLComponents(string: baseURL)?.host?.lowercased() else {
             return credentialProvider.service
         }
@@ -214,9 +224,13 @@ struct CustomCredentialServiceRegistry: Sendable {
     /// Returns true only when this call inserted a new service identifier.
     /// Callers can use that bit to roll the registry back if the subsequent
     /// Keychain operation fails.
+    ///
+    /// Only host-suffixed custom services are registered. Fixed LightningLoop
+    /// services (for example GeneralCompute) are already in CredentialProvider.
     @discardableResult
     func register(profile: ProviderConfiguration) throws -> Bool {
         guard profile.allowsNativeConnectionTesting else { throw RegistryError.invalidService }
+        guard profile.preset == .custom else { return false }
         let service = profile.credentialService
         guard Self.isValidService(service) else { throw RegistryError.invalidService }
         guard var values = state().services else { throw RegistryError.invalidState }
@@ -228,8 +242,9 @@ struct CustomCredentialServiceRegistry: Sendable {
     }
 
     func rollBackRegistration(profile: ProviderConfiguration) throws {
-        guard profile.allowsNativeConnectionTesting,
-              Self.isValidService(profile.credentialService) else { throw RegistryError.invalidService }
+        guard profile.allowsNativeConnectionTesting else { throw RegistryError.invalidService }
+        guard profile.preset == .custom else { return }
+        guard Self.isValidService(profile.credentialService) else { throw RegistryError.invalidService }
         guard var values = state().services else { throw RegistryError.invalidState }
         values.remove(profile.credentialService)
         try write(values)
