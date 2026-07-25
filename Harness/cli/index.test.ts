@@ -138,7 +138,9 @@ test("CLI parser directs unsupported runtime options after the passthrough separ
 test("clean cross-platform data flow requires selection, lists presets, and stores no credential", async () => {
   const dataDirectory = await mkdtemp(join(tmpdir(), "lightningloop-cli-first-run-"));
   const cli = resolve(repositoryRoot, "dist/cli/index.js");
-  const env = { ...process.env, LIGHTNINGLOOP_DATA_DIR: dataDirectory };
+  // First-run isolation: do not inherit suite fixture LIGHTNINGLOOP_PROVIDER_CONFIG_PATH.
+  const env: NodeJS.ProcessEnv = { ...process.env, LIGHTNINGLOOP_DATA_DIR: dataDirectory };
+  delete env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
   try {
     const firstRun = spawnSync(process.execPath, [cli], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(firstRun.status, 2);

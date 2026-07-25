@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerRuntimeCredential } from "../core/credential-safety.js";
-import { saveProviderPreset } from "../core/provider-profile.js";
 import { lightningLoopExtension } from "./lightningloop-extension.js";
+
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+const extensionModuleUrl = pathToFileURL(join(repositoryRoot, "dist/pi/lightningloop-extension.js")).href;
 
 test("extension rejects a credential-bearing goal before session naming, UI result, or persistence", async () => {
   const credential = "csk-syntheticextension123456789";
@@ -47,55 +51,74 @@ test("extension rejects a credential-bearing goal before session naming, UI resu
   assert.equal(notifications.some((message) => message.includes(encodedCredential)), false);
 });
 
-test("TUI identity presents runtime-managed provider ownership as LightningLoop", async () => {
+/**
+ * Child process isolation: parent-suite tests also mutate
+ * LIGHTNINGLOOP_PROVIDER_CONFIG_PATH under --test-concurrency=2.
+ */
+test("TUI identity presents runtime-managed provider ownership as LightningLoop", () => {
   const directory = mkdtempSync(join(tmpdir(), "lightningloop-extension-"));
   const config = join(directory, "provider.json");
-  const previous = process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
-  saveProviderPreset("openai-codex", config);
-  process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH = config;
+  const script = join(directory, "tui-identity.mjs");
+  writeFileSync(config, `${JSON.stringify({
+    schemaVersion: 1,
+    id: "openai-codex",
+    preset: "openai-codex",
+    displayName: "OpenAI Codex",
+    baseURL: "https://api.openai.com/v1",
+    modelID: "gpt-5.6-terra",
+    modelName: "GPT-5.6 Terra",
+    supportsImages: true,
+    contextWindow: 400_000,
+    maxOutputTokens: 131_072,
+  }, null, 2)}\n`);
+  writeFileSync(script, `
+import assert from "node:assert/strict";
+const { lightningLoopExtension } = await import(${JSON.stringify(extensionModuleUrl)});
+let sessionStart;
+let headerFactory;
+const fakePi = {
+  registerTool: () => undefined,
+  registerFlag: () => undefined,
+  registerProvider: () => undefined,
+  on: (event, handler) => { if (event === "session_start") sessionStart = handler; },
+  getFlag: () => false,
+  registerCommand: () => undefined,
+};
+lightningLoopExtension(fakePi);
+assert.ok(sessionStart);
+await sessionStart({}, {
+  cwd: process.cwd(),
+  mode: "tui",
+  ui: {
+    setTitle: () => undefined,
+    setStatus: () => undefined,
+    setHeader: (value) => { headerFactory = value; },
+    setFooter: () => undefined,
+    setWorkingMessage: () => undefined,
+    setWorkingIndicator: () => undefined,
+    setHiddenThinkingLabel: () => undefined,
+    theme: { fg: (_n, v) => v, bold: (v) => v },
+  },
+});
+assert.ok(headerFactory);
+const rendered = headerFactory({}, { fg: (_n, v) => v, bold: (v) => v }).render(120).join("\\n");
+assert.match(rendered, /authentication and model catalog managed by the LightningLoop runtime/u);
+assert.doesNotMatch(rendered, /\\bPi\\b/u);
+console.log("tui-identity-ok");
+`);
   try {
-    let sessionStart: ((event: unknown, context: unknown) => Promise<void> | void) | undefined;
-    let headerFactory: ((tui: unknown, theme: { fg(name: string, value: string): string; bold(value: string): string }) => { render(width: number): string[] }) | undefined;
-    const fakePi = {
-      registerTool: () => undefined,
-      registerFlag: () => undefined,
-      registerProvider: () => undefined,
-      on: (event: string, handler: (event: unknown, context: unknown) => Promise<void> | void) => {
-        if (event === "session_start") sessionStart = handler;
+    const result = spawnSync(process.execPath, [script], {
+      encoding: "utf8",
+      cwd: repositoryRoot,
+      env: {
+        ...process.env,
+        LIGHTNINGLOOP_PROVIDER_CONFIG_PATH: config,
       },
-      getFlag: () => false,
-      registerCommand: () => undefined,
-    };
-    lightningLoopExtension(fakePi as unknown as ExtensionAPI);
-    assert.ok(sessionStart);
-    await sessionStart({}, {
-      cwd: process.cwd(),
-      mode: "tui",
-      ui: {
-        setTitle: () => undefined,
-        setStatus: () => undefined,
-        setHeader: (value: (tui: unknown, theme: { fg(name: string, value: string): string; bold(value: string): string }) => { render(width: number): string[] }) => { headerFactory = value; },
-        setFooter: () => undefined,
-        setWorkingMessage: () => undefined,
-        setWorkingIndicator: () => undefined,
-        setHiddenThinkingLabel: () => undefined,
-        theme: {
-          fg: (_name: string, value: string) => value,
-          bold: (value: string) => value,
-        },
-      },
+      timeout: 15_000,
     });
-    assert.ok(headerFactory);
-    const theme = {
-      fg: (_name: string, value: string) => value,
-      bold: (value: string) => value,
-    };
-    const rendered = headerFactory({}, theme).render(120).join("\n");
-    assert.match(rendered, /authentication and model catalog managed by the LightningLoop runtime/u);
-    assert.doesNotMatch(rendered, /\bPi\b/u);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /tui-identity-ok/u);
   } finally {
-    if (previous === undefined) delete process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
-    else process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH = previous;
     rmSync(directory, { force: true, recursive: true });
   }
 });
