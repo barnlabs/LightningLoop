@@ -1,136 +1,109 @@
-// LightningLoop web POC client.
-// Drives the WebSocket at /run. Each phase of the loop maps to a UI section.
+// LightningLoop web client — 4-stroke flow driver.
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-
 const els = {
   connStatus: $("conn-status"),
   goal: $("goal"),
   runBtn: $("run-btn"),
-  apiKey: $("api-key"),
-  byoBase: $("byo-base"),
-  byoModel: $("byo-model"),
   goalSection: $("goal-section"),
-  clarifySection: $("clarify-section"),
+  classifySection: $("clarify-section"),
+  classificationBadge: $("classification-badge"),
   clarifySummary: $("clarify-summary"),
   clarifyQuestions: $("clarify-questions"),
   answerBtn: $("answer-btn"),
   loopSection: $("loop-section"),
+  loopTitle: $("loop-title"),
   stageTracker: $("stage-tracker"),
   log: $("log"),
   cancelBtn: $("cancel-btn"),
   resultSection: $("result-section"),
   verdict: $("verdict"),
   deliverable: $("deliverable"),
+  notesDetail: $("notes-detail"),
   planDetail: $("plan-detail"),
   reviewsDetail: $("reviews-detail"),
-  usageDetail: $("usage-detail"),
   againBtn: $("again-btn"),
   errorBanner: $("error-banner"),
 };
 
 let ws = null;
+let currentMode = "open_ended";
 
-// ---- helpers -------------------------------------------------------------
+const SUBJECTIVE_STAGES = ["clarifying", "implementing", "reviewing_implementation", "gold"];
+const FACTUAL_STAGES = ["planning", "reviewing_plan", "implementing", "reviewing_implementation", "gold"];
 
 function setConn(state) {
   els.connStatus.textContent = state;
-  els.connStatus.className = "status " + (state === "connected" ? "live" : state === "disconnected" ? "dead" : "");
+  els.connStatus.className = "status " + (state === "connected" ? "live" : "dead");
 }
 
 function show(section) {
-  for (const s of [els.goalSection, els.clarifySection, els.loopSection, els.resultSection]) {
-    s.hidden = true;
-  }
+  for (const s of [els.goalSection, els.classifySection, els.loopSection, els.resultSection]) s.hidden = true;
   section.hidden = false;
 }
 
-function showError(message) {
-  els.errorBanner.textContent = message;
-  els.errorBanner.hidden = false;
-}
-function clearError() {
-  els.errorBanner.hidden = true;
-}
+function showError(m) { els.errorBanner.textContent = m; els.errorBanner.hidden = false; }
+function clearError() { els.errorBanner.hidden = true; }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
-function resetStages() {
-  for (const li of els.stageTracker.children) {
-    li.classList.remove("active", "done");
+function buildStageTracker(stages) {
+  els.stageTracker.innerHTML = "";
+  for (const s of stages) {
+    const li = document.createElement("li");
+    li.dataset.stage = s;
+    const labels = { clarifying: "Classify", planning: "Plan", reviewing_plan: "Review plan", implementing: "Answer", reviewing_implementation: "Honesty check", gold: "Done" };
+    li.textContent = labels[s] ?? s;
+    els.stageTracker.appendChild(li);
   }
 }
 
-// mark everything up to and including the given stage as done, the stage itself active
-const STAGE_ORDER = ["planning", "reviewing_plan", "implementing", "reviewing_implementation", "gold"];
-function setActiveStage(stage) {
-  const idx = STAGE_ORDER.indexOf(stage);
-  if (idx === -1) return; // stages we don't track (verifying, etc.) just go to the log
+function setActiveStage(stage, stages) {
+  const idx = stages.indexOf(stage);
+  if (idx === -1) return;
   for (let i = 0; i < els.stageTracker.children.length; i++) {
     const li = els.stageTracker.children[i];
-    const liStage = li.dataset.stage;
     li.classList.remove("active", "done");
     if (i < idx) li.classList.add("done");
-    else if (i === idx) {
-      li.classList.add(idx === STAGE_ORDER.length - 1 ? "done" : "active");
-    }
+    else if (i === idx) li.classList.add(i === stages.length - 1 ? "done" : "active");
   }
 }
 
 function appendLog(event) {
   const round = event.round ? `[r${event.round}] ` : "";
-  const role = event.role ? ` (${event.role})` : "";
+  const att = event.attempt ? `[att${event.attempt}] ` : "";
   const line = document.createElement("div");
   line.className = "line";
-  line.innerHTML = `<span class="tag">${event.stage}</span><span class="round">${round}</span>${escapeHtml(event.message)}${role ? `<span class="round">${role}</span>` : ""}`;
+  line.innerHTML = `<span class="tag">${escapeHtml(event.stage)}</span><span class="round">${att}${round}</span>${escapeHtml(event.message)}`;
   els.log.appendChild(line);
   els.log.scrollTop = els.log.scrollHeight;
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-
-// ---- websocket lifecycle -------------------------------------------------
-
 function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   ws = new WebSocket(`${proto}//${location.host}/run`);
-
-  ws.onopen = () => {
-    setConn("connected");
-    els.runBtn.disabled = false;
-  };
-
-  ws.onmessage = (ev) => {
-    let msg;
-    try { msg = JSON.parse(ev.data); } catch { return; }
-    handleMessage(msg);
-  };
-
-  ws.onclose = () => {
-    setConn("disconnected");
-    els.runBtn.disabled = true;
-    // auto-reconnect so the UI recovers if the server restarts
-    setTimeout(connect, 1500);
-  };
-
-  ws.onerror = () => { /* onclose will follow */ };
+  ws.onopen = () => { setConn("connected"); els.runBtn.disabled = false; };
+  ws.onmessage = (ev) => { try { handleMessage(JSON.parse(ev.data)); } catch {} };
+  ws.onclose = () => { setConn("disconnected"); els.runBtn.disabled = true; setTimeout(connect, 1500); };
+  ws.onerror = () => {};
 }
 
-function send(obj) {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
-}
+function send(obj) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
 
 function handleMessage(msg) {
   clearError();
   switch (msg.type) {
+    case "classified":
+      renderBadge(msg.classification, msg.reason);
+      break;
     case "clarify":
-      renderClarify(msg.clarification, msg.mode, msg.optionsByQuestion);
-      show(els.clarifySection);
+      renderClarify(msg.clarification, msg.mode, msg.optionsByQuestion, msg.classification);
+      show(els.classifySection);
       break;
     case "stage":
-      setActiveStage(msg.stage);
       appendLog(msg);
+      const stages = currentMode === "factual" ? FACTUAL_STAGES : SUBJECTIVE_STAGES;
+      setActiveStage(msg.stage, stages);
       break;
     case "result":
       renderResult(msg.result);
@@ -141,56 +114,48 @@ function handleMessage(msg) {
   }
 }
 
-// ---- phase 1: goal -> start ----------------------------------------------
-
-function selectedMode() {
-  const checked = document.querySelector('input[name="mode"]:checked');
-  return checked ? checked.value : "open_ended";
+function renderBadge(classification, reason) {
+  const labels = {
+    harmful: { text: "Blocked", cls: "bad", icon: "⛔" },
+    subjective: { text: "Subjective — will answer in your terms", cls: "warn", icon: "💭" },
+    factual: { text: "Factual — strict verification", cls: "good", icon: "✓" },
+  };
+  const l = labels[classification] ?? labels.subjective;
+  els.classificationBadge.className = `badge ${l.cls}`;
+  els.classificationBadge.textContent = `${l.icon} ${l.text} — ${reason}`;
 }
 
 function startRun() {
   clearError();
   const goal = els.goal.value.trim();
-  if (!goal) { showError("Enter a goal first."); return; }
-  send({
-    type: "start",
-    goal,
-    mode: selectedMode(),
-    ...(els.apiKey.value.trim() ? { key: els.apiKey.value.trim() } : {}),
-    ...(els.byoBase.value.trim() ? { baseURL: els.byoBase.value.trim() } : {}),
-    ...(els.byoModel.value.trim() ? { model: els.byoModel.value.trim() } : {}),
-  });
-  // clear previous run artifacts
+  if (!goal) { showError("Enter a question first."); return; }
+  currentMode = document.querySelector('input[name="mode"]:checked')?.value ?? "open_ended";
   els.log.textContent = "";
-  resetStages();
+  send({ type: "start", goal, mode: currentMode });
+  els.loopTitle.textContent = "Classifying…";
+  buildStageTracker(SUBJECTIVE_STAGES);
+  show(els.loopSection);
 }
 
-// ---- phase 2: clarify ----------------------------------------------------
+function renderClarify(clarification, mode, optionsByQuestion, classification) {
+  currentMode = classification;
+  const stages = classification === "factual" ? FACTUAL_STAGES : SUBJECTIVE_STAGES;
+  els.loopTitle.textContent = classification === "factual" ? "Strict verification run" : "Answering in your terms";
+  buildStageTracker(stages);
 
-function renderClarify(clarification, mode, optionsByQuestion) {
-  const isMC = mode === "multiple_choice";
   els.clarifySummary.textContent = clarification.summary || "";
   els.clarifyQuestions.innerHTML = "";
+  const isMC = mode === "multiple_choice";
   for (const q of clarification.questions || []) {
     const wrap = document.createElement("div");
     wrap.className = "q";
-    const whyHtml = q.whyItMatters ? `<div class="why">${escapeHtml(q.whyItMatters)}</div>` : "";
+    const why = q.whyItMatters ? `<div class="why">${escapeHtml(q.whyItMatters)}</div>` : "";
     if (isMC) {
-      const opts = optionsByQuestion?.[q.id] ?? ["(brief answer)", "(detailed answer)"];
-      const radios = opts.map((opt, i) => `
-        <label><input type="radio" name="mc-${escapeHtml(q.id)}" value="${escapeHtml(opt)}" ${i === 0 ? "checked" : ""} /> ${escapeHtml(opt)}</label>
-      `).join("");
-      wrap.innerHTML = `
-        <div class="qlabel">${escapeHtml(q.question)}</div>
-        ${whyHtml}
-        <div class="mc-options">${radios}</div>
-      `;
+      const opts = optionsByQuestion?.[q.id] ?? ["(brief)", "(detailed)"];
+      const radios = opts.map((o, i) => `<label><input type="radio" name="mc-${escapeHtml(q.id)}" value="${escapeHtml(o)}" ${i === 0 ? "checked" : ""} /> ${escapeHtml(o)}</label>`).join("");
+      wrap.innerHTML = `<div class="qlabel">${escapeHtml(q.question)}</div>${why}<div class="mc-options">${radios}</div>`;
     } else {
-      wrap.innerHTML = `
-        <div class="qlabel">${escapeHtml(q.question)}</div>
-        ${whyHtml}
-        <input type="text" data-qid="${escapeHtml(q.id)}" placeholder="Your answer…" />
-      `;
+      wrap.innerHTML = `<div class="qlabel">${escapeHtml(q.question)}</div>${why}<input type="text" data-qid="${escapeHtml(q.id)}" placeholder="Your answer…" />`;
     }
     els.clarifyQuestions.appendChild(wrap);
   }
@@ -198,68 +163,40 @@ function renderClarify(clarification, mode, optionsByQuestion) {
 
 function submitAnswers() {
   const answers = {};
-  // multiple-choice: read selected radios
-  for (const group of els.clarifyQuestions.querySelectorAll(".mc-options")) {
-    const checked = group.querySelector("input[type='radio']:checked");
-    const qid = checked?.name.replace(/^mc-/, "");
-    if (qid) answers[qid] = checked.value;
+  for (const g of els.clarifyQuestions.querySelectorAll(".mc-options")) {
+    const c = g.querySelector("input[type='radio']:checked");
+    const qid = c?.name.replace(/^mc-/, "");
+    if (qid) answers[qid] = c.value;
   }
-  // open-ended: read text inputs
-  for (const input of els.clarifyQuestions.querySelectorAll("input[data-qid]")) {
-    answers[input.dataset.qid] = input.value;
-  }
+  for (const input of els.clarifyQuestions.querySelectorAll("input[data-qid]")) answers[input.dataset.qid] = input.value;
   send({ type: "answers", answers });
   show(els.loopSection);
 }
 
-// ---- phase 3: result -----------------------------------------------------
-
 function renderResult(result) {
-  // finalize stage tracker
-  for (const li of els.stageTracker.children) {
-    li.classList.remove("active");
-    li.classList.add("done");
-  }
-
+  for (const li of els.stageTracker.children) { li.classList.remove("active"); li.classList.add("done"); }
   if (result.stage === "gold") {
-    els.verdict.textContent = "✦ GOLD ✦  — scored " + (result.reviews.at(-1)?.score ?? "?") + "/10, no blocking issues";
+    els.verdict.textContent = "✦ Answer ✦";
     els.verdict.className = "verdict gold";
+  } else if (result.message?.startsWith("Refused")) {
+    els.verdict.textContent = "⛔ Refused";
+    els.verdict.className = "verdict paused";
   } else {
-    els.verdict.textContent = "⏸ PAUSED — " + result.message;
+    els.verdict.textContent = "⏸ Paused — " + (result.message || "");
     els.verdict.className = "verdict paused";
   }
-
-  els.deliverable.textContent = result.implementation?.deliverable || "(no deliverable produced)";
-
-  els.planDetail.textContent = JSON.stringify({
-    criteria: result.planning?.criteria,
-    plan: result.planning?.plan,
-    acceptanceTest: result.planning?.acceptanceTest,
-  }, null, 2);
-
+  els.deliverable.textContent = result.implementation?.deliverable || "(no answer)";
+  els.notesDetail.textContent = JSON.stringify(result.implementation?.notes ?? [], null, 2);
+  els.planDetail.textContent = JSON.stringify({ criteria: result.planning?.criteria, plan: result.planning?.plan }, null, 2);
   els.reviewsDetail.textContent = JSON.stringify(result.reviews, null, 2);
-
-  const u = result.usage || {};
-  els.usageDetail.textContent =
-    `input tokens:  ${u.input ?? 0}\noutput tokens: ${u.output ?? 0}\ntotal tokens:  ${u.total ?? 0}\nreported cost: ${u.cost ?? 0}`;
-
   show(els.resultSection);
 }
 
-// ---- wiring --------------------------------------------------------------
-
-function reset() {
-  els.log.textContent = "";
-  resetStages();
-  clearError();
-  show(els.goalSection);
-  els.goal.focus();
-}
+function reset() { els.log.textContent = ""; clearError(); show(els.goalSection); els.goal.focus(); }
 
 els.runBtn.addEventListener("click", startRun);
 els.goal.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) startRun(); });
 els.answerBtn.addEventListener("click", submitAnswers);
 els.cancelBtn.addEventListener("click", () => send({ type: "cancel" }));
 els.againBtn.addEventListener("click", reset);
-
 connect();

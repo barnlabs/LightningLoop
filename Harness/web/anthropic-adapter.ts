@@ -4,23 +4,21 @@ import type { AgentAdapter, AgentReply, AgentRequest } from "../core/loop-types.
 import { SecretRedactor } from "../core/redaction.js";
 
 /**
- * Web POC adapter for the LightningLoop harness.
+ * Web adapter for the LightningLoop harness.
  *
- * Speaks the Anthropic Messages API (`/v1/messages`), which is the native
- * protocol of the Z.ai / GLM endpoint that ships as the default provider.
- *
- * Why Anthropic and not OpenAI: the default ZAI endpoint
- * (`https://api.z.ai/api/anthropic`) is Anthropic-format. OpenAI-compatible
- * providers (OpenAI, Groq, OpenRouter, Cerebras, Fireworks) can be added as a
- * sibling adapter later; this POC ships with the one the default provider uses.
+ * Speaks the Anthropic Messages API (`/v1/messages`). Provider-neutral: no
+ * built-in defaults. Each person configures their own provider via
+ * provider-sheet.json (gitignored) or LL_* env vars. See
+ * provider-sheet.example.json and REDESIGN.md.
  *
  * Credential sources, in priority order:
  *   1. Constructor args (used when a connected client brings its own key).
  *   2. Environment variables (LL_API_KEY / LL_BASE_URL / LL_MODEL).
- *   3. The gitignored local `.zai-local.json` (Paul's default ZAI key).
+ *   3. The gitignored local provider-sheet.json.
  *
- * This is a PROOF OF CONCEPT — localhost only, no auth, no production
- * hardening. See Harness/web/README.md.
+ * OpenAI-compatible providers (OpenAI, Groq, OpenRouter, Cerebras, Fireworks)
+ * can be added as a sibling adapter later; this one covers Anthropic-format
+ * endpoints.
  */
 
 export interface AnthropicAdapterOptions {
@@ -37,7 +35,7 @@ const DEFAULT_VERSION = "2023-06-01";
 
 /**
  * The engine's plan/revision prompts trust the model to reuse the exact
- * criterion schema, including a strict evidence_kind allow-list. GLM models
+ * criterion schema, including a strict evidence_kind allow-list. Models
  * occasionally drift to an invented kind during revision. Append the allow-list
  * as a hard reminder ONLY when the request is building/revising the plan
  * (orchestrator role + a JSON contract in the user payload). Adapter-level only.
@@ -65,7 +63,7 @@ const KEY_FIXES: Record<string, string> = {
   requiredChange: "required_change",
   assertionId: "assertion_id",
   expectedOutput: "expected_output",
-  sourceClaim: "source_claim",
+  sourceClaim: "claim", // engine reads `claim`, not `source_claim`
   acceptanceTest: "acceptance_test",
 };
 
@@ -98,14 +96,22 @@ function walkAndFixKeys(node: unknown): void {
         obj[fixed] = obj[key];
         delete obj[key];
       }
-      walkAndFixKeys(obj[fixed ?? key]);
+      // The engine requires certain string fields (e.g. `claim`) to be trimmed;
+      // Models sometimes pad them with whitespace. Trim top-level string values.
+      const targetKey = fixed ?? key;
+      const val = obj[targetKey];
+      if (typeof val === "string") {
+        const trimmed = val.trim();
+        if (trimmed !== val) obj[targetKey] = trimmed;
+      }
+      walkAndFixKeys(obj[targetKey]);
     }
   }
 }
 
 /**
  * Pull the first balanced JSON value out of a model response, tolerating the
- * ways GLM models mis-format structured output:
+ * ways models mis-format structured output:
  *   - leading Markdown headings / prose before the JSON ("## Revised Plan\n{...}")
  *   - fenced code blocks ("```json\n{...}\n```")
  *   - trailing prose after the closing brace
@@ -149,31 +155,47 @@ function extractJSON(content: string): string {
 interface LocalConfig {
   baseURL?: string;
   apiKey?: string;
-  models?: string[];
-}
-
-/** Read the gitignored `.zai-local.json` if present. Never throws. */
-function readLocalConfig(): LocalConfig {
-  try {
-    const raw = readFileSync(resolve(process.cwd(), ".zai-local.json"), "utf8");
-    return JSON.parse(raw) as LocalConfig;
-  } catch {
-    return {};
-  }
+  model?: string;
+  models?: string[]; // legacy .zai-local.json shape
 }
 
 /**
- * Resolve adapter options from constructor args, env vars, then local config.
- * Throws only if no API key is available anywhere — the caller decides whether
- * that's fatal (no provider at all) or recoverable (bring-your-own from UI).
+ * Read the person's provider config. Tries provider-sheet.json first (the
+ * documented per-person sheet), then falls back to legacy .zai-local.json.
+ * Never throws.
+ */
+function readLocalConfig(): LocalConfig {
+  for (const name of ["provider-sheet.json", ".zai-local.json"]) {
+    try {
+      const raw = readFileSync(resolve(process.cwd(), name), "utf8");
+      const parsed = JSON.parse(raw) as LocalConfig;
+      // Normalize legacy shape (models[] → model)
+      if (!parsed.model && Array.isArray(parsed.models) && parsed.models.length) {
+        const first: string | undefined = parsed.models[0];
+        if (first) parsed.model = first;
+      }
+      return parsed;
+    } catch {
+      // try next
+    }
+  }
+  return {};
+}
+
+/**
+ * Resolve adapter options from constructor args, env vars, then the person's
+ * provider sheet. Throws only if no API key is available anywhere — the caller
+ * decides whether that's fatal (no provider at all) or recoverable (bring-your-own from UI).
+ *
+ * Provider-neutral: no built-in defaults. Each person fills in provider-sheet.json
+ * (gitignored) or sets LL_* env vars. See provider-sheet.example.json.
  */
 export function resolveAdapterOptions(overrides?: Partial<AnthropicAdapterOptions>): AnthropicAdapterOptions {
   const local = readLocalConfig();
   const baseURL =
     overrides?.baseURL ??
     process.env.LL_BASE_URL ??
-    local.baseURL ??
-    "https://api.z.ai/api/anthropic";
+    local.baseURL;
   const apiKey =
     overrides?.apiKey ??
     process.env.LL_API_KEY ??
@@ -181,11 +203,10 @@ export function resolveAdapterOptions(overrides?: Partial<AnthropicAdapterOption
   const model =
     overrides?.model ??
     process.env.LL_MODEL ??
-    local.models?.[0] ??
-    "GLM-5.2";
-  if (!apiKey) {
+    local.model;
+  if (!apiKey || !baseURL || !model) {
     throw new Error(
-      "No API key found. Set LL_API_KEY, place .zai-local.json in the repo root, or supply a key from the UI.",
+      "No provider configured. Copy Harness/web/provider-sheet.example.json to provider-sheet.json (repo root) and fill in your provider, or set LL_API_KEY, LL_BASE_URL, and LL_MODEL env vars.",
     );
   }
   const result: AnthropicAdapterOptions = { baseURL, apiKey, model };
@@ -213,7 +234,7 @@ export class AnthropicAdapter implements AgentAdapter {
   async complete(request: AgentRequest, signal?: AbortSignal): Promise<AgentReply> {
     const path = this.options.messagesPath ?? "/v1/messages";
     const url = this.options.baseURL.replace(/\/+$/u, "") + path;
-    // GLM models sometimes emit a criterion with an evidence_kind outside the
+    // Models sometimes emit a criterion with an evidence_kind outside the
     // engine's strict allow-list during plan revision. Reinforce the contract
     // at the adapter boundary so the model stays on-schema. This does not alter
     // the engine's prompts or its validation; it only nudges this provider.
@@ -262,7 +283,7 @@ export class AnthropicAdapter implements AgentAdapter {
     if (!text) throw new Error(`${this.options.model} returned no text content.`);
 
     // The LightningLoop engine asks models to return a single JSON object.
-    // GLM models sometimes append trailing prose after the closing brace.
+    // Models sometimes append trailing prose after the closing brace.
     // Extract the leading balanced JSON object so the engine's strict parser
     // gets clean input. This is adapter-level tolerance only — the engine's
     // own validation stays unchanged for every other adapter.

@@ -1,0 +1,6 @@
+{
+  "_comment": "Copy this file to provider-sheet.json and fill in YOUR provider. provider-sheet.json is gitignored and never committed. This is your personal config sheet.",
+  "baseURL": "https://your-provider.example.com/api/anthropic",
+  "apiKey": "paste-your-api-key-here",
+  "model": "your-model-name"
+}

@@ -1,67 +1,58 @@
-# LightningLoop Web UI — Proof of Concept
+# LightningLoop Web
 
-A browser UI that runs the real LightningLoop engine. Type a goal, answer the
-clarifying questions, and watch the loop run live:
-**Clarify → Plan → Review → Implement → Review → Gold.**
-
-This is a **proof of concept** — localhost only, no auth, no production hardening.
-It is intentionally additive and does not modify the engine, the CLI, or the
-native app.
+A browser UI that runs the LightningLoop 4-stroke flow: type a question, and
+watch it become a sophisticated answer. See `REDESIGN.md` for the full design.
 
 ## Run it
 
 ```bash
-# from the repo root
+# 1. Configure YOUR provider (provider-neutral — no built-in defaults):
+cp Harness/web/provider-sheet.example.json provider-sheet.json
+#   then edit provider-sheet.json with your baseURL, apiKey, and model.
+#   (provider-sheet.json is gitignored — your key never gets committed.)
+
+# 2. Build and run:
 npm install
 npm run build:harness
 npm run web
 ```
 
-Then open <http://localhost:7777>.
+Open <http://localhost:7777>.
 
-The server uses the built-in **ZAI (GLM)** provider by default — it works out of
-the box with a local gitignored `.zai-local.json` or the `LL_API_KEY` env var.
-Anyone else can bring their own provider from the UI's "Bring your own provider"
-panel.
+## How it answers
 
-## Environment variables
+Every question goes through 4 strokes:
 
-| Variable      | Default                          | Purpose                                  |
-| ------------- | -------------------------------- | ---------------------------------------- |
-| `LL_API_KEY`  | (from `.zai-local.json`)         | API key for the default provider         |
-| `LL_BASE_URL` | `https://api.z.ai/api/anthropic` | Anthropic-format base URL                |
-| `LL_MODEL`    | `GLM-5.2`                        | Model id                                 |
-| `PORT`        | `7777`                           | HTTP port                                |
-| `HOST`        | `127.0.0.1`                      | Bind address (localhost only by default) |
+1. **Intake** — classified as `harmful`, `subjective`, or `factual`.
+   - Harmful → hard-blocked with an explanation.
+   - Subjective → answered in your terms (the clarifying questions narrow it).
+   - Factual → strict Gold verification path.
+2. **Compression** — clarifying questions make the question answerable.
+   Open-ended or multiple-choice mode.
+3. **Combustion** — the actual answer. Subjective: grounded + honest.
+   Factual: airtight sourced Gold.
+4. **Exhaust** — honesty review: judgment vs. fact, uncertainty flagged.
+
+## Environment variables (alternative to provider-sheet.json)
+
+| Variable      | Purpose                          |
+| ------------- | -------------------------------- |
+| `LL_API_KEY`  | API key for your provider        |
+| `LL_BASE_URL` | Anthropic-format base URL        |
+| `LL_MODEL`    | Model id                         |
+| `PORT`        | HTTP port (default 7777)         |
+| `HOST`        | Bind address (default 127.0.0.1) |
 
 ## Files
 
-- `anthropic-adapter.ts` — `AgentAdapter` that speaks the Anthropic Messages
-  API (the ZAI default protocol). Bring-your-own via constructor / UI.
-- `server.ts` — `node:http` static server + a `/run` WebSocket that drives one
-  `LoopEngine` run per connection, streaming `LoopEvent`s to the client.
-- `index.html`, `client.js`, `styles.css` — the UI. No framework.
+- `strokes.ts` — the 4-stroke logic (classify, answer, review).
+- `server.ts` — WebSocket orchestrator.
+- `anthropic-adapter.ts` — provider-neutral `AgentAdapter` (Anthropic Messages
+  API) with tolerance for model output quirks.
+- `provider-sheet.example.json` — the per-person config template.
+- `index.html`, `client.js`, `styles.css` — the UI.
 
 ## Wire protocol (WebSocket at `/run`)
 
-Client → server:
-
-```jsonc
-{ "type": "start", "goal": "...", "key": "...", "baseURL": "...", "model": "..." }
-{ "type": "answers", "answers": { "q1": "..." } }
-{ "type": "cancel" }
-```
-
-Server → client:
-
-```jsonc
-{ "type": "clarify", "runID": "...", "clarification": { ... } }
-{ "type": "stage", "stage": "planning", "message": "...", "round": 1 }
-{ "type": "result", "runID": "...", "result": { ... } }
-{ "type": "error", "message": "..." }
-```
-
-## What the POC does NOT do
-
-No file writing / artifact execution, no research connector, no memory store,
-no auth. The real version comes later.
+Client → server: `{ type:"start", goal, mode? }`, `{ type:"answers", answers }`, `{ type:"cancel" }`
+Server → client: `{ type:"classified", classification, reason }`, `{ type:"clarify", ... }`, `{ type:"stage", ... }`, `{ type:"result", result }`, `{ type:"error", message }`
