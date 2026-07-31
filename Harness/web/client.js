@@ -11,7 +11,6 @@ const els = {
   classificationBadge: $("classification-badge"),
   clarifySummary: $("clarify-summary"),
   clarifyQuestions: $("clarify-questions"),
-  answerBtn: $("answer-btn"),
   loopSection: $("loop-section"),
   loopTitle: $("loop-title"),
   stageTracker: $("stage-tracker"),
@@ -115,14 +114,16 @@ function handleMessage(msg) {
 }
 
 function renderBadge(classification, reason) {
-  const labels = {
-    harmful: { text: "Blocked", cls: "bad", icon: "⛔" },
-    subjective: { text: "Subjective — will answer in your terms", cls: "warn", icon: "💭" },
-    factual: { text: "Factual — strict verification", cls: "good", icon: "✓" },
-  };
-  const l = labels[classification] ?? labels.subjective;
-  els.classificationBadge.className = `badge ${l.cls}`;
-  els.classificationBadge.textContent = `${l.icon} ${l.text} — ${reason}`;
+  // Don't surface internal jargon (subjective/factual) to the user. Only show
+  // a visible badge when a goal is blocked as harmful.
+  if (classification === "harmful") {
+    els.classificationBadge.className = "badge bad";
+    els.classificationBadge.textContent = `⛔ Blocked — ${reason}`;
+  } else {
+    els.classificationBadge.className = "badge";
+    els.classificationBadge.textContent = "";
+    els.classificationBadge.hidden = true;
+  }
 }
 
 function startRun() {
@@ -137,39 +138,88 @@ function startRun() {
   show(els.loopSection);
 }
 
+// Slideshow state for clarifying questions
+let slideQuestions = [];
+let slideOptions = {};
+let slideMode = "open_ended";
+let slideIndex = 0;
+let slideAnswers = {};
+
 function renderClarify(clarification, mode, optionsByQuestion, classification) {
   currentMode = classification;
   const stages = classification === "factual" ? FACTUAL_STAGES : SUBJECTIVE_STAGES;
-  els.loopTitle.textContent = classification === "factual" ? "Strict verification run" : "Answering in your terms";
   buildStageTracker(stages);
 
+  slideQuestions = clarification.questions || [];
+  slideOptions = optionsByQuestion || {};
+  slideMode = mode;
+  slideIndex = 0;
+  slideAnswers = {};
   els.clarifySummary.textContent = clarification.summary || "";
-  els.clarifyQuestions.innerHTML = "";
-  const isMC = mode === "multiple_choice";
-  for (const q of clarification.questions || []) {
-    const wrap = document.createElement("div");
-    wrap.className = "q";
-    const why = q.whyItMatters ? `<div class="why">${escapeHtml(q.whyItMatters)}</div>` : "";
-    if (isMC) {
-      const opts = optionsByQuestion?.[q.id] ?? ["(brief)", "(detailed)"];
-      const radios = opts.map((o, i) => `<label><input type="radio" name="mc-${escapeHtml(q.id)}" value="${escapeHtml(o)}" ${i === 0 ? "checked" : ""} /> ${escapeHtml(o)}</label>`).join("");
-      wrap.innerHTML = `<div class="qlabel">${escapeHtml(q.question)}</div>${why}<div class="mc-options">${radios}</div>`;
-    } else {
-      wrap.innerHTML = `<div class="qlabel">${escapeHtml(q.question)}</div>${why}<input type="text" data-qid="${escapeHtml(q.id)}" placeholder="Your answer…" />`;
-    }
-    els.clarifyQuestions.appendChild(wrap);
+  renderSlide();
+}
+
+function renderSlide() {
+  const total = slideQuestions.length;
+  if (total === 0) { submitAnswers(); return; }
+  const q = slideQuestions[slideIndex];
+  const isMC = slideMode === "multiple_choice";
+  const why = q.whyItMatters ? `<div class="why">${escapeHtml(q.whyItMatters)}</div>` : "";
+
+  let inputHtml;
+  if (isMC) {
+    const opts = slideOptions[q.id] ?? ["(brief)", "(detailed)"];
+    const prev = slideAnswers[q.id];
+    inputHtml = `<div class="mc-options">${opts.map((o) => `<label><input type="radio" name="slide" value="${escapeHtml(o)}" ${prev === o ? "checked" : ""} /> ${escapeHtml(o)}</label>`).join("")}</div>`;
+  } else {
+    inputHtml = `<input type="text" id="slide-input" placeholder="Your answer…" value="${escapeHtml(slideAnswers[q.id] ?? "")}" />`;
   }
+
+  els.clarifyQuestions.innerHTML = `
+    <div class="slide-progress">Question ${slideIndex + 1} of ${total}</div>
+    <div class="slide-q">
+      <div class="qlabel">${escapeHtml(q.question)}</div>
+      ${why}
+      ${inputHtml}
+    </div>
+    <div class="slide-nav">
+      <input type="button" id="slide-back" value="‹ Back" ${slideIndex === 0 ? "disabled" : ""} />
+      ${slideIndex < total - 1
+        ? `<input type="button" id="slide-next" value="Next ›" />`
+        : `<input type="button" id="slide-finish" value="Get my answer ▸" />`}
+    </div>
+  `;
+
+  const next = $("slide-next");
+  const finish = $("slide-finish");
+  const back = $("slide-back");
+  if (next) next.addEventListener("click", saveAndAdvance);
+  if (finish) finish.addEventListener("click", saveAndFinish);
+  if (back) back.addEventListener("click", () => { saveCurrent(); slideIndex--; renderSlide(); });
+  const inp = $("slide-input");
+  if (inp) { inp.focus(); inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveCurrent(); slideIndex < total - 1 ? saveAndAdvance() : saveAndFinish(); } }); }
+  const radios = els.clarifyQuestions.querySelectorAll("input[name='slide']");
+  radios.forEach((r) => r.addEventListener("change", () => { slideAnswers[q.id] = r.value; if (next) saveAndAdvance(); else if (finish) saveAndFinish(); }));
+}
+
+function saveCurrent() {
+  const q = slideQuestions[slideIndex];
+  if (!q) return;
+  const inp = $("slide-input");
+  if (inp) slideAnswers[q.id] = inp.value;
+}
+
+function saveAndAdvance() {
+  saveCurrent();
+  if (slideIndex < slideQuestions.length - 1) { slideIndex++; renderSlide(); }
+}
+function saveAndFinish() {
+  saveCurrent();
+  submitAnswers();
 }
 
 function submitAnswers() {
-  const answers = {};
-  for (const g of els.clarifyQuestions.querySelectorAll(".mc-options")) {
-    const c = g.querySelector("input[type='radio']:checked");
-    const qid = c?.name.replace(/^mc-/, "");
-    if (qid) answers[qid] = c.value;
-  }
-  for (const input of els.clarifyQuestions.querySelectorAll("input[data-qid]")) answers[input.dataset.qid] = input.value;
-  send({ type: "answers", answers });
+  send({ type: "answers", answers: slideAnswers });
   show(els.loopSection);
 }
 
@@ -196,7 +246,6 @@ function reset() { els.log.textContent = ""; clearError(); show(els.goalSection)
 
 els.runBtn.addEventListener("click", startRun);
 els.goal.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) startRun(); });
-els.answerBtn.addEventListener("click", submitAnswers);
 els.cancelBtn.addEventListener("click", () => send({ type: "cancel" }));
 els.againBtn.addEventListener("click", reset);
 connect();

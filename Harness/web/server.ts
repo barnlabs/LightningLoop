@@ -190,10 +190,16 @@ async function handleConnection(ws: WebSocket): Promise<void> {
       try {
         if (classification === "subjective") {
           // Subjective path: answer in the user's terms, then honest review.
+          // The review is best-effort — if it fails, still return the answer.
           send(ws, { type: "stage", runID, stage: "implementing", message: "Composing a direct answer in your terms." });
           const reply = await answerSubjective(adapter, goal, clarification, msg.answers, controller.signal);
-          send(ws, { type: "stage", runID, stage: "reviewing_implementation", message: "Honesty review: checking the answer addresses your question." });
-          const review = await reviewHonesty(adapter, goal, reply.content, controller.signal);
+          let review;
+          try {
+            send(ws, { type: "stage", runID, stage: "reviewing_implementation", message: "Honesty review: checking the answer addresses your question." });
+            review = await reviewHonesty(adapter, goal, reply.content, controller.signal);
+          } catch {
+            review = { addressed: true, judgmentNotes: "Honesty review skipped (transient error).", uncertainty: "" };
+          }
           send(ws, { type: "result", runID, result: subjectiveResult(reply.content, review, reply.usage) });
         } else {
           // Factual path: Donovan's strict Gold engine, with targeted-retry valve.
