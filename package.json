@@ -18,7 +18,11 @@
     "NOTICE.md",
     "SECURITY.md"
   ],
-  "keywords": ["pi-package", "agent-orchestration", "promise-graph"],
+  "keywords": [
+    "pi-package",
+    "agent-orchestration",
+    "promise-graph"
+  ],
   "type": "module",
   "bin": {
     "lightningloop": "dist/cli/index.js",
@@ -26,7 +30,9 @@
     "llp": "dist/cli/index.js"
   },
   "pi": {
-    "skills": ["./skills"]
+    "skills": [
+      "./skills"
+    ]
   },
   "scripts": {
     "clean:harness": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
@@ -36,13 +42,15 @@
     "test:harness": "npm run build:harness && node --test --test-concurrency=2 'dist/**/*.test.js'",
     "test:portable": "npm run build:harness && node --test dist/artifacts/browser-artifact-server.test.js dist/core/platform-paths.test.js dist/core/pi-options.test.js dist/core/provider-profile.test.js dist/graph/promise-graph.test.js dist/search/search-client.test.js dist/update/update-policy.test.js",
     "harness": "node dist/cli/index.js",
+    "web": "node dist/web/server.js",
     "verify:harness": "npm run check:harness && npm run test:harness",
     "prepack": "npm run clean:harness && npm run build:harness"
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.66",
     "@earendil-works/pi-coding-agent": "file:vendor/earendil-works-pi-coding-agent-0.80.10-unshrunk.tgz",
-    "@earendil-works/pi-tui": "0.80.10"
+    "@earendil-works/pi-tui": "0.80.10",
+    "ws": "8.18.3"
   },
   "overrides": {
     "brace-expansion": "5.0.7",
@@ -50,6 +58,7 @@
   },
   "devDependencies": {
     "@types/node": "24.10.1",
+    "@types/ws": "8.5.13",
     "typescript": "7.0.2"
   },
   "engines": {

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LightningLoop — POC</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>⚡ <span>LightningLoop</span></h1>
+    <p class="tag">Proof of concept — watch a prompt become a sophisticated answer.</p>
+  </header>
+
+  <main>
+    <!-- STEP 1: the goal -->
+    <section id="goal-section">
+      <label for="goal">What do you want the loop to solve?</label>
+      <textarea id="goal" rows="3" placeholder="e.g. Write a short, accurate explanation of how tides work."></textarea>
+
+      <label class="mt">API key <span class="req">required to use LightningLoop</span></label>
+      <input id="api-key" type="password" placeholder="Paste your API key…" autocomplete="off" />
+      <p class="hint">Your key is used for this run only — it stays in your browser and is never stored by the server. Leave blank only if the server has a built-in default.</p>
+
+      <fieldset class="mode-toggle">
+        <legend>Question mode</legend>
+        <label class="radio"><input type="radio" name="mode" value="open_ended" checked /> <span><strong>Open-ended</strong> — type your own answers</span></label>
+        <label class="radio"><input type="radio" name="mode" value="multiple_choice" /> <span><strong>Multiple choice</strong> — pick from generated options</span></label>
+      </fieldset>
+
+      <details class="advanced">
+        <summary>Advanced provider settings</summary>
+        <div class="byo">
+          <label>Base URL <input id="byo-base" type="text" placeholder="https://api.z.ai/api/anthropic" /></label>
+          <label>Model <input id="byo-model" type="text" placeholder="GLM-5.2" /></label>
+        </div>
+      </details>
+
+      <div class="row">
+        <input id="run-btn" type="button" value="Start the loop ▸" />
+        <span id="conn-status" class="status">connecting…</span>
+      </div>
+    </section>
+
+    <!-- STEP 2: clarifying questions -->
+    <section id="clarify-section" hidden>
+      <h2>1 · Clarify</h2>
+      <p id="clarify-summary" class="summary"></p>
+      <div id="clarify-questions"></div>
+      <div class="row">
+        <input id="answer-btn" type="button" value="Answer & run the loop ▸" />
+      </div>
+    </section>
+
+    <!-- STEP 3: live loop -->
+    <section id="loop-section" hidden>
+      <h2>2 · The loop is running</h2>
+
+      <!-- stage tracker: lights up as stages fire -->
+      <ol id="stage-tracker" class="stages">
+        <li data-stage="planning">Plan</li>
+        <li data-stage="reviewing_plan">Review plan</li>
+        <li data-stage="implementing">Implement</li>
+        <li data-stage="reviewing_implementation">Review work</li>
+        <li data-stage="gold">Gold</li>
+      </ol>
+
+      <!-- streaming log -->
+      <div id="log" class="log"></div>
+      <div class="row">
+        <input id="cancel-btn" type="button" value="Cancel" />
+      </div>
+    </section>
+
+    <!-- STEP 4: result -->
+    <section id="result-section" hidden>
+      <div id="verdict" class="verdict"></div>
+      <h2>The answer</h2>
+      <div id="deliverable" class="deliverable"></div>
+      <details>
+        <summary>Plan &amp; criteria</summary>
+        <pre id="plan-detail"></pre>
+      </details>
+      <details>
+        <summary>Reviews</summary>
+        <pre id="reviews-detail"></pre>
+      </details>
+      <details>
+        <summary>Token usage</summary>
+        <pre id="usage-detail"></pre>
+      </details>
+      <div class="row">
+        <input id="again-btn" type="button" value="Run another goal ↺" />
+      </div>
+    </section>
+
+    <!-- error banner -->
+    <div id="error-banner" class="error" hidden></div>
+  </main>
+
+  <script src="/client.js"></script>
+</body>
+</html>
