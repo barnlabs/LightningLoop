@@ -48,24 +48,30 @@
       </div>
     </section>
 
-    <!-- STEP 4: result -->
+    <!-- STEP 4: result + feedback -->
     <section id="result-section" hidden>
       <div id="verdict" class="verdict"></div>
       <div id="deliverable" class="deliverable"></div>
-      <details>
-        <summary>Notes</summary>
-        <pre id="notes-detail"></pre>
-      </details>
-      <details>
-        <summary>Plan &amp; criteria</summary>
-        <pre id="plan-detail"></pre>
-      </details>
-      <details>
-        <summary>Reviews</summary>
-        <pre id="reviews-detail"></pre>
-      </details>
       <div class="row">
         <input id="again-btn" type="button" value="Ask another ↺" />
+      </div>
+    </section>
+
+    <!-- STEP 5: feedback -->
+    <section id="feedback-section" hidden>
+      <h2>How was that answer?</h2>
+      <div class="rating">
+        <label><input type="radio" name="rating" value="1" /> 😡 Poor</label>
+        <label><input type="radio" name="rating" value="2" /> 🙁 Fair</label>
+        <label><input type="radio" name="rating" value="3" /> 😐 Okay</label>
+        <label><input type="radio" name="rating" value="4" /> 🙂 Good</label>
+        <label><input type="radio" name="rating" value="5" /> 🤩 Great</label>
+      </div>
+      <label class="mt" for="followup">Want to clarify further or ask more?</label>
+      <textarea id="followup" rows="2" placeholder="Ask a follow-up question or tell it what to change…"></textarea>
+      <div class="row">
+        <input id="followup-submit" type="button" value="Get a refined answer ▸" />
+        <input id="followup-done" type="button" value="Done" />
       </div>
     </section>
 

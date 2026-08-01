@@ -74,7 +74,12 @@ interface AnswersMessage {
 interface CancelMessage {
   type: "cancel";
 }
-type ClientMessage = StartMessage | AnswersMessage | CancelMessage;
+interface FollowupMessage {
+  type: "followup";
+  question: string;
+  rating?: string;
+}
+type ClientMessage = StartMessage | AnswersMessage | CancelMessage | FollowupMessage;
 
 function send(ws: WebSocket, payload: unknown): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
@@ -94,6 +99,7 @@ interface RunState {
   clarification: Clarification;
   controller: AbortController;
   adapter: AgentAdapter;
+  lastAnswer?: string;
 }
 
 /** Generate 2-4 multiple-choice options per clarifying question. */
@@ -185,12 +191,10 @@ async function handleConnection(ws: WebSocket): Promise<void> {
       if (entry.done) { send(ws, { type: "error", message: "No active run to continue." }); return; }
       const [runID, state] = entry.value;
       const { goal, classification, clarification, controller, adapter } = state;
-      runs.delete(runID);
 
       try {
         if (classification === "subjective") {
           // Subjective path: answer in the user's terms, then honest review.
-          // The review is best-effort — if it fails, still return the answer.
           send(ws, { type: "stage", runID, stage: "implementing", message: "Composing a direct answer in your terms." });
           const reply = await answerSubjective(adapter, goal, clarification, msg.answers, controller.signal);
           let review;
@@ -200,13 +204,45 @@ async function handleConnection(ws: WebSocket): Promise<void> {
           } catch {
             review = { addressed: true, judgmentNotes: "Honesty review skipped (transient error).", uncertainty: "" };
           }
+          state.lastAnswer = reply.content;
           send(ws, { type: "result", runID, result: subjectiveResult(reply.content, review, reply.usage) });
         } else {
           // Factual path: Donovan's strict Gold engine, with targeted-retry valve.
           send(ws, { type: "stage", runID, stage: "planning", message: "Building a proof-bearing plan." });
           const result = await runGoldLoop(adapter, goal, clarification, msg.answers, runID, ws, controller);
+          state.lastAnswer = result.implementation?.deliverable;
           send(ws, { type: "result", runID, result });
         }
+      } catch (err) {
+        if (controller.signal.aborted) { send(ws, { type: "error", message: "Run cancelled." }); return; }
+        send(ws, { type: "error", message: err instanceof Error ? err.message : String(err) });
+      }
+      return;
+    }
+
+    // ── FOLLOWUP: refine the previous answer with a new question ─────────
+    if (msg.type === "followup") {
+      const entry = runs.entries().next();
+      if (entry.done) { send(ws, { type: "error", message: "No active run to follow up." }); return; }
+      const [runID, state] = entry.value;
+      const { goal, adapter, controller, lastAnswer } = state;
+      try {
+        send(ws, { type: "stage", runID, stage: "implementing", message: "Refining the answer with your follow-up." });
+        const reply = await adapter.complete({
+          role: "orchestrator",
+          system: [
+            "You are refining a previous answer based on the user's follow-up question or feedback.",
+            "Be factual and truthful. Do not invent facts, sources, or numbers.",
+            "Use the previous answer as context. Address the follow-up directly.",
+            "Keep it useful and focused.",
+          ].join(" "),
+          user: `Original question: ${goal}\n\nPrevious answer:\n${lastAnswer ?? "(none)"}\n\nUser follow-up: ${msg.question}\n\nProvide a refined answer that incorporates this feedback.`,
+          temperature: 0.4,
+          maxTokens: 1500,
+        }, controller.signal);
+        state.lastAnswer = reply.content;
+        const review = { addressed: true, judgmentNotes: "Refined answer.", uncertainty: "" };
+        send(ws, { type: "result", runID, result: subjectiveResult(reply.content, review, reply.usage) });
       } catch (err) {
         if (controller.signal.aborted) { send(ws, { type: "error", message: "Run cancelled." }); return; }
         send(ws, { type: "error", message: err instanceof Error ? err.message : String(err) });

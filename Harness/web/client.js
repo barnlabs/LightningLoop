@@ -19,10 +19,11 @@ const els = {
   resultSection: $("result-section"),
   verdict: $("verdict"),
   deliverable: $("deliverable"),
-  notesDetail: $("notes-detail"),
-  planDetail: $("plan-detail"),
-  reviewsDetail: $("reviews-detail"),
   againBtn: $("again-btn"),
+  feedbackSection: $("feedback-section"),
+  followup: $("followup"),
+  followupSubmit: $("followup-submit"),
+  followupDone: $("followup-done"),
   errorBanner: $("error-banner"),
 };
 
@@ -38,7 +39,7 @@ function setConn(state) {
 }
 
 function show(section) {
-  for (const s of [els.goalSection, els.classifySection, els.loopSection, els.resultSection]) s.hidden = true;
+  for (const s of [els.goalSection, els.classifySection, els.loopSection, els.resultSection, els.feedbackSection]) s.hidden = true;
   section.hidden = false;
 }
 
@@ -236,16 +237,32 @@ function renderResult(result) {
     els.verdict.className = "verdict paused";
   }
   els.deliverable.textContent = result.implementation?.deliverable || "(no answer)";
-  els.notesDetail.textContent = JSON.stringify(result.implementation?.notes ?? [], null, 2);
-  els.planDetail.textContent = JSON.stringify({ criteria: result.planning?.criteria, plan: result.planning?.plan }, null, 2);
-  els.reviewsDetail.textContent = JSON.stringify(result.reviews, null, 2);
+  // Show the answer, then the feedback section below it (skip feedback for refusals).
   show(els.resultSection);
+  if (!result.message?.startsWith("Refused")) {
+    els.feedbackSection.hidden = false;
+    els.followup.value = "";
+    document.querySelectorAll("input[name='rating']").forEach((r) => { r.checked = false; });
+  }
 }
 
 function reset() { els.log.textContent = ""; clearError(); show(els.goalSection); els.goal.focus(); }
+
+function submitFollowup() {
+  const question = els.followup.value.trim();
+  if (!question) { showError("Type a follow-up question first."); return; }
+  const rating = document.querySelector('input[name="rating"]:checked')?.value;
+  clearError();
+  send({ type: "followup", question, ...(rating ? { rating } : {}) });
+  els.feedbackSection.hidden = true;
+  show(els.loopSection);
+  els.loopTitle.textContent = "Refining the answer…";
+}
 
 els.runBtn.addEventListener("click", startRun);
 els.goal.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) startRun(); });
 els.cancelBtn.addEventListener("click", () => send({ type: "cancel" }));
 els.againBtn.addEventListener("click", reset);
+els.followupDone.addEventListener("click", reset);
+els.followupSubmit.addEventListener("click", submitFollowup);
 connect();
