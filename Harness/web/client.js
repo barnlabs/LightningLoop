@@ -206,8 +206,8 @@ function renderSlide() {
   let inputHtml;
   if (isMC) {
     const opts = slideOptions[q.id] ?? ["(brief)", "(detailed)"];
-    const prev = slideAnswers[q.id];
-    inputHtml = `<div class="mc-options">${opts.map((o) => `<label><input type="radio" name="slide" value="${escapeHtml(o)}" ${prev === o ? "checked" : ""} /> ${escapeHtml(o)}</label>`).join("")}</div>`;
+    const prevSelected = Array.isArray(slideAnswers[q.id + "__multi"]) ? slideAnswers[q.id + "__multi"] : [];
+    inputHtml = `<div class="mc-hint">Select all that apply</div><div class="mc-options">${opts.map((o) => `<label><input type="checkbox" name="slide" value="${escapeHtml(o)}" ${prevSelected.includes(o) ? "checked" : ""} /> ${escapeHtml(o)}</label>`).join("")}</div>`;
   } else {
     inputHtml = `<input type="text" id="slide-input" placeholder="Your answer…" value="${escapeHtml(slideAnswers[q.id] ?? "")}" />`;
   }
@@ -235,15 +235,20 @@ function renderSlide() {
   if (back) back.addEventListener("click", () => { saveCurrent(); slideIndex--; renderSlide(); });
   const inp = $("slide-input");
   if (inp) { inp.focus(); inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveCurrent(); slideIndex < total - 1 ? saveAndAdvance() : saveAndFinish(); } }); }
-  const radios = els.clarifyQuestions.querySelectorAll("input[name='slide']");
-  radios.forEach((r) => r.addEventListener("change", () => { slideAnswers[q.id] = r.value; if (next) saveAndAdvance(); else if (finish) saveAndFinish(); }));
+  // Multiple-choice uses checkboxes (multi-select); no auto-advance so users can pick several.
+  // Open-ended auto-advances on Enter (handled above).
 }
 
 function saveCurrent() {
   const q = slideQuestions[slideIndex];
   if (!q) return;
   const inp = $("slide-input");
-  if (inp) slideAnswers[q.id] = inp.value;
+  if (inp) { slideAnswers[q.id] = inp.value; return; }
+  // Multiple-choice: collect all checked boxes, join into one answer.
+  const checks = els.clarifyQuestions.querySelectorAll("input[name='slide']:checked");
+  const selected = Array.from(checks).map((c) => c.value);
+  slideAnswers[q.id + "__multi"] = selected;
+  slideAnswers[q.id] = selected.join(", ");
 }
 
 function saveAndAdvance() {

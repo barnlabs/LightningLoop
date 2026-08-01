@@ -34,7 +34,7 @@ export async function clarifySubjective(
       "Ask only questions whose answers would genuinely change the recommendation. Don't ask obvious things the goal already states.",
       "Return ONLY a JSON object, no prose:",
       '{"summary":"one sentence rephrasing what the user wants","questions":[{"id":"Q1","question":"...","why_it_matters":"..."}, ...]}',
-      "Ask between 2 and 6 questions. Keep each question short and plain.",
+      "You MUST ask at least 5 questions. Aim for 6. Cover all relevant dimensions: people/constraints/scenario/timing/precedence. Keep each question short and plain.",
     ].join("\n"),
     user: `Question to clarify:\n${goal}`,
     temperature: 0.3,

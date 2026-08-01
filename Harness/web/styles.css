@@ -60,6 +60,7 @@ h2 { margin: 0 0 0.75rem; font-size: 1.1rem; color: var(--accent-2); }
 .slide-nav input[type="button"]#slide-back { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
 .slide-nav input[type="button"]#slide-back:hover { background: #2a3340; }
 .slide-nav input[type="button"]#slide-back:disabled { opacity: 0.3; }
+.mc-hint { color: var(--muted); font-size: 0.8rem; margin: 0.3rem 0 0.4rem; font-style: italic; }
 .mc-options { display: grid; gap: 0.4rem; margin: 0.5rem 0 0.75rem; }
 .mc-options label { font-weight: 400; display: flex; align-items: center; gap: 0.5rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; cursor: pointer; margin: 0; }
 .mc-options label:hover { border-color: var(--accent); }
