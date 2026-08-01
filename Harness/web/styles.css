@@ -79,7 +79,19 @@ h2 { margin: 0 0 0.75rem; font-size: 1.1rem; color: var(--accent-2); }
 .verdict { font-size: 1.2rem; font-weight: 700; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; text-align: center; }
 .verdict.gold { background: rgba(255,215,0,0.12); border: 1px solid var(--gold); color: var(--gold); }
 .verdict.paused { background: rgba(248,81,73,0.1); border: 1px solid var(--bad); color: var(--bad); }
-.deliverable { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; white-space: pre-wrap; }
+.deliverable { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem 1.5rem; line-height: 1.65; }
+.deliverable h3, .deliverable h4, .deliverable h5 { color: var(--accent-2); margin: 1.1rem 0 0.4rem; }
+.deliverable h3 { font-size: 1.15rem; }
+.deliverable h4 { font-size: 1.05rem; }
+.deliverable h5 { font-size: 0.95rem; }
+.deliverable p { margin: 0.5rem 0; }
+.deliverable ul { margin: 0.5rem 0; padding-left: 1.4rem; }
+.deliverable li { margin: 0.3rem 0; }
+.deliverable strong { color: var(--text); }
+.deliverable em { color: var(--muted); }
+.deliverable code { background: #010409; border: 1px solid var(--border); border-radius: 4px; padding: 0.1rem 0.35rem; font-family: var(--mono); font-size: 0.85em; }
+.deliverable > *:first-child { margin-top: 0; }
+.deliverable > *:last-child { margin-bottom: 0; }
 .rating { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
 .rating label { font-weight: 400; display: flex; align-items: center; gap: 0.4rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.85rem; cursor: pointer; margin: 0; font-size: 0.95rem; }
 .rating label:hover { border-color: var(--accent); }

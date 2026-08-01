@@ -11,6 +11,53 @@ import type { AgentAdapter, AgentReply, Clarification, LoopRunResult } from "../
 
 export type GoalClass = "harmful" | "subjective" | "factual";
 
+/**
+ * COMPRESSION (subjective path): richer clarifying questions than the engine's
+ * default. Asks about the dimensions that make a subjective answer actually
+ * useful — who's involved, what constraints apply, what scenario the answer
+ * needs to fit. This is how "where should we eat?" surfaces "one person is
+ * vegan" before the answer is composed.
+ *
+ * Returns a Clarification (same shape the engine uses) but with up to 6
+ * scenario-aware questions.
+ */
+export async function clarifySubjective(
+  adapter: AgentAdapter,
+  goal: string,
+  signal?: AbortSignal,
+): Promise<Clarification> {
+  const reply = await callWithRetry(adapter, {
+    role: "orchestrator",
+    system: [
+      "You ask clarifying questions that make a subjective question answerable.",
+      "Think about what a person would actually need to know to give a great answer: who is involved (number of people, any needs/preferences/dietary requirements), what constraints apply (budget, location, time, distance), and what scenario this is for (casual, special occasion, quick, leisurely).",
+      "Ask only questions whose answers would genuinely change the recommendation. Don't ask obvious things the goal already states.",
+      "Return ONLY a JSON object, no prose:",
+      '{"summary":"one sentence rephrasing what the user wants","questions":[{"id":"Q1","question":"...","why_it_matters":"..."}, ...]}',
+      "Ask between 2 and 6 questions. Keep each question short and plain.",
+    ].join("\n"),
+    user: `Question to clarify:\n${goal}`,
+    temperature: 0.3,
+    maxTokens: 800,
+  }, signal);
+  const parsed = parseJSONLoose(reply.content);
+  const summary = typeof parsed?.summary === "string" ? parsed.summary : goal;
+  const rawQs = Array.isArray(parsed?.questions) ? parsed.questions : [];
+  const questions = rawQs
+    .filter((q): q is Record<string, unknown> => typeof q === "object" && q !== null)
+    .map((q, i) => ({
+      id: typeof q.id === "string" && q.id ? q.id : `Q${i + 1}`,
+      question: typeof q.question === "string" ? q.question : "",
+      whyItMatters: typeof q.why_it_matters === "string" ? q.why_it_matters : "",
+    }))
+    .filter((q) => q.question)
+    .slice(0, 6);
+  if (questions.length === 0) {
+    return { summary, questions: [{ id: "Q1", question: "Is there anything specific you're looking for?", whyItMatters: "Helps tailor the answer." }] };
+  }
+  return { summary, questions };
+}
+
 export interface ClassificationResult {
   classification: GoalClass;
   /** Why this classification was chosen — shown to the user for transparency. */

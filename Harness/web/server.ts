@@ -7,7 +7,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { LoopEngine } from "../core/loop-engine.js";
 import type { AgentAdapter, Clarification, LoopRunResult } from "../core/loop-types.js";
 import { AnthropicAdapter, resolveAdapterOptions, type AnthropicAdapterOptions } from "./anthropic-adapter.js";
-import { classifyGoal, answerSubjective, reviewHonesty, subjectiveResult } from "./strokes.js";
+import { classifyGoal, clarifySubjective, answerSubjective, reviewHonesty, subjectiveResult } from "./strokes.js";
 
 /**
  * LightningLoop web server — the 4-stroke orchestrator.
@@ -168,9 +168,12 @@ async function handleConnection(ws: WebSocket): Promise<void> {
           return;
         }
 
-        // COMPRESSION — clarifying questions (both paths use the engine's clarifier).
-        const engine = new LoopEngine(adapter);
-        const clarification = await engine.clarify(goal, controller.signal);
+        // COMPRESSION — clarifying questions.
+        // Subjective: richer scenario-aware questions (who, constraints, scenario).
+        // Factual: the engine's standard clarifier.
+        const clarification = result.classification === "subjective"
+          ? await clarifySubjective(adapter, goal, controller.signal)
+          : await new LoopEngine(adapter).clarify(goal, controller.signal);
         runs.set(runID, { goal, classification: result.classification, clarification, controller, adapter });
 
         if (msg.mode === "multiple_choice") {

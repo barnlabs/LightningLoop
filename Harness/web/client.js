@@ -47,6 +47,42 @@ function showError(m) { els.errorBanner.textContent = m; els.errorBanner.hidden 
 function clearError() { els.errorBanner.hidden = true; }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
+/** Minimal markdown → HTML for the answer: headings, bold, italic, lists, paragraphs. */
+function renderMarkdown(md) {
+  const lines = escapeHtml(md).split("\n");
+  let html = "";
+  let inList = false;
+  const closeList = () => { if (inList) { html += "</ul>"; inList = false; } };
+  for (let raw of lines) {
+    const line = raw.trimEnd();
+    if (/^#{1,3}\s/.test(line)) {
+      closeList();
+      const level = line.match(/^(#{1,3})/)[1].length;
+      const text = line.replace(/^#{1,3}\s/, "");
+      html += `<h${level + 2}>${inline(text)}</h${level + 2}>`;
+    } else if (/^[-*]\s/.test(line)) {
+      if (!inList) { html += "<ul>"; inList = true; }
+      html += `<li>${inline(line.replace(/^[-*]\s/, ""))}</li>`;
+    } else if (/^\d+\.\s/.test(line)) {
+      if (!inList) { html += "<ul>"; inList = true; }
+      html += `<li>${inline(line.replace(/^\d+\.\s/, ""))}</li>`;
+    } else if (line.trim() === "") {
+      closeList();
+    } else {
+      closeList();
+      html += `<p>${inline(line)}</p>`;
+    }
+  }
+  closeList();
+  return html;
+}
+function inline(s) {
+  return s
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
 function buildStageTracker(stages) {
   els.stageTracker.innerHTML = "";
   for (const s of stages) {
@@ -236,7 +272,7 @@ function renderResult(result) {
     els.verdict.textContent = "⏸ Paused — " + (result.message || "");
     els.verdict.className = "verdict paused";
   }
-  els.deliverable.textContent = result.implementation?.deliverable || "(no answer)";
+  els.deliverable.innerHTML = renderMarkdown(result.implementation?.deliverable || "(no answer)");
   // Show the answer, then the feedback section below it (skip feedback for refusals).
   show(els.resultSection);
   if (!result.message?.startsWith("Refused")) {
