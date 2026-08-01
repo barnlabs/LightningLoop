@@ -205,7 +205,7 @@ async function handleConnection(ws: WebSocket): Promise<void> {
             send(ws, { type: "stage", runID, stage: "reviewing_implementation", message: "Honesty review: checking the answer addresses your question." });
             review = await reviewHonesty(adapter, goal, reply.content, controller.signal);
           } catch {
-            review = { addressed: true, judgmentNotes: "Honesty review skipped (transient error).", uncertainty: "" };
+            review = { addressed: true, judgmentNotes: "Honesty review skipped (transient error).", uncertainty: "", namedEntities: "", fabricationRisk: "low" as const };
           }
           state.lastAnswer = reply.content;
           send(ws, { type: "result", runID, result: subjectiveResult(reply.content, review, reply.usage) });
@@ -244,7 +244,7 @@ async function handleConnection(ws: WebSocket): Promise<void> {
           maxTokens: 1500,
         }, controller.signal);
         state.lastAnswer = reply.content;
-        const review = { addressed: true, judgmentNotes: "Refined answer.", uncertainty: "" };
+        const review = { addressed: true, judgmentNotes: "Refined answer.", uncertainty: "", namedEntities: "", fabricationRisk: "low" as const };
         send(ws, { type: "result", runID, result: subjectiveResult(reply.content, review, reply.usage) });
       } catch (err) {
         if (controller.signal.aborted) { send(ws, { type: "error", message: "Run cancelled." }); return; }

@@ -117,28 +117,39 @@ export async function answerSubjective(
       role: "orchestrator",
       system: [
         "You answer a question directly and helpfully, in the user's own terms.",
-        "Be factual and truthful. Do not invent facts, sources, statistics, or quotes.",
-        "The user answered clarifying questions — use those answers as your parameters. The question is now answerable: answer it.",
-        "If this involves judgment or preference, give a clear, reasoned recommendation and say what it is based on (common practice, the stated preferences, widely-shared criteria). Do not pretend a preference is a proven fact.",
-        "If you genuinely do not know something concrete, say so plainly rather than guessing.",
-        "Be useful. A real answer beats a refusal.",
-      ].join(" "),
-      user: `Goal: ${goal}\n\nClarifying answers (the user's parameters):\n${answersText}\n\nProvide a direct, helpful answer.`,
-      temperature: 0.4,
+        "HONESTY IS THE TOP PRIORITY. You must never invent or fabricate.",
+        "CRITICAL RULES:",
+        "- Do NOT invent specific named entities — business names, restaurant names, product names, place names, people, addresses, phone numbers, URLs, prices, or hours — unless you are genuinely certain they are real. If you are not certain a specific place/thing exists, do not name it.",
+        "- It is far better to describe TYPES of places and what to look for than to name a specific establishment that might not exist. For example, instead of inventing 'Try Mario's Bistro on 5th Street', say 'Look for a small family-run trattoria away from the main tourist squares — the kind locals queue at.'",
+        "- If you DO name a specific real place you are confident about, flag it: 'I believe this exists, but verify before you go.'",
+        "- Do not invent facts, sources, statistics, or quotes.",
+        "- The user answered clarifying questions — use those answers as your parameters. Answer the question.",
+        "- If this involves judgment or preference, give a clear, reasoned recommendation and say what it is based on. Do not pretend a preference is a proven fact.",
+        "- If you genuinely do not know something concrete, say so plainly.",
+        "Be useful. A real answer beats a refusal — but a honest answer beats a confident-sounding fabrication. When unsure about specifics, give guidance on how to find the real answer instead of inventing one.",
+      ].join("\n"),
+      user: `Goal: ${goal}\n\nClarifying answers (the user's parameters):\n${answersText}\n\nProvide a direct, helpful answer. Do not fabricate specific establishments or named entities you cannot verify.`,
+      temperature: 0.3,
       maxTokens: 1500,
     },
     signal,
   );
 }
 
-/** EXHAUST: one light honesty pass over a subjective answer. */
+/** EXHAUST: a rigorous honesty pass over a subjective answer. */
 export interface HonestyReview {
   /** Did the answer actually address the question in the user's terms? */
   addressed: boolean;
   /** What's the model's own judgment vs. established fact? */
   judgmentNotes: string;
-  /** What's uncertain or caveated? */
+  /** What's genuinely uncertain or caveated? */
   uncertainty: string;
+  /** Did the answer name specific entities (places, businesses, etc.)? */
+  namedEntities: string;
+  /** Are those named entities plausibly real, or likely fabricated? */
+  fabricationRisk: "none" | "low" | "high";
+  /** If fabrication risk is high, a correction the answer should carry. */
+  correction?: string;
 }
 
 export async function reviewHonesty(
@@ -152,21 +163,30 @@ export async function reviewHonesty(
     {
       role: "reviewer",
       system: [
-        "You give a quick honesty review of an answer. Respond with ONLY a JSON object, no prose.",
-        'Return exactly: {"addressed":true|false,"judgment_notes":"...","uncertainty":"..."}',
-        "addressed: did the answer actually answer the user's question? judgment_notes: what parts are the answerer's judgment/preference vs. established fact? uncertainty: what's genuinely uncertain or caveated?",
+        "You are a rigorous honesty reviewer. Your job is to catch FABRICATION.",
+        "Review the answer and respond with ONLY a JSON object, no prose:",
+        '{"addressed":true|false,"judgment_notes":"...","uncertainty":"...","named_entities":"list any specific named places/businesses/products/people, or empty","fabrication_risk":"none|low|high","correction":"if fabrication_risk is high, what warning to add"}',
+        "fabrication_risk = HIGH if the answer names specific businesses, restaurants, products, addresses, phone numbers, or URLs that may not be real or that you cannot confirm exist. Models frequently invent plausible-sounding establishment names — treat any specific named business as suspect unless it is a globally famous landmark.",
+        "fabrication_risk = LOW if it only names famous/well-known places, or describes types of places without naming specific establishments.",
+        "fabrication_risk = NONE if there are no specific named entities at all.",
+        "Be strict. When in doubt about whether a named place is real, set fabrication_risk to high and write a correction that warns the user to verify before relying on it.",
       ].join("\n"),
-      user: `Question: ${goal}\n\nAnswer: ${answer}`,
+      user: `Question: ${goal}\n\nAnswer to review:\n${answer}`,
       temperature: 0,
-      maxTokens: 400,
+      maxTokens: 500,
     },
     signal,
   );
   const parsed = parseJSONLoose(reply.content);
+  const risk = (parsed?.fabrication_risk as HonestyReview["fabricationRisk"]) ?? "low";
+  const correction = typeof parsed?.correction === "string" && parsed.correction.trim() ? parsed.correction.trim() : undefined;
   return {
     addressed: Boolean(parsed?.addressed),
     judgmentNotes: typeof parsed?.judgment_notes === "string" ? parsed.judgment_notes : "",
     uncertainty: typeof parsed?.uncertainty === "string" ? parsed.uncertainty : "",
+    namedEntities: typeof parsed?.named_entities === "string" ? parsed.named_entities : "",
+    fabricationRisk: (risk === "none" || risk === "low" || risk === "high") ? risk : "low",
+    ...(correction ? { correction } : {}),
   };
 }
 
@@ -180,12 +200,26 @@ export function subjectiveResult(
   if (review.judgmentNotes) notes.push(`Judgment vs. fact: ${review.judgmentNotes}`);
   if (review.uncertainty) notes.push(`Uncertainty: ${review.uncertainty}`);
   if (!review.addressed) notes.push("Note: the honesty review flagged that the answer may not fully address the question.");
+
+  // If the honesty review caught likely fabrication, append a visible warning
+  // to the answer itself so the user is never quietly misled.
+  let deliverable = answer;
+  if (review.fabricationRisk === "high") {
+    const warning = review.correction
+      ? `\n\n---\n\n⚠️ **Honesty check:** ${review.correction}`
+      : "\n\n---\n\n⚠️ **Honesty check:** The named specifics above may not be real — please verify any establishment, address, or detail before relying on it.";
+    deliverable = answer + warning;
+    notes.push("Fabrication risk: HIGH — a verification warning was appended to the answer.");
+  } else if (review.fabricationRisk === "low" && review.namedEntities) {
+    notes.push("Fabrication risk: LOW (only well-known entities named).");
+  }
+
   return {
     completed: true,
     stage: "gold",
     message: "Direct answer in the user's terms, with an honesty review.",
     planning: { criteria: [], plan: [], risks: [], acceptanceTest: "Subjective path — answered with stated reasoning, not machine-proven." },
-    implementation: { deliverable: answer, notes, files: [], verificationCommands: [] },
+    implementation: { deliverable, notes, files: [], verificationCommands: [] },
     reviews: [],
     evidence: [],
     usage,
