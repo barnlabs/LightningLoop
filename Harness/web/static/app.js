@@ -83,11 +83,37 @@ async function clarifySubjective(goal) {
     "You ask clarifying questions that make a subjective question answerable.",
     "Think about: who is involved (people, needs, dietary requirements), constraints (budget, location, time), scenario (casual, special occasion).",
     "Ask only questions whose answers would change the recommendation.",
-    'Return ONLY: {"summary":"...","questions":[{"id":"Q1","question":"...","why_it_matters":"..."}, ...]}',
+    'Return ONLY: {"summary":"...","questions":[{"id":"Q1","question":"...","why_it_matters":"...","options":["real option","..."]}, ...]}',
     "You MUST ask at least 5 questions. Aim for 6.",
-  ].join("\n"), `Question to clarify:\n${goal}`, { temperature: 0.3, maxTokens: 800 });
+    "For EACH question, include 2-4 'options' that are real, relevant answers a person might pick for THAT question. Match the question's shape (yes/no → Yes/No/Not sure; budget → ranges; category → real categories). NEVER use generic placeholders like 'brief answer'.",
+  ].join("\n"), `Question to clarify:\n${goal}`, { temperature: 0.3, maxTokens: 1200 });
   const p = parseJSON(r.text) || {};
-  return { summary: p.summary || goal, questions: (p.questions || []).filter(q => q.question).slice(0, 6) };
+  const questions = (p.questions || []).filter(q => q.question).slice(0, 6);
+  return { summary: p.summary || goal, questions };
+}
+
+/** Generate relevant multiple-choice options for a question if the clarifier
+ * didn't supply good ones. Returns an array of option strings. */
+async function ensureOptions(q, goal) {
+  const opts = Array.isArray(q.options) ? q.options.filter(o => typeof o === "string" && o.trim() && !/^(brief|detailed)\s+answer$/i.test(o.trim())) : [];
+  if (opts.length >= 2) return opts.slice(0, 4);
+  // Generate them with a focused call.
+  try {
+    const r = await callLLM([
+      "You write RELEVANT multiple-choice options for a specific question. The options must be things a real person would actually pick as their answer to THIS question.",
+      "Match the question's shape. NEVER use placeholders like 'brief answer'.",
+      'Return ONLY: {"options":["real answer","..."]} with 2-4 options.',
+    ].join("\n"), `Goal: ${goal}\nQuestion: ${q.question}\n\nWhat are 2-4 real answers?`, { temperature: 0.4, maxTokens: 300 });
+    const parsed = parseJSON(r.text) || {};
+    const generated = Array.isArray(parsed.options) ? parsed.options.filter(o => typeof o === "string" && o.trim()) : [];
+    if (generated.length >= 2) return generated.slice(0, 4);
+  } catch { /* fall through */ }
+  // Sensible fallback based on question shape.
+  const ql = (q.question || "").toLowerCase();
+  if (/\b(yes|no|do you|are you|can you)\b/.test(ql)) return ["Yes", "No", "Not sure"];
+  if (/\b(how much|budget|price|cost)\b/.test(ql)) return ["Low / budget", "Mid-range", "High / premium"];
+  if (/\b(when|time|date|day)\b/.test(ql)) return ["As soon as possible", "Within a week", "Flexible / no rush"];
+  return ["Option A", "Option B", "Not sure — I'll type my own"];
 }
 
 async function answerSubjective(goal, clarification, answers) {
@@ -192,23 +218,51 @@ function renderClarify(cl) {
   slides = cl.questions; slideIdx = 0; slideAnswers = {};
   renderSlide();
 }
-function renderSlide() {
+async function renderSlide() {
   const q = slides[slideIdx]; if (!q) return;
   const why = q.why_it_matters ? `<div class="why">${esc(q.why_it_matters)}</div>` : "";
   const prev = slideAnswers[q.id] || "";
+  const prevMulti = slideAnswers[q.id + "__multi"] || [];
+  const isMC = mode === "multiple_choice";
+
+  let inputHtml;
+  if (isMC) {
+    els.clarifyQuestions.innerHTML = `<div class="slide-progress">Question ${slideIdx + 1} of ${slides.length}</div><div class="qlabel">${esc(q.question)}</div>${why}<div class="opt-loading">Generating options…</div>`;
+    const opts = await ensureOptions(q, lastGoal);
+    const checks = opts.map((o) => `<label class="mc-opt"><input type="checkbox" name="mc" value="${esc(o)}" ${prevMulti.includes(o) ? "checked" : ""}> ${esc(o)}</label>`).join("");
+    inputHtml = `<div class="mc-hint">Select all that apply</div><div class="mc-options">${checks}</div>`;
+  } else {
+    inputHtml = `<input type="text" id="slide-input" placeholder="Your answer…" value="${esc(prev)}">`;
+  }
+
   els.clarifyQuestions.innerHTML = `
     <div class="slide-progress">Question ${slideIdx + 1} of ${slides.length}</div>
     <div class="qlabel">${esc(q.question)}</div>${why}
-    <input type="text" id="slide-input" placeholder="Your answer…" value="${esc(prev)}">
+    ${inputHtml}
     <div class="slide-nav">
       <button id="slide-back" ${slideIdx === 0 ? "disabled" : ""}>‹ Back</button>
       ${slideIdx < slides.length - 1 ? '<button id="slide-next">Next ›</button>' : '<button id="slide-finish">Get my answer ▸</button>'}
     </div>`;
-  const inp = $("slide-input"); inp.focus();
-  inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("slide-next")?.click() || $("slide-finish")?.click(); }});
-  $("slide-back")?.addEventListener("click", () => { slideAnswers[q.id] = inp.value; slideIdx--; renderSlide(); });
-  $("slide-next")?.addEventListener("click", () => { slideAnswers[q.id] = inp.value; slideIdx++; renderSlide(); });
-  $("slide-finish")?.addEventListener("click", () => { slideAnswers[q.id] = inp.value; show(els.loopSection); runAnswer(); });
+
+  if (!isMC) {
+    const inp = $("slide-input"); inp.focus();
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("slide-next")?.click() || $("slide-finish")?.click(); }});
+  }
+  $("slide-back")?.addEventListener("click", () => { saveCurrent(q); slideIdx--; renderSlide(); });
+  $("slide-next")?.addEventListener("click", () => { saveCurrent(q); slideIdx++; renderSlide(); });
+  $("slide-finish")?.addEventListener("click", () => { saveCurrent(q); show(els.loopSection); runAnswer(); });
+}
+
+function saveCurrent(q) {
+  if (mode === "multiple_choice") {
+    const checks = els.clarifyQuestions.querySelectorAll("input[name='mc']:checked");
+    const selected = Array.from(checks).map((c) => c.value);
+    slideAnswers[q.id + "__multi"] = selected;
+    slideAnswers[q.id] = selected.join(", ");
+  } else {
+    const inp = $("slide-input");
+    if (inp) slideAnswers[q.id] = inp.value;
+  }
 }
 
 async function runAnswer() {
