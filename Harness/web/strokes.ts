@@ -135,16 +135,15 @@ export async function clarifySubjective(
   const reply = await callWithRetry(adapter, {
     role: "orchestrator",
     system: [
-      "You ask clarifying questions that make a subjective question answerable.",
-      "Think about what a person would actually need to know to give a great answer: who is involved (number of people, any needs/preferences/dietary requirements), what constraints apply (budget, location, time, distance), and what scenario this is for (casual, special occasion, quick, leisurely).",
-      "Ask only questions whose answers would genuinely change the recommendation. Don't ask obvious things the goal already states.",
+      "You ask the FEWEST clarifying questions needed to give one decisive answer.",
+      "The goal is to eliminate wasted decisions — not create more. Ask only what you genuinely need to narrow the answer to one.",
+      "Prefer 2-3 questions. Never more than 3. Skip anything obvious or already stated in the goal.",
       "Return ONLY a JSON object, no prose:",
       '{"summary":"one sentence rephrasing what the user wants","questions":[{"id":"Q1","question":"...","why_it_matters":"..."}, ...]}',
-      "You MUST ask at least 5 questions. Aim for 6. Cover all relevant dimensions: people/constraints/scenario/timing/precedence. Keep each question short and plain.",
     ].join("\n"),
     user: `Question to clarify:\n${goal}`,
     temperature: 0.3,
-    maxTokens: 800,
+    maxTokens: 600,
   }, signal);
   const parsed = parseJSONLoose(reply.content);
   const summary = typeof parsed?.summary === "string" ? parsed.summary : goal;
@@ -157,7 +156,7 @@ export async function clarifySubjective(
       whyItMatters: typeof q.why_it_matters === "string" ? q.why_it_matters : "",
     }))
     .filter((q) => q.question)
-    .slice(0, 6);
+    .slice(0, 3);
   if (questions.length === 0) {
     return { summary, questions: [{ id: "Q1", question: "Is there anything specific you're looking for?", whyItMatters: "Helps tailor the answer." }] };
   }
@@ -223,21 +222,19 @@ export async function answerSubjective(
     {
       role: "orchestrator",
       system: [
-        "You are a thorough expert answering a question in the user's own terms. Research and reason in depth before answering.",
-        "HONESTY IS THE TOP PRIORITY. You must never invent or fabricate.",
-        "DEPTH OF RESEARCH — work through these steps in your reasoning before writing the final answer:",
-        "1. RECALL: What do you actually know about this from your training? Pull up the relevant facts, definitions, and context.",
-        "2. ANGLES: Consider the question from multiple viewpoints (cost, quality, convenience, the user's stated parameters, edge cases). Don't just give the first answer that comes to mind.",
-        "3. ALTERNATIVES: What are the realistic alternatives or trade-offs? Weigh them honestly.",
-        "4. VERIFY: Cross-check any specific claim against what you genuinely know. If you're unsure a detail is real, treat it as uncertain.",
-        "5. TAILOR: Apply the user's clarifying answers as hard constraints. Reject options that violate them.",
-        "OUTPUT RULES:",
-        "- Do NOT invent specific named entities (businesses, addresses, prices, hours, URLs) unless genuinely certain they are real. Describe types of places when you can't verify a specific one.",
-        "- If you DO name a specific real place you are confident about, flag it: 'I believe this exists, but verify before you go.'",
+        "You are a decisive expert. The user wants ONE answer — not a list of options. Your job is to eliminate the decision, not create more.",
+        "Give a single, specific, confident recommendation that fits their parameters. Do not present a menu. Do not say 'it depends' and list alternatives. Pick the best one and commit to it.",
+        "HONESTY IS THE TOP PRIORITY. Never invent or fabricate.",
+        "REASONING (internally, then write the answer):",
+        "1. RECALL what you know. 2. Weigh the angles. 3. Pick the single best fit for their parameters. 4. Verify any specific claim — if unsure, describe a type instead.",
+        "OUTPUT FORMAT — short and decisive:",
+        "- Line 1: the one answer (your single recommendation).",
+        "- Then 1-3 short lines on WHY it fits their parameters.",
+        "RULES:",
+        "- Do NOT invent specific named entities unless genuinely certain. Describe types when unsure.",
         "- Do not invent facts, sources, statistics, or quotes.",
-        "- Lead with the direct answer, then the reasoning and the trade-offs.",
-        "- If you genuinely do not know something concrete, say so plainly.",
-        "Be useful. A real, well-reasoned answer beats a refusal — but an honest answer beats a confident fabrication.",
+        "- If you genuinely don't know, say so — but still give your best single recommendation.",
+        "Decisive. One answer. No menu.",
       ].join("\n"),
       user: await buildAnswerUserPrompt(goal, answersText, search, signal),
       temperature: 0.4,

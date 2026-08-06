@@ -80,15 +80,14 @@ async function classifyGoal(goal) {
 
 async function clarifySubjective(goal) {
   const r = await callLLM([
-    "You ask clarifying questions that make a subjective question answerable.",
-    "Think about: who is involved (people, needs, dietary requirements), constraints (budget, location, time), scenario (casual, special occasion).",
-    "Ask only questions whose answers would change the recommendation.",
+    "You ask the FEWEST clarifying questions needed to give one decisive answer.",
+    "The goal is to eliminate wasted decisions — not create more. Ask only what you genuinely need to narrow the answer to one.",
+    "Prefer 2-3 questions. Never more than 3. Skip anything obvious or already stated in the goal.",
     'Return ONLY: {"summary":"...","questions":[{"id":"Q1","question":"...","why_it_matters":"...","options":["real option","..."]}, ...]}',
-    "You MUST ask at least 5 questions. Aim for 6.",
-    "For EACH question, include 2-4 'options' that are real, relevant answers a person might pick for THAT question. Match the question's shape (yes/no → Yes/No/Not sure; budget → ranges; category → real categories). NEVER use generic placeholders like 'brief answer'.",
-  ].join("\n"), `Question to clarify:\n${goal}`, { temperature: 0.3, maxTokens: 1200 });
+    "For each question, include 2-4 'options' that are real, relevant answers. Match the question's shape. NEVER use placeholders like 'brief answer'.",
+  ].join("\n"), `Question to clarify:\n${goal}`, { temperature: 0.3, maxTokens: 800 });
   const p = parseJSON(r.text) || {};
-  const questions = (p.questions || []).filter(q => q.question).slice(0, 6);
+  const questions = (p.questions || []).filter(q => q.question).slice(0, 3);
   return { summary: p.summary || goal, questions };
 }
 
@@ -119,21 +118,20 @@ async function ensureOptions(q, goal) {
 async function answerSubjective(goal, clarification, answers) {
   const answersText = clarification.questions.map((q) => `Q: ${q.question}\nA: ${answers[q.id] || "(no answer)"}`).join("\n");
   const r = await callLLM([
-    "You are a thorough expert answering a question in the user's own terms. Research and reason in depth before answering.",
+    "You are a decisive expert. The user wants ONE answer — not a list of options to choose from. Your job is to eliminate the decision, not create more.",
+    "Give a single, specific, confident recommendation that fits their parameters. Do not present a menu. Do not say 'it depends' and list alternatives. Pick the best one and commit to it.",
     "HONESTY IS THE TOP PRIORITY. Never invent or fabricate.",
-    "DEPTH OF RESEARCH — work through these steps in your reasoning before writing the final answer:",
-    "1. RECALL: What do you actually know about this from your training? Pull up the relevant facts, definitions, and context.",
-    "2. ANGLES: Consider the question from multiple viewpoints (cost, quality, convenience, the user's stated parameters, edge cases). Don't just give the first answer that comes to mind.",
-    "3. ALTERNATIVES: What are the realistic alternatives or trade-offs? Weigh them honestly.",
-    "4. VERIFY: Cross-check any specific claim against what you genuinely know. If you're unsure a detail is real, treat it as uncertain.",
-    "5. TAILOR: Apply the user's clarifying answers as hard constraints. Reject options that violate them.",
-    "OUTPUT RULES:",
-    "- Do NOT invent specific named entities (businesses, addresses, prices, hours, URLs) unless genuinely certain they are real. Describe types of places when you can't verify a specific one.",
+    "REASONING (do this internally, then write the answer):",
+    "1. RECALL what you know. 2. Weigh the angles. 3. Pick the single best fit for their stated parameters. 4. Verify any specific claim — if unsure, describe a type instead of naming a possibly-fake specific.",
+    "OUTPUT FORMAT — keep it short and decisive:",
+    "- Line 1: the one answer (your single recommendation).",
+    "- Then 1-3 short lines on WHY it fits their parameters.",
+    "RULES:",
+    "- Do NOT invent specific named entities (businesses, addresses, prices, hours) unless genuinely certain. Describe types when unsure.",
     "- Do not invent facts, sources, statistics, or quotes.",
-    "- Lead with the direct answer, then the reasoning and the trade-offs.",
-    "- If you genuinely don't know something concrete, say so plainly rather than guessing.",
-    "Be useful. A real, well-reasoned answer beats a refusal — but an honest answer beats a confident fabrication.",
-  ].join("\n"), `Goal: ${goal}\n\nClarifying answers (the user's parameters — treat as constraints):\n${answersText}\n\nProvide a direct, helpful, well-reasoned answer. Show your reasoning, then the recommendation.`, { temperature: 0.4, maxTokens: 2500 });
+    "- If you genuinely don't know, say so plainly — but still give your best single recommendation based on what you do know.",
+    "Decisive. One answer. No menu.",
+  ].join("\n"), `Goal: ${goal}\n\nTheir parameters (hard constraints):\n${answersText}\n\nGive ONE decisive answer.`, { temperature: 0.4, maxTokens: 1200 });
   return r;
 }
 
