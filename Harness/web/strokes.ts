@@ -17,33 +17,104 @@ export interface SearchConfig {
   apiKey: string;
 }
 
+interface SimpleResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+/**
+ * FREE no-key web search via DuckDuckGo's HTML endpoint. No API key required,
+ * works for everyone the moment they enter an LLM key. Lower quality than paid
+ * providers (no structured metadata) but it's real web data that stops the
+ * model from fabricating. Best-effort — never blocks the answer.
+ */
+async function searchDuckDuckGo(query: string, signal?: AbortSignal): Promise<SimpleResult[]> {
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const response = await fetch(url, {
+    headers: {
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+      "accept": "text/html",
+      "accept-language": "en-US,en;q=0.9",
+    },
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok) return [];
+  const html = await response.text();
+  // DuckDuckGo HTML results follow a predictable structure. Extract result
+  // blocks, titles, URLs, and snippets without a DOM parser (no deps).
+  const results: SimpleResult[] = [];
+  const blocks = html.split(/class="result\s(?:results_links|web-result|")/i);
+  for (const block of blocks) {
+    if (results.length >= 5) break;
+    // Title + URL: <a class="result__a" href="...">Title</a>
+    const titleMatch = block.match(/class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i);
+    if (!titleMatch) continue;
+    let rawUrl = titleMatch[1] ?? "";
+    const title = stripTags(titleMatch[2] ?? "").trim();
+    // DDG wraps URLs in a redirect; extract the actual URL.
+    const udcParam = rawUrl.match(/[?&]uddg=([^&]+)/);
+    if (udcParam) rawUrl = decodeURIComponent(udcParam[1] ?? "");
+    if (!rawUrl.startsWith("http") || !title) continue;
+    // Snippet: <a class="result__snippet" ...>...</a>
+    const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i);
+    const snippet = stripTags(snippetMatch?.[1] ?? "").trim();
+    results.push({ title, url: rawUrl, snippet: snippet.slice(0, 400) });
+  }
+  return results;
+}
+
+function stripTags(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ");
+}
+
 /**
  * Run a real web search to ground the answer in actual results. Returns the
  * formatted results to inject into the answer prompt, or undefined if search
- * isn't configured or fails. Best-effort — never blocks the answer.
+ * fails entirely. Best-effort — never blocks the answer.
+ *
+ * Priority: a configured paid provider (Exa/Brave/Firecrawl) if the user
+ * supplied a key; otherwise the free no-key DuckDuckGo layer that works for
+ * everyone with just an LLM key.
  */
 async function runSearch(
   search: SearchConfig | undefined,
   query: string,
   signal?: AbortSignal,
 ): Promise<string | undefined> {
-  if (!search) return undefined;
-  try {
-    // Inject the provider key into the runtime credential map the SearchClient reads from.
-    const envName = search.provider === "exa" ? "EXA_API_KEY" : search.provider === "brave" ? "BRAVE_SEARCH_API_KEY" : "FIRECRAWL_API_KEY";
-    captureSearchCredentials({ [envName]: search.apiKey });
-    const client = new SearchClient();
-    const response = await client.search(search.provider, query, 5);
-    const results: SearchResult[] = response.results ?? [];
-    if (results.length === 0) return undefined;
-    const formatted = results
-      .map((r, i) => `[${i + 1}] ${r.title}\n    ${r.url}\n    ${r.snippet}`)
-      .join("\n\n");
-    return formatted;
-  } catch {
-    // Search is best-effort — if it fails, fall back to answering without it.
-    return undefined;
+  let results: SimpleResult[] = [];
+  // 1. Paid provider if configured.
+  if (search) {
+    try {
+      const envName = search.provider === "exa" ? "EXA_API_KEY" : search.provider === "brave" ? "BRAVE_SEARCH_API_KEY" : "FIRECRAWL_API_KEY";
+      captureSearchCredentials({ [envName]: search.apiKey });
+      const client = new SearchClient();
+      const response = await client.search(search.provider, query, 5);
+      results = (response.results ?? []).map((r) => ({ title: r.title, url: r.url, snippet: r.snippet }));
+    } catch {
+      // fall through to free search
+    }
   }
+  // 2. Free no-key fallback — always available.
+  if (results.length === 0) {
+    try {
+      results = await searchDuckDuckGo(query, signal);
+    } catch {
+      // search failed entirely
+    }
+  }
+  if (results.length === 0) return undefined;
+  return results
+    .map((r, i) => `[${i + 1}] ${r.title}\n    ${r.url}\n    ${r.snippet}`)
+    .join("\n\n");
 }
 
 /**
@@ -172,7 +243,8 @@ export async function answerSubjective(
   );
 }
 
-/** Build the user prompt, grounding it in real search results when available. */
+/** Build the user prompt, grounding it in real search results. Search always
+ * runs now — the free DuckDuckGo layer covers the no-paid-key case. */
 async function buildAnswerUserPrompt(
   goal: string,
   answersText: string,
@@ -180,10 +252,7 @@ async function buildAnswerUserPrompt(
   signal?: AbortSignal,
 ): Promise<string> {
   const base = `Goal: ${goal}\n\nClarifying answers (the user's parameters):\n${answersText}`;
-  if (!search) {
-    return `${base}\n\nProvide a direct, helpful answer. Do not fabricate specific establishments or named entities you cannot verify.`;
-  }
-  // Ground the answer in real search results. Build a focused query from the goal + answers.
+  // Search always runs — paid provider if configured, free DuckDuckGo otherwise.
   const query = goal;
   const results = await runSearch(search, query, signal);
   if (!results) {
