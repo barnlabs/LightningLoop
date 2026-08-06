@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LightningLoop</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>⚡ <span>LightningLoop</span></h1>
+    <p class="tag">Watch a prompt become a sophisticated answer.</p>
+    <span id="status" class="status">no key — open Settings</span>
+    <button id="settings-toggle" class="link">Settings</button>
+  </header>
+
+  <main>
+    <!-- Settings: user enters their own provider -->
+    <section id="settings" hidden>
+      <h2>Your API</h2>
+      <p class="hint">Bring your own key — it stays in your browser only (localStorage), sent directly to your provider. It never touches any server.</p>
+      <label>Base URL <input type="text" id="baseURL" placeholder="https://api.z.ai/api/anthropic" /></label>
+      <label>API Key <input type="password" id="api-key" placeholder="paste-your-api-key" autocomplete="off" /></label>
+      <label>Model <input type="text" id="model" placeholder="GLM-5.2" /></label>
+      <button id="save-settings">Save</button>
+    </section>
+
+    <!-- Goal -->
+    <section id="goal-section">
+      <label for="goal">What do you want answered?</label>
+      <textarea id="goal" rows="3" placeholder="e.g. Where's the best coffee near me?"></textarea>
+      <fieldset class="mode-toggle">
+        <legend>Question mode</legend>
+        <label class="radio"><input type="radio" name="mode" value="open_ended" checked /> <span><strong>Open-ended</strong></span></label>
+        <label class="radio"><input type="radio" name="mode" value="multiple_choice" /> <span><strong>Multiple choice</strong></span></label>
+      </fieldset>
+      <button id="run-btn">Start ▸</button>
+    </section>
+
+    <!-- Clarify (slideshow) -->
+    <section id="clarify-section" hidden>
+      <h2>A few quick questions</h2>
+      <p id="clarify-summary" class="summary"></p>
+      <div id="clarify-questions"></div>
+    </section>
+
+    <!-- Running -->
+    <section id="loop-section" hidden>
+      <h2>Working…</h2>
+      <div id="log" class="log"></div>
+      <button id="cancel-btn">Cancel</button>
+    </section>
+
+    <!-- Result + feedback -->
+    <section id="result-section" hidden>
+      <div id="verdict" class="verdict"></div>
+      <div id="deliverable" class="deliverable"></div>
+      <button id="again-btn">Ask another ↺</button>
+    </section>
+
+    <section id="feedback-section" hidden>
+      <h2>How was that answer?</h2>
+      <textarea id="followup" rows="2" placeholder="Ask a follow-up or tell it what to change…"></textarea>
+      <button id="followup-submit">Refine ▸</button>
+      <button id="followup-done">Done</button>
+    </section>
+
+    <div id="error-banner" class="error" hidden></div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
