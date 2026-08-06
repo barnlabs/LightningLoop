@@ -107,7 +107,7 @@ interface RunState {
   lastAnswer?: string;
 }
 
-/** Generate 2-4 multiple-choice options per clarifying question. */
+/** Generate 2-4 relevant multiple-choice options per clarifying question. */
 async function generateMCOptions(
   adapter: AgentAdapter,
   goal: string,
@@ -119,20 +119,44 @@ async function generateMCOptions(
     try {
       const reply = await adapter.complete({
         role: "orchestrator",
-        system: 'You write concise multiple-choice answer options. Return ONLY {"options":["short option","..."]} with 2 to 4 options. Keep each option under 12 words.',
-        user: `Goal: ${goal}\nQuestion: ${q.question}\nWhy it matters: ${q.whyItMatters}\n\nReturn 2-4 distinct short answer options.`,
-        temperature: 0.6,
+        system: [
+          "You write RELEVANT multiple-choice options for a specific question. The options must be things a real person would actually pick as their answer to THIS question.",
+          "Look at the question carefully and generate options that match what it's asking. If it's a yes/no-ish question, give yes/no/maybe options. If it asks for a category, list real categories. If it asks for a preference, give a spectrum of real stances.",
+          "Return ONLY a JSON object: {\"options\":[\"a real answer\",\"another real answer\",\"...\"]} with 2 to 4 options.",
+          "Each option must be a plausible direct answer, short (under 10 words), and distinct from the others. NEVER use generic placeholders like 'brief answer' or 'detailed answer'.",
+        ].join("\n"),
+        user: `The user's goal: ${goal}\n\nQuestion to generate options for: ${q.question}\nWhy this matters: ${q.whyItMatters}\n\nWhat are 2-4 real answers a person might give to this question?`,
+        temperature: 0.4,
         maxTokens: 400,
       }, signal);
       const match = reply.content.match(/\{[\s\S]*\}/);
       const parsed = match ? JSON.parse(match[0]) : null;
-      const opts = Array.isArray(parsed?.options) ? parsed.options.filter((o: unknown) => typeof o === "string").slice(0, 4) : [];
-      out[q.id] = opts.length >= 2 ? opts : ["(brief answer)", "(detailed answer)"];
+      const opts = Array.isArray(parsed?.options)
+        ? parsed.options.filter((o: unknown) => typeof o === "string" && String(o).trim().length > 0).slice(0, 4)
+        : [];
+      // Reject generic placeholders if they slip through.
+      const clean = opts.filter((o: string) => !/^(brief|detailed|short|long)\s+answer$/i.test(o.trim()));
+      out[q.id] = clean.length >= 2 ? clean : genericFallback(q.question);
     } catch {
-      out[q.id] = ["(brief answer)", "(detailed answer)"];
+      out[q.id] = genericFallback(q.question);
     }
   }
   return out;
+}
+
+/** A sensible generic fallback based on the question shape — never a placeholder. */
+function genericFallback(question: string): string[] {
+  const q = question.toLowerCase();
+  if (/\b(yes|no|do you|are you|can you|have you|will you|would you)\b/.test(q)) {
+    return ["Yes", "No", "Not sure"];
+  }
+  if (/\b(how much|budget|price|cost|spend)\b/.test(q)) {
+    return ["Low / budget", "Mid-range", "High / premium"];
+  }
+  if (/\b(when|time|date|day)\b/.test(q)) {
+    return ["As soon as possible", "Within a week", "Flexible / no rush"];
+  }
+  return ["Option A", "Option B", "Not sure — I'll type my own"];
 }
 
 async function handleConnection(ws: WebSocket): Promise<void> {
