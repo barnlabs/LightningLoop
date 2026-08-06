@@ -12,8 +12,8 @@ You'll be asked to enter your own API keys as secrets (Render stores them
 encrypted — they never appear in the repo):
 
 - **`LL_API_KEY`** (required) — your LLM provider's key
-- **`LL_BASE_URL`** (required) — e.g. `https://api.z.ai/api/anthropic`
-- **`LL_MODEL`** (required) — e.g. `GLM-5.2`
+- **`LL_BASE_URL`** (required) — your provider's Anthropic-format base URL
+- **`LL_MODEL`** (required) — your model name
 - **`EXA_API_KEY`** / **`BRAVE_SEARCH_API_KEY`** / **`FIRECRAWL_API_KEY`** (optional) — for higher-quality search grounding
 
 Render's free tier works for trying it out. Your instance is private to you.
