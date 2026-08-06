@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { resolve, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
@@ -29,7 +30,11 @@ import { classifyGoal, clarifySubjective, answerSubjective, reviewHonesty, subje
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const STATIC_ROOT = resolve(HERE, "..", "..", "Harness", "web");
+// Static UI assets: prefer a self-contained copy in dist/web/ (created by the
+// build script for deployments), otherwise fall back to the source Harness/web/
+// directory (for local dev where the source tree is present).
+const SOURCE_STATIC = resolve(HERE, "..", "..", "Harness", "web");
+const STATIC_ROOT = existsSync(resolve(HERE, "index.html")) ? HERE : SOURCE_STATIC;
 const PORT = Number(process.env.PORT ?? 7777);
 const HOST = process.env.HOST ?? "127.0.0.1";
 
