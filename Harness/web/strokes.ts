@@ -8,8 +8,43 @@
  */
 
 import type { AgentAdapter, AgentReply, Clarification, LoopRunResult } from "../core/loop-types.js";
+import { SearchClient, captureSearchCredentials, type SearchProvider, type SearchResult } from "../search/search-client.js";
 
 export type GoalClass = "harmful" | "subjective" | "factual";
+
+export interface SearchConfig {
+  provider: SearchProvider;
+  apiKey: string;
+}
+
+/**
+ * Run a real web search to ground the answer in actual results. Returns the
+ * formatted results to inject into the answer prompt, or undefined if search
+ * isn't configured or fails. Best-effort — never blocks the answer.
+ */
+async function runSearch(
+  search: SearchConfig | undefined,
+  query: string,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  if (!search) return undefined;
+  try {
+    // Inject the provider key into the runtime credential map the SearchClient reads from.
+    const envName = search.provider === "exa" ? "EXA_API_KEY" : search.provider === "brave" ? "BRAVE_SEARCH_API_KEY" : "FIRECRAWL_API_KEY";
+    captureSearchCredentials({ [envName]: search.apiKey });
+    const client = new SearchClient();
+    const response = await client.search(search.provider, query, 5);
+    const results: SearchResult[] = response.results ?? [];
+    if (results.length === 0) return undefined;
+    const formatted = results
+      .map((r, i) => `[${i + 1}] ${r.title}\n    ${r.url}\n    ${r.snippet}`)
+      .join("\n\n");
+    return formatted;
+  } catch {
+    // Search is best-effort — if it fails, fall back to answering without it.
+    return undefined;
+  }
+}
 
 /**
  * COMPRESSION (subjective path): richer clarifying questions than the engine's
@@ -106,6 +141,7 @@ export async function answerSubjective(
   goal: string,
   clarification: Clarification,
   answers: Record<string, string>,
+  search: SearchConfig | undefined,
   signal?: AbortSignal,
 ): Promise<AgentReply> {
   const answersText = clarification.questions
@@ -128,12 +164,32 @@ export async function answerSubjective(
         "- If you genuinely do not know something concrete, say so plainly.",
         "Be useful. A real answer beats a refusal — but a honest answer beats a confident-sounding fabrication. When unsure about specifics, give guidance on how to find the real answer instead of inventing one.",
       ].join("\n"),
-      user: `Goal: ${goal}\n\nClarifying answers (the user's parameters):\n${answersText}\n\nProvide a direct, helpful answer. Do not fabricate specific establishments or named entities you cannot verify.`,
+      user: await buildAnswerUserPrompt(goal, answersText, search, signal),
       temperature: 0.3,
       maxTokens: 1500,
     },
     signal,
   );
+}
+
+/** Build the user prompt, grounding it in real search results when available. */
+async function buildAnswerUserPrompt(
+  goal: string,
+  answersText: string,
+  search: SearchConfig | undefined,
+  signal?: AbortSignal,
+): Promise<string> {
+  const base = `Goal: ${goal}\n\nClarifying answers (the user's parameters):\n${answersText}`;
+  if (!search) {
+    return `${base}\n\nProvide a direct, helpful answer. Do not fabricate specific establishments or named entities you cannot verify.`;
+  }
+  // Ground the answer in real search results. Build a focused query from the goal + answers.
+  const query = goal;
+  const results = await runSearch(search, query, signal);
+  if (!results) {
+    return `${base}\n\nProvide a direct, helpful answer. Do not fabricate specific establishments or named entities you cannot verify.`;
+  }
+  return `${base}\n\nREAL SEARCH RESULTS (use these as your source of truth — only reference places/details that appear here):\n${results}\n\nProvide a direct, helpful answer grounded in the search results above. Prefer naming real places from the results over describing generic types. If the results don't clearly answer the question, say what you found and what's still uncertain.`;
 }
 
 /** EXHAUST: a rigorous honesty pass over a subjective answer. */

@@ -157,6 +157,20 @@ interface LocalConfig {
   apiKey?: string;
   model?: string;
   models?: string[]; // legacy .zai-local.json shape
+  search?: {
+    provider?: "exa" | "brave" | "firecrawl";
+    apiKey?: string;
+  };
+}
+
+export interface SearchConfig {
+  provider: "exa" | "brave" | "firecrawl";
+  apiKey: string;
+}
+
+export interface ResolvedConfig {
+  adapter: AnthropicAdapterOptions;
+  search?: SearchConfig;
 }
 
 /**
@@ -213,6 +227,37 @@ export function resolveAdapterOptions(overrides?: Partial<AnthropicAdapterOption
   if (overrides?.messagesPath !== undefined) result.messagesPath = overrides.messagesPath;
   if (overrides?.anthropicVersion !== undefined) result.anthropicVersion = overrides.anthropicVersion;
   return result;
+}
+
+/**
+ * Resolve both the LLM adapter options and the search config (optional) from
+ * constructor args, env vars, and the person's provider sheet. Search keys
+ * also read from the standard env vars (EXA_API_KEY / BRAVE_SEARCH_API_KEY /
+ * FIRECRAWL_API_KEY).
+ */
+export function resolveConfig(overrides?: {
+  baseURL?: string;
+  apiKey?: string;
+  model?: string;
+  searchProvider?: "exa" | "brave" | "firecrawl";
+  searchKey?: string;
+}): ResolvedConfig {
+  const adapter = resolveAdapterOptions({
+    ...(overrides?.baseURL ? { baseURL: overrides.baseURL } : {}),
+    ...(overrides?.apiKey ? { apiKey: overrides.apiKey } : {}),
+    ...(overrides?.model ? { model: overrides.model } : {}),
+  });
+  const local = readLocalConfig();
+  const provider =
+    overrides?.searchProvider ??
+    local.search?.provider ??
+    (process.env.EXA_API_KEY ? "exa" : process.env.BRAVE_SEARCH_API_KEY ? "brave" : process.env.FIRECRAWL_API_KEY ? "firecrawl" : undefined);
+  const key =
+    overrides?.searchKey ??
+    local.search?.apiKey ??
+    (provider === "exa" ? process.env.EXA_API_KEY : provider === "brave" ? process.env.BRAVE_SEARCH_API_KEY : provider === "firecrawl" ? process.env.FIRECRAWL_API_KEY : undefined);
+  const search = provider && key ? { provider, apiKey: key } : undefined;
+  return { adapter, ...(search ? { search } : {}) };
 }
 
 interface AnthropicMessagesResponse {
