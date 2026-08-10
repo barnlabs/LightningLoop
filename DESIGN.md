@@ -2,6 +2,10 @@
 
 LightningLoop is a BarnLabs orchestration and evidence layer for Pi. It is a product identity, not a provider-specific client and not a replacement for Pi. Pi remains responsible for its provider catalog, official interactive login/logout, credential refresh/storage, package discovery, and TUI/runtime APIs. LightningLoop owns bounded duty graphs, independent review policy, artifact evidence, managed customization boundaries, and release verification.
 
+## Product hierarchy and public voice
+
+LightningLoop is the product name; BarnLabs is its open-source project steward. Public product copy leads with the user outcome—fast models, strict evidence—and names the runtime only in technical attribution, dependency, or notice contexts. It must not imply that a provider or runtime is the product, sponsor, or trust authority. The visual and copy rules live in [docs/BRAND.md](docs/BRAND.md).
+
 ## Identity and compatibility
 
 The supported product name, bundle identity, data root, and canonical GitHub repository are `LightningLoop`, `com.barnlabs.LightningLoop`, the platform LightningLoop data directory, and `barnlabs/LightningLoop`. BarnLabs owns the product identity; provider names are capabilities only and never branding, trust authorities, or sources of embedded credentials.

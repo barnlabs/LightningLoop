@@ -1,5 +1,5 @@
 name: Feature request
-description: Propose one bounded improvement with a falsifiable done condition.
+description: Propose one bounded LightningLoop improvement with a falsifiable done condition.
 title: "[Feature]: "
 labels: [enhancement]
 body:
@@ -21,4 +21,4 @@ body:
     id: boundary
     attributes:
       label: Security and ownership boundary
-      description: Explain provider, credential, Pi, managed-content, artifact, or update implications.
+      description: Explain provider, credential, runtime, managed-content, artifact, or update implications.

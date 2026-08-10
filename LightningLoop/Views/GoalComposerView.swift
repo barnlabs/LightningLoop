@@ -71,36 +71,63 @@ private struct GoalInputCard: View {
         .overlay(alignment: .topLeading) {
             if session.goal.isEmpty {
                 Text("Describe a result, request, or artifact. Include context you already know; the orchestrator will ask only what matters.")
-                    .foregroundStyle(.tertiary)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
                     .padding(16)
                     .allowsHitTesting(false)
+                    .accessibilityIdentifier("goal.editor.guidance")
             }
         }
     }
 
     private var actions: some View {
-        HStack {
-            if !model.hasAPIKey {
-                Label("Inference provider setup required", systemImage: "key")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                SettingsLink { Text("Open Settings") }
+        VStack(alignment: .leading, spacing: 12) {
+            if let readinessMessage = model.loopReadinessMessage {
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "bolt.slash.fill")
+                        .font(.title3)
+                        .foregroundStyle(.orange)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Setup needed before this loop can run")
+                            .font(.subheadline.weight(.semibold))
+                        Text(readinessMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 12)
+                    SettingsLink {
+                        Text("Open Settings")
+                    }
+                    .controlSize(.large)
+                    .accessibilityIdentifier("open.settings.readiness")
+                }
+                .padding(12)
+                .background(.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(.orange.opacity(0.22))
+                }
             }
-            if !session.attachments.isEmpty && !model.providerProfile.supportsImages {
-                Label("Selected model is text-only", systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+
+            HStack {
+                if !session.attachments.isEmpty && !model.providerProfile.supportsImages {
+                    Label("Selected model is text-only", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                Spacer()
+                Button {
+                    model.startClarification()
+                } label: {
+                    Label("Ask Clarifying Questions", systemImage: "arrow.right")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .accessibilityIdentifier("start.clarification")
+                .disabled(goalIsEmpty || !model.hasAPIKey || (!session.attachments.isEmpty && !model.providerProfile.supportsImages))
             }
-            Spacer()
-            Button {
-                model.startClarification()
-            } label: {
-                Label("Ask Clarifying Questions", systemImage: "arrow.right")
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .accessibilityIdentifier("start.clarification")
-            .disabled(goalIsEmpty || !model.hasAPIKey || (!session.attachments.isEmpty && !model.providerProfile.supportsImages))
         }
     }
 

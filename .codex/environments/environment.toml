@@ -6,7 +6,7 @@ name = "LightningLoop"
 script = ""
 
 [[actions]]
-name = "Run macOS app"
+name = "Run"
 icon = "run"
 command = "./script/build_and_run.sh"
 

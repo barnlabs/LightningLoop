@@ -30,6 +30,7 @@ import {
 } from "../core/ledger-management.js";
 import { assertCredentialSafeInput, assertNoConfiguredCredential } from "../core/credential-safety.js";
 import { dispatchNotification } from "../notifications/notification-dispatcher.js";
+import { encodePiApiKey } from "../core/pi-options.js";
 
 function keychainCommand(services: string[]): string {
   if (services.length < 1 || services.some((service) => !/^[A-Za-z0-9.-]+$/.test(service))) {
@@ -38,8 +39,14 @@ function keychainCommand(services: string[]): string {
   return `!/bin/sh -c '${services.map((service) => `/usr/bin/security find-generic-password -s ${service} -w`).join(" || ")}'`;
 }
 
-export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
-  const profile = loadProviderProfile();
+export interface LightningLoopExtensionOptions {
+  /** Captured before TUI environment scrubbing; never read from ambient env here. */
+  generalComputeApiKey?: string;
+}
+
+export function createLightningLoopExtension(options: LightningLoopExtensionOptions = {}): ExtensionFactory {
+  return (pi: ExtensionAPI) => {
+    const profile = loadProviderProfile();
   const providerID = `lightningloop-${profile.id}`;
   const workspace = process.cwd();
   const sandbox = new SandboxedBashRuntime(workspace);
@@ -66,13 +73,25 @@ export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
   });
 
   if (!profile.piProviderID) {
+    const isGeneralCompute = profile.preset === "generalcompute";
+    const generalComputeEnv = isGeneralCompute ? options.generalComputeApiKey?.trim() : undefined;
     if (process.platform !== "darwin") {
-      throw new Error("Custom provider Keychain profiles are macOS-only. Configure a Pi built-in provider for cross-platform use.");
+      if (!isGeneralCompute || !generalComputeEnv) {
+        throw new Error(
+          isGeneralCompute
+            ? "GeneralCompute on non-macOS requires GENERALCOMPUTE_API_KEY. It is not managed by runtime /login."
+            : "Custom provider Keychain profiles are macOS-only. Configure GeneralCompute with GENERALCOMPUTE_API_KEY or a runtime-managed built-in provider for cross-platform use.",
+        );
+      }
     }
+    // An explicitly captured TUI env key is process-local; otherwise macOS uses Keychain.
+    const apiKey = generalComputeEnv ?? (process.platform === "darwin"
+      ? keychainCommand([providerCredentialService(profile)])
+      : generalComputeEnv!);
     pi.registerProvider(providerID, {
       name: `LightningLoop / ${profile.displayName}`,
       baseUrl: profile.baseURL,
-      apiKey: keychainCommand([providerCredentialService(profile)]),
+      apiKey: generalComputeEnv ? encodePiApiKey(generalComputeEnv) : apiKey,
       api: "openai-completions",
       authHeader: true,
       headers: providerHeaders(profile),
@@ -111,8 +130,12 @@ export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
           const brand = `${theme.bold(theme.fg("accent", "ϟ  LIGHTNINGLOOP"))}${theme.fg("dim", "  /  BARNLABS")}`;
           const loop = `${theme.fg("muted", `${profile.displayName} · ${profile.modelName}`)}  ${theme.fg("dim", "clarify → challenge → implement → verify")}`;
           const identity = theme.fg("dim", profile.piProviderID
-            ? "Provider-neutral · authentication and model catalog managed by Pi"
-            : "Custom provider · credential stays in macOS Keychain");
+            ? "Provider-neutral · authentication and model catalog managed by the LightningLoop runtime"
+            : profile.preset === "generalcompute"
+              ? "GeneralCompute · LightningLoop-managed fixed provider · Keychain or GENERALCOMPUTE_API_KEY"
+              : profile.preset === "selection-required"
+                ? "Provider selection required · run lightningloop provider select"
+                : "Custom provider · credential stays in macOS Keychain");
           return [
             truncateToWidth(rule, width),
             truncateToWidth(brand, width),
@@ -718,6 +741,9 @@ export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
     description: "Exit LightningLoop (alias for /quit)",
     handler: async (_args, ctx) => ctx.shutdown(),
   });
-};
+  };
+}
+
+export const lightningLoopExtension: ExtensionFactory = createLightningLoopExtension();
 
 export default lightningLoopExtension;

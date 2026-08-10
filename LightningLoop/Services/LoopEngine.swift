@@ -56,8 +56,35 @@ struct LoopExecutionResult: Sendable {
     }
 }
 
+struct ExpectedModelSelection: Equatable, Sendable {
+    let providerID: String
+    let modelID: String
+    let supportsImages: Bool
+    let contextWindow: Int
+    let maxOutputTokens: Int
+
+    init(
+        providerID: String,
+        modelID: String,
+        supportsImages: Bool = false,
+        contextWindow: Int = 1_024,
+        maxOutputTokens: Int = 256
+    ) {
+        self.providerID = providerID
+        self.modelID = modelID
+        self.supportsImages = supportsImages
+        self.contextWindow = contextWindow
+        self.maxOutputTokens = maxOutputTokens
+    }
+}
+
 protocol LoopServicing: Sendable {
-    func clarify(goal: String, attachments: [ImageAttachment], runID: UUID?) async throws -> ClarificationResult
+    func clarify(
+        goal: String,
+        attachments: [ImageAttachment],
+        expectedModelSelection: ExpectedModelSelection,
+        runID: UUID?
+    ) async throws -> ClarificationResult
     func execute(
         goal: String,
         summary: String,
@@ -69,6 +96,7 @@ protocol LoopServicing: Sendable {
         artifactWorkspace: String?,
         approveArtifactWrites: Bool,
         approveVerificationCommands: Bool,
+        expectedModelSelection: ExpectedModelSelection,
         runID: UUID?,
         emit: @escaping @Sendable (LoopEngineEvent) async -> Void
     ) async throws -> LoopExecutionResult
@@ -94,6 +122,7 @@ struct LoopEngine: LoopServicing, Sendable {
     func clarify(
         goal: String,
         attachments: [ImageAttachment] = [],
+        expectedModelSelection: ExpectedModelSelection = .init(providerID: "", modelID: ""),
         runID: UUID? = nil
     ) async throws -> ClarificationResult {
         throw LoopEngineError.sharedHarnessRequired
@@ -110,6 +139,7 @@ struct LoopEngine: LoopServicing, Sendable {
         artifactWorkspace: String? = nil,
         approveArtifactWrites: Bool = false,
         approveVerificationCommands: Bool = false,
+        expectedModelSelection: ExpectedModelSelection = .init(providerID: "", modelID: ""),
         runID: UUID? = nil,
         emit: @escaping @Sendable (LoopEngineEvent) async -> Void
     ) async throws -> LoopExecutionResult {

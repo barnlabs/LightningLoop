@@ -6,7 +6,15 @@ import { lightningLoopDataPath } from "./platform-paths.js";
 
 export const PROVIDER_CONFIG_VERSION = 1 as const;
 
-export type ProviderPreset = "cerebras" | "groq" | "fireworks" | "xai" | "openai-codex" | "anthropic" | "custom" | "selection-required";
+/**
+ * Cerebras lists this public-preview model in its catalog. It remains a
+ * preferred starting point only; a LightningLoop run must still find the ID
+ * in the installed runtime catalog before it can launch.
+ */
+export const CEREBRAS_GEMMA_4_31B_ID = "gemma-4-31b";
+export const CEREBRAS_GEMMA_4_31B_NAME = "Gemma 4 31B";
+
+export type ProviderPreset = "cerebras" | "groq" | "fireworks" | "generalcompute" | "xai" | "openai-codex" | "anthropic" | "custom" | "selection-required";
 
 export interface ProviderProfile {
   schemaVersion: typeof PROVIDER_CONFIG_VERSION;
@@ -19,8 +27,19 @@ export interface ProviderProfile {
   supportsImages: boolean;
   contextWindow: number;
   maxOutputTokens: number;
-  /** Built-in Pi provider. Undefined only for a custom OpenAI-compatible endpoint. */
+  /**
+   * Built-in Pi provider ID. Undefined for LightningLoop-managed API-key presets
+   * (GeneralCompute) and custom OpenAI-compatible endpoints.
+   */
   piProviderID?: string;
+}
+
+/** Presets whose authentication and model catalog are owned by the Pi runtime. */
+export const piManagedProviderPresets = ["cerebras", "groq", "fireworks", "xai", "openai-codex", "anthropic"] as const;
+export type PiManagedProviderPreset = typeof piManagedProviderPresets[number];
+
+export function isPiManagedPreset(preset: ProviderPreset): preset is PiManagedProviderPreset {
+  return (piManagedProviderPresets as readonly string[]).includes(preset);
 }
 
 const presets: Record<Exclude<ProviderPreset, "custom" | "selection-required">, Omit<ProviderProfile, "modelID" | "modelName" | "supportsImages" | "contextWindow" | "maxOutputTokens">> = {
@@ -45,6 +64,13 @@ const presets: Record<Exclude<ProviderPreset, "custom" | "selection-required">, 
     displayName: "Fireworks",
     baseURL: "https://api.fireworks.ai/inference/v1",
   },
+  generalcompute: {
+    schemaVersion: PROVIDER_CONFIG_VERSION,
+    id: "generalcompute",
+    preset: "generalcompute",
+    displayName: "GeneralCompute",
+    baseURL: "https://api.generalcompute.com/v1",
+  },
   xai: {
     schemaVersion: PROVIDER_CONFIG_VERSION,
     id: "xai",
@@ -68,7 +94,7 @@ const presets: Record<Exclude<ProviderPreset, "custom" | "selection-required">, 
   },
 };
 
-export const selectableProviderPresets = ["cerebras", "groq", "fireworks", "xai", "openai-codex", "anthropic"] as const;
+export const selectableProviderPresets = ["cerebras", "groq", "fireworks", "generalcompute", "xai", "openai-codex", "anthropic"] as const;
 export type SelectableProviderPreset = typeof selectableProviderPresets[number];
 
 export const defaultProviderProfile = (): ProviderProfile => profileForPreset("openai-codex");
@@ -142,7 +168,7 @@ export function parseProviderProfile(value: unknown): ProviderProfile {
   const root = objectValue(value, "provider profile");
   if (root.schemaVersion !== PROVIDER_CONFIG_VERSION) throw new Error("Provider profile version is unsupported.");
   const presetValue = stringValue(root.preset, "provider.preset");
-  if (!["cerebras", "groq", "fireworks", "xai", "openai-codex", "anthropic", "custom"].includes(presetValue)) {
+  if (!["cerebras", "groq", "fireworks", "generalcompute", "xai", "openai-codex", "anthropic", "custom"].includes(presetValue)) {
     throw new Error("Provider preset is unsupported.");
   }
   const preset = presetValue as Exclude<ProviderPreset, "selection-required">;
@@ -166,21 +192,33 @@ export function parseProviderProfile(value: unknown): ProviderProfile {
     supportsImages: root.supportsImages,
     contextWindow: boundedInteger(root.contextWindow, "contextWindow", 1_024, 2_000_000),
     maxOutputTokens: boundedInteger(root.maxOutputTokens, "maxOutputTokens", 256, 131_072),
-    ...(preset === "custom" ? {} : { piProviderID: preset }),
+    ...(isPiManagedPreset(preset) ? { piProviderID: preset } : {}),
   };
 }
 
 export function profileForPreset(preset: Exclude<ProviderPreset, "custom" | "selection-required">): ProviderProfile {
   const base = presets[preset];
   const defaults: Record<Exclude<ProviderPreset, "custom" | "selection-required">, Pick<ProviderProfile, "modelID" | "modelName" | "supportsImages" | "contextWindow" | "maxOutputTokens">> = {
-    cerebras: { modelID: "gpt-oss-120b", modelName: "GPT OSS 120B", supportsImages: false, contextWindow: 131_072, maxOutputTokens: 32_768 },
+    cerebras: { modelID: CEREBRAS_GEMMA_4_31B_ID, modelName: CEREBRAS_GEMMA_4_31B_NAME, supportsImages: true, contextWindow: 131_072, maxOutputTokens: 40_960 },
     groq: { modelID: "openai/gpt-oss-120b", modelName: "GPT-OSS 120B", supportsImages: false, contextWindow: 131_072, maxOutputTokens: 32_768 },
     fireworks: { modelID: "accounts/fireworks/models/kimi-k2p6", modelName: "Kimi K2.6", supportsImages: true, contextWindow: 262_000, maxOutputTokens: 32_768 },
+    generalcompute: { modelID: "minimax-m2.7", modelName: "MiniMax M2.7", supportsImages: false, contextWindow: 192_000, maxOutputTokens: 131_072 },
     xai: { modelID: "grok-4.5", modelName: "Grok 4.5", supportsImages: true, contextWindow: 256_000, maxOutputTokens: 32_768 },
     "openai-codex": { modelID: "gpt-5.6-terra", modelName: "GPT-5.6 Terra", supportsImages: true, contextWindow: 400_000, maxOutputTokens: 131_072 },
     anthropic: { modelID: "claude-sonnet-4-6", modelName: "Claude Sonnet 4.6", supportsImages: true, contextWindow: 200_000, maxOutputTokens: 64_000 },
   };
-  return { ...base, ...defaults[preset], piProviderID: preset };
+  return {
+    ...base,
+    ...defaults[preset],
+    ...(isPiManagedPreset(preset) ? { piProviderID: preset } : {}),
+  };
+}
+
+export function runtimeModelSelectionNotice(profile: ProviderProfile): string | undefined {
+  if (profile.preset === "cerebras" && profile.modelID === CEREBRAS_GEMMA_4_31B_ID) {
+    return "Gemma 4 31B is a public-preview preference. It is not treated as catalogued until the installed LightningLoop runtime catalog lists it.";
+  }
+  return undefined;
 }
 
 export function loadProviderProfile(path = providerConfigPath()): ProviderProfile {
@@ -246,13 +284,18 @@ export function providerCredentialService(profile: ProviderProfile): string {
  * credential after the user switches providers. The unsuffixed custom service
  * is the macOS compatibility service used by earlier LightningLoop builds.
  */
+export const historicalReadOnlyProviderCredentialServices = [
+  "com.barnlabs.LightningLoop.provider.xai.apiKey",
+  "com.barnlabs.LightningLoop.provider.openai-codex.apiKey",
+  "com.barnlabs.LightningLoop.provider.anthropic.apiKey",
+] as const;
+
 export const fixedLightningLoopCredentialServices = [
   "com.barnlabs.LightningLoop.provider.cerebras.apiKey",
   "com.barnlabs.LightningLoop.provider.groq.apiKey",
   "com.barnlabs.LightningLoop.provider.fireworks.apiKey",
-  "com.barnlabs.LightningLoop.provider.xai.apiKey",
-  "com.barnlabs.LightningLoop.provider.openai-codex.apiKey",
-  "com.barnlabs.LightningLoop.provider.anthropic.apiKey",
+  "com.barnlabs.LightningLoop.provider.generalcompute.apiKey",
+  ...historicalReadOnlyProviderCredentialServices,
   "com.barnlabs.LightningLoop.provider.custom.apiKey",
   "com.barnlabs.LightningLoop.search.exa",
   "com.barnlabs.LightningLoop.search.brave",
@@ -323,6 +366,8 @@ export function lightningLoopCredentialServices(profile: ProviderProfile, regist
   return [...new Set([...fixedLightningLoopCredentialServices, ...loadHistoricalCustomCredentialServices(registryPath), ...activeCustomService])];
 }
 
-export function providerHeaders(profile: ProviderProfile): Record<string, string> {
-  return profile.preset === "cerebras" ? { "X-Cerebras-Version-Patch": "2" } : {};
+export function providerHeaders(_profile: ProviderProfile): Record<string, string> {
+  // Cerebras API v2 became the default on 2026-07-21, so the transition-only
+  // X-Cerebras-Version-Patch header is intentionally no longer sent.
+  return {};
 }

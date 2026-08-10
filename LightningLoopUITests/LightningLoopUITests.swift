@@ -47,6 +47,7 @@ final class LightningLoopUITests: XCTestCase {
 
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         XCTAssertTrue(editor.exists)
+        XCTAssertTrue(app.staticTexts["goal.editor.guidance"].exists)
         XCTAssertTrue(attach.exists)
         XCTAssertTrue(start.exists)
         XCTAssertTrue(artifactWorkspace.exists)
@@ -94,6 +95,51 @@ final class LightningLoopUITests: XCTestCase {
         let screenshot = app.windows.firstMatch.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = "LightningLoop-evidence-lab"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    func testDeterministicCoreStateSurfacesRemainExplicit() throws {
+        relaunch(scenario: "working")
+        XCTAssertTrue(app.staticTexts["Clarifying the outcome"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["cancel.current.run"].exists)
+        keepScreenshot(named: "LightningLoop-working-fixture")
+
+        relaunch(scenario: "blocked-history")
+        XCTAssertTrue(app.staticTexts["Paused before a deliverable was produced"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Verify installer rollback"].exists)
+        XCTAssertTrue(app.staticTexts["Write a concise project brief"].exists)
+        XCTAssertTrue(app.staticTexts["blocked.recovery.guidance"].exists)
+        XCTAssertTrue(app.buttons["open.settings.blocked"].exists)
+        keepScreenshot(named: "LightningLoop-blocked-history-fixture")
+
+        relaunch(scenario: "settings-model")
+        XCTAssertTrue(app.descendants(matching: .any)["runtime.model.picker"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["settings.fixture.navigation"].exists)
+        XCTAssertTrue(app.staticTexts["Gemma 4 31B"].exists)
+        keepScreenshot(named: "LightningLoop-settings-model-fixture")
+
+        relaunch(scenario: "settings-update")
+        XCTAssertTrue(app.staticTexts["Automatic updates are off"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["settings.fixture.navigation"].exists)
+        XCTAssertTrue(app.staticTexts["UNCONFIGURED"].exists)
+        XCTAssertTrue(app.links["secure.update.guide"].exists)
+        keepScreenshot(named: "LightningLoop-settings-update-fixture")
+    }
+
+    @MainActor
+    private func relaunch(scenario: String) {
+        app.terminate()
+        app.launchEnvironment["LIGHTNINGLOOP_UI_SCENARIO"] = scenario
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 8))
+    }
+
+    @MainActor
+    private func keepScreenshot(named name: String) {
+        let attachment = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
     }

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   defaultProviderProfile,
+  historicalReadOnlyProviderCredentialServices,
   isProviderSelectionRequired,
   lightningLoopCredentialServices,
   loadHistoricalCustomCredentialServices,
@@ -13,6 +14,7 @@ import {
   profileForPreset,
   providerCredentialService,
   providerHeaders,
+  runtimeModelSelectionNotice,
   saveProviderPreset,
   selectableProviderPresets,
 } from "./provider-profile.js";
@@ -48,13 +50,16 @@ test("Groq remains available as an optional API-key preset", () => {
   assert.equal(providerCredentialService(profile), "com.barnlabs.LightningLoop.provider.groq.apiKey");
 });
 
-test("Cerebras is an optional BarnLabs product provider with the current official endpoint", () => {
+test("Cerebras starts with a guarded public-preview Gemma 4 31B preference", () => {
   const profile = profileForPreset("cerebras");
   assert.equal(profile.baseURL, "https://api.cerebras.ai/v1");
-  assert.equal(profile.modelID, "gpt-oss-120b");
-  assert.equal(profile.supportsImages, false);
+  assert.equal(profile.modelID, "gemma-4-31b");
+  assert.equal(profile.modelName, "Gemma 4 31B");
+  assert.equal(profile.supportsImages, true);
+  assert.equal(profile.maxOutputTokens, 40_960);
   assert.equal(providerCredentialService(profile), "com.barnlabs.LightningLoop.provider.cerebras.apiKey");
-  assert.deepEqual(providerHeaders(profile), { "X-Cerebras-Version-Patch": "2" });
+  assert.deepEqual(providerHeaders(profile), {});
+  assert.match(runtimeModelSelectionNotice(profile) ?? "", /public-preview/i);
   assert.doesNotMatch(JSON.stringify(profile), /csk-/u);
 });
 
@@ -62,10 +67,10 @@ test("reviewed presets can be selected without storing credentials", () => {
   const directory = mkdtempSync(join(tmpdir(), "lightningloop-provider-select-"));
   const config = join(directory, "provider.json");
   try {
-    assert.deepEqual(selectableProviderPresets, ["cerebras", "groq", "fireworks", "xai", "openai-codex", "anthropic"]);
+    assert.deepEqual(selectableProviderPresets, ["cerebras", "groq", "fireworks", "generalcompute", "xai", "openai-codex", "anthropic"]);
     const selected = saveProviderPreset("cerebras", config);
     assert.equal(selected.preset, "cerebras");
-    assert.equal(loadProviderProfile(config).modelID, "gpt-oss-120b");
+    assert.equal(loadProviderProfile(config).modelID, "gemma-4-31b");
     const encoded = readFileSync(config, "utf8");
     assert.doesNotMatch(encoded, /(?:api.?key|authorization|bearer\s|(?:csk|sk)-)/iu);
     if (process.platform !== "win32") assert.equal(statSync(config).mode & 0o777, 0o600);
@@ -83,10 +88,50 @@ test("reviewed presets can be selected without storing credentials", () => {
   }
 });
 
+test("GeneralCompute is a LightningLoop-managed fixed API-key preset without Pi ownership", () => {
+  const profile = profileForPreset("generalcompute");
+  assert.equal(profile.preset, "generalcompute");
+  assert.equal(profile.id, "generalcompute");
+  assert.equal(profile.displayName, "GeneralCompute");
+  assert.equal(profile.baseURL, "https://api.generalcompute.com/v1");
+  assert.equal(profile.modelID, "minimax-m2.7");
+  assert.equal(profile.modelName, "MiniMax M2.7");
+  assert.equal(profile.supportsImages, false);
+  assert.equal(profile.contextWindow, 192_000);
+  assert.equal(profile.maxOutputTokens, 131_072);
+  assert.equal(profile.piProviderID, undefined);
+  assert.equal(providerCredentialService(profile), "com.barnlabs.LightningLoop.provider.generalcompute.apiKey");
+  assert.ok(selectableProviderPresets.includes("generalcompute"));
+  assert.throws(
+    () => parseProviderProfile({ ...profile, baseURL: "https://example.com/v1" }),
+    /verified API base URL/,
+  );
+  const roundTrip = parseProviderProfile(profile);
+  assert.equal(roundTrip.piProviderID, undefined);
+  assert.equal(roundTrip.baseURL, "https://api.generalcompute.com/v1");
+});
+
 test("official login providers map directly onto Pi's built-in provider IDs", () => {
   assert.equal(profileForPreset("xai").piProviderID, "xai");
   assert.equal(profileForPreset("openai-codex").piProviderID, "openai-codex");
   assert.equal(profileForPreset("anthropic").piProviderID, "anthropic");
+  assert.equal(profileForPreset("generalcompute").piProviderID, undefined);
+});
+
+test("historical official-provider services remain filter-only and never become current auth", () => {
+  const expected = [
+    "com.barnlabs.LightningLoop.provider.xai.apiKey",
+    "com.barnlabs.LightningLoop.provider.openai-codex.apiKey",
+    "com.barnlabs.LightningLoop.provider.anthropic.apiKey",
+  ];
+  assert.deepEqual([...historicalReadOnlyProviderCredentialServices], expected);
+  const services = lightningLoopCredentialServices(defaultProviderProfile(), join(tmpdir(), `missing-${process.pid}-${Date.now()}.json`));
+  assert.ok(expected.every((service) => services.includes(service)));
+  for (const preset of ["xai", "openai-codex", "anthropic"] as const) {
+    const profile = profileForPreset(preset);
+    assert.equal(profile.piProviderID, preset);
+    assert.equal(providerCredentialService(profile), `com.barnlabs.LightningLoop.provider.${preset}.apiKey`);
+  }
 });
 
 test("custom providers accept bounded HTTPS profiles and reject credential-bearing URLs", () => {

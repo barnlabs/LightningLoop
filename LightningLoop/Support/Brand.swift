@@ -4,9 +4,12 @@ import SwiftUI
 enum LoopBrand {
     static let ink = Color(red: 0.024, green: 0.165, blue: 0.141)
     static let forest = Color(red: 0.039, green: 0.122, blue: 0.102)
-    static let mint = Color(red: 0.176, green: 0.831, blue: 0.667)
+    // The asset catalog resolves these semantic accents per appearance. The
+    // light variants remain legible on paper surfaces; the dark variants keep
+    // the existing mint and gold signal colors on forest surfaces.
+    static let mint = Color("AccentColor")
     static let paper = Color(red: 0.965, green: 0.953, blue: 0.918)
-    static let gold = Color(red: 0.961, green: 0.784, blue: 0.259)
+    static let gold = Color("SignalGold")
     static let blue = mint
     static let cyan = mint
     static let deepNavy = forest

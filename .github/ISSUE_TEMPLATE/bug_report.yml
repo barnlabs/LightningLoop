@@ -5,7 +5,7 @@ labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: Never include provider keys, Pi state, private prompts, or personal files.
+      value: Never include provider keys, runtime state, private prompts, or personal files.
   - type: dropdown
     id: surface
     attributes:

@@ -155,6 +155,10 @@ struct TimelineEntry: Identifiable, Codable, Hashable, Sendable {
 struct LoopSession: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     var title: String
+    /// How `title` was produced. Legacy archives default to provisional.
+    var titleSource: SessionTitleSource
+    /// When true, goal/plan/LLM auto-title updates are skipped until unlocked.
+    var titleLocked: Bool
     var goal: String
     var clarifiedSummary: String
     var questions: [ClarifyingQuestion]
@@ -177,9 +181,19 @@ struct LoopSession: Identifiable, Codable, Hashable, Sendable {
     var artifactVerificationCommands: Bool?
     var artifactReport: ArtifactExecutionReport?
 
+    enum CodingKeys: String, CodingKey {
+        case id, title, titleSource, titleLocked, goal, clarifiedSummary, questions, answers
+        case criteria, plan, risks, acceptanceTest, implementation, implementationNotes
+        case reviews, timeline, stage, statusMessage, createdAt, updatedAt, metrics, attachments
+        case artifactWorkspacePath, artifactVerificationCommands, artifactReport
+    }
+
     init(id: UUID = UUID(), goal: String = "") {
         self.id = id
-        self.title = "New loop"
+        let provisional = SessionTitle.provisional(from: goal)
+        self.title = provisional
+        self.titleSource = goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .provisional : .provisional
+        self.titleLocked = false
         self.goal = goal
         self.clarifiedSummary = ""
         self.questions = []
@@ -201,6 +215,68 @@ struct LoopSession: Identifiable, Codable, Hashable, Sendable {
         self.artifactWorkspacePath = nil
         self.artifactVerificationCommands = nil
         self.artifactReport = nil
+        if !goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            self.title = provisional
+            self.titleSource = .provisional
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        titleSource = try container.decodeIfPresent(SessionTitleSource.self, forKey: .titleSource) ?? .provisional
+        titleLocked = try container.decodeIfPresent(Bool.self, forKey: .titleLocked) ?? false
+        goal = try container.decode(String.self, forKey: .goal)
+        clarifiedSummary = try container.decodeIfPresent(String.self, forKey: .clarifiedSummary) ?? ""
+        questions = try container.decodeIfPresent([ClarifyingQuestion].self, forKey: .questions) ?? []
+        answers = try container.decodeIfPresent([String: String].self, forKey: .answers) ?? [:]
+        criteria = try container.decodeIfPresent([Criterion].self, forKey: .criteria) ?? []
+        plan = try container.decodeIfPresent([PlanStep].self, forKey: .plan) ?? []
+        risks = try container.decodeIfPresent([String].self, forKey: .risks) ?? []
+        acceptanceTest = try container.decodeIfPresent(String.self, forKey: .acceptanceTest) ?? ""
+        implementation = try container.decodeIfPresent(String.self, forKey: .implementation) ?? ""
+        implementationNotes = try container.decodeIfPresent([String].self, forKey: .implementationNotes) ?? []
+        reviews = try container.decodeIfPresent([ReviewRecord].self, forKey: .reviews) ?? []
+        timeline = try container.decodeIfPresent([TimelineEntry].self, forKey: .timeline) ?? []
+        stage = try container.decodeIfPresent(LoopStage.self, forKey: .stage) ?? .draft
+        statusMessage = try container.decodeIfPresent(String.self, forKey: .statusMessage) ?? ""
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+        metrics = try container.decodeIfPresent(InferenceMetrics.self, forKey: .metrics) ?? .init()
+        attachments = try container.decodeIfPresent([ImageAttachment].self, forKey: .attachments) ?? []
+        artifactWorkspacePath = try container.decodeIfPresent(String.self, forKey: .artifactWorkspacePath)
+        artifactVerificationCommands = try container.decodeIfPresent(Bool.self, forKey: .artifactVerificationCommands)
+        artifactReport = try container.decodeIfPresent(ArtifactExecutionReport.self, forKey: .artifactReport)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(titleSource, forKey: .titleSource)
+        try container.encode(titleLocked, forKey: .titleLocked)
+        try container.encode(goal, forKey: .goal)
+        try container.encode(clarifiedSummary, forKey: .clarifiedSummary)
+        try container.encode(questions, forKey: .questions)
+        try container.encode(answers, forKey: .answers)
+        try container.encode(criteria, forKey: .criteria)
+        try container.encode(plan, forKey: .plan)
+        try container.encode(risks, forKey: .risks)
+        try container.encode(acceptanceTest, forKey: .acceptanceTest)
+        try container.encode(implementation, forKey: .implementation)
+        try container.encode(implementationNotes, forKey: .implementationNotes)
+        try container.encode(reviews, forKey: .reviews)
+        try container.encode(timeline, forKey: .timeline)
+        try container.encode(stage, forKey: .stage)
+        try container.encode(statusMessage, forKey: .statusMessage)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encode(metrics, forKey: .metrics)
+        try container.encode(attachments, forKey: .attachments)
+        try container.encodeIfPresent(artifactWorkspacePath, forKey: .artifactWorkspacePath)
+        try container.encodeIfPresent(artifactVerificationCommands, forKey: .artifactVerificationCommands)
+        try container.encodeIfPresent(artifactReport, forKey: .artifactReport)
     }
 }
 

@@ -5,6 +5,7 @@ enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
     case cerebras
     case groq
     case fireworks
+    case generalcompute
     case xai
     case openaiCodex = "openai-codex"
     case anthropic
@@ -18,17 +19,38 @@ enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .cerebras: "Cerebras Inference"
         case .groq: "Groq"
         case .fireworks: "Fireworks"
-        case .xai: "xAI / Grok (Pi login)"
-        case .openaiCodex: "OpenAI Codex (Pi login)"
-        case .anthropic: "Anthropic Claude (Pi login)"
+        case .generalcompute: "GeneralCompute"
+        case .xai: "xAI / Grok (LightningLoop runtime sign-in)"
+        case .openaiCodex: "OpenAI Codex (LightningLoop runtime sign-in)"
+        case .anthropic: "Anthropic Claude (LightningLoop runtime sign-in)"
         case .custom: "Custom OpenAI-compatible"
         case .selectionRequired: "Choose a provider"
         }
     }
 }
 
+/// A credential-free model description supplied by the shared LightningLoop
+/// runtime. Built-in providers must select from this catalog; custom profiles
+/// continue to use their explicit, user-triggered connection test instead.
+struct ProviderModelOption: Codable, Hashable, Identifiable, Sendable {
+    var id: String { modelID }
+
+    var modelID: String
+    var modelName: String
+    var supportsImages: Bool
+    var contextWindow: Int
+    var maxOutputTokens: Int
+}
+
 struct ProviderConfiguration: Codable, Hashable, Sendable {
     static let schemaVersion = 1
+    static let cerebrasGemma4_31B = ProviderModelOption(
+        modelID: "gemma-4-31b",
+        modelName: "Gemma 4 31B",
+        supportsImages: true,
+        contextWindow: 131_072,
+        maxOutputTokens: 40_960
+    )
 
     var schemaVersion: Int
     var id: String
@@ -59,11 +81,13 @@ struct ProviderConfiguration: Codable, Hashable, Sendable {
     static func preset(_ preset: ProviderPreset) -> ProviderConfiguration {
         switch preset {
         case .cerebras:
-            .init(schemaVersion: schemaVersion, id: "cerebras", preset: .cerebras, displayName: "Cerebras Inference", baseURL: "https://api.cerebras.ai/v1", modelID: "gpt-oss-120b", modelName: "GPT OSS 120B", supportsImages: false, contextWindow: 131_072, maxOutputTokens: 32_768)
+            .init(schemaVersion: schemaVersion, id: "cerebras", preset: .cerebras, displayName: "Cerebras Inference", baseURL: "https://api.cerebras.ai/v1", modelID: cerebrasGemma4_31B.modelID, modelName: cerebrasGemma4_31B.modelName, supportsImages: cerebrasGemma4_31B.supportsImages, contextWindow: cerebrasGemma4_31B.contextWindow, maxOutputTokens: cerebrasGemma4_31B.maxOutputTokens)
         case .groq:
             .init(schemaVersion: schemaVersion, id: "groq", preset: .groq, displayName: "Groq", baseURL: "https://api.groq.com/openai/v1", modelID: "openai/gpt-oss-120b", modelName: "GPT-OSS 120B", supportsImages: false, contextWindow: 131_072, maxOutputTokens: 32_768)
         case .fireworks:
             .init(schemaVersion: schemaVersion, id: "fireworks", preset: .fireworks, displayName: "Fireworks", baseURL: "https://api.fireworks.ai/inference/v1", modelID: "accounts/fireworks/models/kimi-k2p6", modelName: "Kimi K2.6", supportsImages: true, contextWindow: 262_000, maxOutputTokens: 32_768)
+        case .generalcompute:
+            .init(schemaVersion: schemaVersion, id: "generalcompute", preset: .generalcompute, displayName: "GeneralCompute", baseURL: "https://api.generalcompute.com/v1", modelID: "minimax-m2.7", modelName: "MiniMax M2.7", supportsImages: false, contextWindow: 192_000, maxOutputTokens: 131_072)
         case .xai:
             .init(schemaVersion: schemaVersion, id: "xai", preset: .xai, displayName: "xAI / Grok", baseURL: "https://api.x.ai/v1", modelID: "grok-4.5", modelName: "Grok 4.5", supportsImages: true, contextWindow: 256_000, maxOutputTokens: 32_768)
         case .openaiCodex:
@@ -77,29 +101,57 @@ struct ProviderConfiguration: Codable, Hashable, Sendable {
         }
     }
 
+    /// Gemma is intentionally a preview preference, not a claim that every
+    /// installed runtime catalog contains it. The shared runtime must confirm
+    /// the selected model before execution.
+    var requiresRuntimeModelVerification: Bool {
+        preset == .cerebras && modelID == Self.cerebrasGemma4_31B.modelID
+    }
+
+    var runtimeModelSelectionNotice: String? {
+        guard requiresRuntimeModelVerification else { return nil }
+        return "Gemma 4 31B is a public-preview preference. It is not treated as catalogued until the installed LightningLoop runtime catalog lists it."
+    }
+
+    func applyingRuntimeModel(_ option: ProviderModelOption) -> ProviderConfiguration {
+        var selected = self
+        selected.modelID = option.modelID
+        selected.modelName = option.modelName
+        selected.supportsImages = option.supportsImages
+        selected.contextWindow = option.contextWindow
+        selected.maxOutputTokens = option.maxOutputTokens
+        return selected
+    }
+
     var credentialProvider: CredentialProvider {
         switch preset {
         case .cerebras: .cerebras
         case .groq: .groq
         case .fireworks: .fireworks
+        case .generalcompute: .generalcompute
         case .xai, .openaiCodex, .anthropic: .custom
         case .custom, .selectionRequired: .custom
         }
     }
 
-    /// Presets are selected and authenticated by Pi. LightningLoop never uses
-    /// its Keychain as a fallback for these profiles.
+    /// Pi-managed presets use the runtime /login path. GeneralCompute and custom
+    /// use LightningLoop-owned API keys (Keychain / env); never Pi /login.
     var usesPiAuthentication: Bool {
         switch preset {
-        case .custom, .selectionRequired: false
+        case .custom, .generalcompute, .selectionRequired: false
         default: true
         }
     }
 
-    var allowsNativeConnectionTesting: Bool { preset == .custom }
+    var allowsNativeConnectionTesting: Bool {
+        preset == .custom || preset == .generalcompute
+    }
 
     var credentialService: String {
         if usesPiAuthentication { return "com.barnlabs.LightningLoop.pi-managed.\(id)" }
+        if preset == .generalcompute {
+            return CredentialProvider.generalcompute.service
+        }
         guard preset == .custom, let host = URLComponents(string: baseURL)?.host?.lowercased() else {
             return credentialProvider.service
         }
@@ -172,9 +224,13 @@ struct CustomCredentialServiceRegistry: Sendable {
     /// Returns true only when this call inserted a new service identifier.
     /// Callers can use that bit to roll the registry back if the subsequent
     /// Keychain operation fails.
+    ///
+    /// Only host-suffixed custom services are registered. Fixed LightningLoop
+    /// services (for example GeneralCompute) are already in CredentialProvider.
     @discardableResult
     func register(profile: ProviderConfiguration) throws -> Bool {
         guard profile.allowsNativeConnectionTesting else { throw RegistryError.invalidService }
+        guard profile.preset == .custom else { return false }
         let service = profile.credentialService
         guard Self.isValidService(service) else { throw RegistryError.invalidService }
         guard var values = state().services else { throw RegistryError.invalidState }
@@ -186,8 +242,9 @@ struct CustomCredentialServiceRegistry: Sendable {
     }
 
     func rollBackRegistration(profile: ProviderConfiguration) throws {
-        guard profile.allowsNativeConnectionTesting,
-              Self.isValidService(profile.credentialService) else { throw RegistryError.invalidService }
+        guard profile.allowsNativeConnectionTesting else { throw RegistryError.invalidService }
+        guard profile.preset == .custom else { return }
+        guard Self.isValidService(profile.credentialService) else { throw RegistryError.invalidService }
         guard var values = state().services else { throw RegistryError.invalidState }
         values.remove(profile.credentialService)
         try write(values)
@@ -222,11 +279,22 @@ struct CustomCredentialServiceRegistry: Sendable {
 }
 
 enum CredentialServiceCatalog {
+    /// Direct-provider services written by historical LightningLoop builds.
+    /// They remain readable solely so persisted text can be filtered and
+    /// sanitized. Current built-in authentication is runtime-managed, and no
+    /// save/delete API accepts these service identifiers.
+    static let historicalReadOnlyServices: Set<String> = [
+        "com.barnlabs.LightningLoop.provider.xai.apiKey",
+        "com.barnlabs.LightningLoop.provider.openai-codex.apiKey",
+        "com.barnlabs.LightningLoop.provider.anthropic.apiKey"
+    ]
+
     static func services(activeProfile: ProviderConfiguration, registry: CustomCredentialServiceRegistry = .init()) throws -> [String] {
         guard let registered = registry.state().services else {
             throw CustomCredentialServiceRegistry.RegistryError.invalidState
         }
         var values = Set(CredentialProvider.allCases.map(\.service))
+        values.formUnion(historicalReadOnlyServices)
         values.formUnion(registered)
         if activeProfile.allowsNativeConnectionTesting { values.insert(activeProfile.credentialService) }
         return values.sorted()

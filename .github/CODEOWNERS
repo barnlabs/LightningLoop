@@ -1,7 +1,9 @@
-# BarnLabs release and security ownership. Keep repository settings human-owned.
-* @baney75
+# LightningLoop ownership. Mac Baney (@mac756) leads day-to-day contribution review.
+# GitHub write (or triage) must match this file — pull-only cannot satisfy CODEOWNER checks.
+# Repository settings, release, and signing remain human-owned (Donovan / BarnLabs).
+* @mac756 @baney75
 
-/.github/ @baney75
-/SECURITY.md @baney75
-/docs/THREAT_MODEL.md @baney75
-/docs/UPDATES.md @baney75
+/.github/ @mac756 @baney75
+/SECURITY.md @mac756 @baney75
+/docs/THREAT_MODEL.md @mac756 @baney75
+/docs/UPDATES.md @mac756 @baney75

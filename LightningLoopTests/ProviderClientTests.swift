@@ -30,8 +30,9 @@ final class ProviderClientTests: XCTestCase {
         }
     }
 
-    func testEveryBuiltInIsRejectedBeforeCredentialLookupOrNetwork() async throws {
-        for preset in ProviderPreset.allCases where preset != .custom && preset != .selectionRequired {
+    func testEveryPiManagedBuiltInIsRejectedBeforeCredentialLookupOrNetwork() async throws {
+        for preset in ProviderPreset.allCases
+        where preset != .custom && preset != .generalcompute && preset != .selectionRequired {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
             let store = ProviderConfigurationStore(fileURL: root.appendingPathComponent("provider.json"))
             try store.save(.preset(preset))
@@ -51,13 +52,44 @@ final class ProviderClientTests: XCTestCase {
 
             await XCTAssertProviderThrowsAsync(try await client.complete(.init(messages: [.init(role: .user, content: "hello")]))) { error in
                 XCTAssertEqual(error as? ProviderClientError, .piManagedProfile)
+                let description = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                XCTAssertTrue(description.contains("managed by the LightningLoop runtime"))
+                XCTAssertNil(description.range(of: "\\bpi\\b", options: [.regularExpression, .caseInsensitive]))
             }
             await XCTAssertProviderThrowsAsync(try await client.listModels()) { error in
                 XCTAssertEqual(error as? ProviderClientError, .piManagedProfile)
+                let description = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                XCTAssertTrue(description.contains("managed by the LightningLoop runtime"))
+                XCTAssertNil(description.range(of: "\\bpi\\b", options: [.regularExpression, .caseInsensitive]))
             }
             XCTAssertEqual(credentialReads.value, 0, "\(preset.rawValue) reached native credential lookup")
             XCTAssertEqual(networkRequests.value, 0, "\(preset.rawValue) reached native networking")
         }
+    }
+
+    func testGeneralComputeNativeListModelsIsAllowedWithFixedEndpoint() async throws {
+        let credential = "synthetic-generalcompute-credential"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = ProviderConfigurationStore(fileURL: root.appendingPathComponent("provider.json"))
+        try store.save(.preset(.generalcompute))
+        XCTAssertTrue(ProviderConfiguration.preset(.generalcompute).allowsNativeConnectionTesting)
+        XCTAssertFalse(ProviderConfiguration.preset(.generalcompute).usesPiAuthentication)
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ProviderURLProtocol.self]
+        ProviderURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://api.generalcompute.com/v1/models")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(credential)")
+            let body = #"{"object":"list","data":[{"id":"minimax-m2.7","object":"model"}]}"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(body.utf8))
+        }
+        let client = ProviderClient(
+            profileStore: store,
+            session: URLSession(configuration: configuration),
+            credentialReader: { _ in credential }
+        )
+        let models = try await client.listModels()
+        XCTAssertEqual(models, ["minimax-m2.7"])
     }
 
     func testCustomSuccessRedactsExactCredentialBeforeReplyLeavesProviderClient() async throws {

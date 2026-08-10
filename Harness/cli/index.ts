@@ -12,7 +12,7 @@ import type { Clarification, LoopEvent } from "../core/loop-types.js";
 import { scrubSensitiveEnvironment } from "../core/environment.js";
 import { validatePiPassthrough } from "../core/pi-options.js";
 import { terminalSafe } from "../core/terminal-output.js";
-import { lightningLoopExtension } from "../pi/lightningloop-extension.js";
+import { createLightningLoopExtension } from "../pi/lightningloop-extension.js";
 import { PiProviderAdapter } from "../pi/model-adapter.js";
 import { captureSearchCredentials, SearchClient, type SearchProvider } from "../search/search-client.js";
 import { runJsonlServer } from "../rpc/server.js";
@@ -26,13 +26,14 @@ import {
   saveProviderPreset,
   selectableProviderPresets,
   type SelectableProviderPreset,
+  type ProviderProfile,
 } from "../core/provider-profile.js";
 import { validateImagePaths } from "../core/image-input.js";
 import { loadEligibleMemoryContext } from "../core/memory-store.js";
 import { WorkspaceArtifactExecutor } from "../artifacts/workspace-artifact-executor.js";
 import { startBrowserArtifactServer } from "../artifacts/browser-artifact-server.js";
 import { artifactSeedsForGoal } from "../artifacts/builtin-artifact-seeds.js";
-import { assertNoConfiguredCredential } from "../core/credential-safety.js";
+import { assertNoConfiguredCredential, registerRuntimeCredential } from "../core/credential-safety.js";
 import { lightningLoopDataPath } from "../core/platform-paths.js";
 import { ManagedOverlay } from "../governance/managed-overlay.js";
 import { DEFAULT_UPDATE_POLICY, updateChannelStatus } from "../update/update-policy.js";
@@ -84,10 +85,10 @@ export function usage(): string {
 An independent BarnLabs open-source project.
 
 Usage:
-  llp | lloop | lightningloop [tui] [--workspace PATH] [--allow-execution] [-- PI_OPTIONS...]
+  llp | lloop | lightningloop [tui] [--workspace PATH] [--allow-execution] [-- RUNTIME_OPTIONS...]
   lightningloop auth
   lightningloop provider list
-  lightningloop provider select <cerebras|groq|fireworks|xai|openai-codex|anthropic>
+  lightningloop provider select <cerebras|groq|fireworks|generalcompute|xai|openai-codex|anthropic>
   lightningloop loop [GOAL] [--cycles 1-8] [--image PATH] [--research exa|brave|firecrawl]
     [--workspace EMPTY_DIR --approve-artifact-writes [--approve-verification-commands]]
   lightningloop search <exa|brave|firecrawl> QUERY [--limit 1-20]
@@ -106,7 +107,7 @@ Running llp or lloop with no arguments opens the interactive TUI.
 The loop command is text-only by default. Artifact writes require an explicit empty directory and approval flag.
 Verification commands additionally require --approve-verification-commands and run allowlisted programs in the network-denied OS sandbox.
 MCP verification requires a versioned integrity manifest and an explicit approval flag for that exact invocation.
-Provider login is managed by Pi. Run 'lightningloop auth', then use Pi's /login command.
+Provider sign-in uses the managed LightningLoop runtime. Run 'lightningloop auth', then use its /login command.
 Choose a first-run provider with 'lightningloop provider list' and 'lightningloop provider select PRESET'.
 LightningLoop never copies OAuth credentials into its own settings or managed overlay.`;
 }
@@ -282,7 +283,7 @@ export function parse(args: string[]): CliOptions {
       if (arg !== "serve" || artifactAction) throw new Error("Artifact action must be serve.");
       artifactAction = "serve";
     } else {
-      throw new Error(`Unknown LightningLoop option: ${arg}. Put Pi options after --.`);
+      throw new Error(`Unknown LightningLoop option: ${arg}. Put runtime options after --.`);
     }
   }
   const goal = goalParts.join(" ").trim();
@@ -339,7 +340,7 @@ function runSkillGovernance(options: CliOptions): void {
   process.stdout.write("LightningLoop managed skills\n");
   for (const skill of skills) process.stdout.write(`  ${skill.enabled ? "ENABLED" : "DISABLED"} ${terminalSafe(skill.id)} · sha256 ${skill.sha256}\n`);
   if (skills.length === 0) process.stdout.write("  No managed skills installed. Shipped project skills are unchanged.\n");
-  process.stdout.write("  Pi global packages/settings changed: NO\n");
+  process.stdout.write("  Provider runtime packages/settings changed: NO\n");
 }
 
 async function runArtifactHandoff(options: CliOptions): Promise<void> {
@@ -387,7 +388,7 @@ function runHarnessGovernance(options: CliOptions): void {
   process.stdout.write(`  Root: ${terminalSafe(status.root)}\n`);
   process.stdout.write(`  Current: ${status.current.files.length} files · ${status.current.totalBytes} bytes\n`);
   for (const backup of status.backups) process.stdout.write(`  Backup ${backup.slot}: ${backup.snapshot ? `${backup.snapshot.files.length} files · ${backup.snapshot.totalBytes} bytes` : "empty"}\n`);
-  process.stdout.write("  Pi auth/settings changed: NO\n");
+  process.stdout.write("  Provider runtime auth/settings changed: NO\n");
 }
 
 async function runMcp(options: CliOptions): Promise<void> {
@@ -446,12 +447,14 @@ export async function doctor(runtimeOnly = false): Promise<number> {
   const selectionRequired = isProviderSelectionRequired(profile);
   const piManaged = !selectionRequired && Boolean(profile.piProviderID);
   const keychainCredential = !selectionRequired && !piManaged && process.platform === "darwin" && keychainConfigured(providerCredentialService(profile));
+  const generalComputeEnv = !selectionRequired && profile.preset === "generalcompute" && Boolean(process.env.GENERALCOMPUTE_API_KEY?.trim());
+  const managedApiKeyReady = keychainCredential || generalComputeEnv;
   process.stdout.write("LightningLoop doctor\n");
   process.stdout.write(`  Node >=22.19: ${nodeOK ? "PASS" : "FAIL"} (${process.version})\n`);
   process.stdout.write(selectionRequired
     ? "  Active provider: SELECTION REQUIRED · run 'lightningloop provider list' then 'lightningloop provider select PRESET'\n"
     : `  Active provider: ${terminalSafe(profile.displayName)} · ${terminalSafe(profile.modelID)}\n`);
-  process.stdout.write(`  Pi-native provider auth: ${piManaged ? "PI-MANAGED/UNKNOWN" : "NOT APPLICABLE"}\n`);
+  process.stdout.write(`  Provider sign-in: ${piManaged ? "MANAGED BY RUNTIME/UNKNOWN" : "NOT APPLICABLE"}\n`);
   const researchStatus = (environmentName: string, service: string): string => process.env[environmentName]?.trim()
     || keychainConfigured(service) ? "CONFIGURED" : "MISSING";
   process.stdout.write(`  Exa research credential: ${researchStatus("EXA_API_KEY", "com.barnlabs.LightningLoop.search.exa")}\n`);
@@ -462,7 +465,7 @@ export async function doctor(runtimeOnly = false): Promise<number> {
   if (runtimeOnly) process.stdout.write("  Install/runtime-only health: provider onboarding is reported but does not fail installation\n");
   // `doctor` verifies local prerequisites. It never probes Pi credentials;
   // Pi owns their status and reports an auth failure only during its own run.
-  return runtimeOnly ? (nodeOK ? 0 : 1) : (nodeOK && !selectionRequired && (piManaged || keychainCredential) ? 0 : 1);
+  return runtimeOnly ? (nodeOK ? 0 : 1) : (nodeOK && !selectionRequired && (piManaged || managedApiKeyReady) ? 0 : 1);
 }
 
 function runProviderCommand(options: CliOptions): void {
@@ -471,7 +474,11 @@ function runProviderCommand(options: CliOptions): void {
     if (!options.providerArgument) throw new Error("Provider select requires a reviewed preset.");
     const selected = saveProviderPreset(options.providerArgument);
     process.stdout.write(`Selected ${terminalSafe(selected.displayName)} · ${terminalSafe(selected.modelName)}\n`);
-    process.stdout.write("Credential stored by LightningLoop: NO. Use 'lightningloop auth' for Pi-managed login.\n");
+    if (selected.preset === "generalcompute") {
+      process.stdout.write("Credential: LightningLoop-managed API key (Settings Keychain on macOS, or GENERALCOMPUTE_API_KEY). Not Pi /login.\n");
+    } else {
+      process.stdout.write("Credential stored by LightningLoop: NO. Use 'lightningloop auth' to start provider sign-in.\n");
+    }
     return;
   }
   process.stdout.write("LightningLoop provider presets\n");
@@ -510,8 +517,7 @@ async function runTUI(options: CliOptions): Promise<void> {
   // Pi otherwise downloads the latest fd/rg release at startup without a
   // repository-pinned checksum. LightningLoop keeps runtime acquisition offline.
   process.env.PI_OFFLINE = "1";
-  captureSearchCredentials(process.env);
-  scrubSensitiveEnvironment(process.env);
+  const { generalComputeApiKey } = prepareTuiRuntimeCredentials(profile, process.env);
 
   // Mutations flow only through the OS-sandboxed bash override. Pi's in-process
   // write/edit tools are intentionally excluded because a confirmation dialog
@@ -535,7 +541,22 @@ async function runTUI(options: CliOptions): Promise<void> {
     ...options.passthrough,
   ];
 
-  await runPi(args, { extensionFactories: [{ name: "lightningloop", factory: lightningLoopExtension }] });
+  const extensionOptions = generalComputeApiKey ? { generalComputeApiKey } : {};
+  await runPi(args, { extensionFactories: [{ name: "lightningloop", factory: createLightningLoopExtension(extensionOptions) }] });
+}
+
+/** Capture only bounded TUI credentials, register them for redaction, then scrub ambient env. */
+export function prepareTuiRuntimeCredentials(
+  profile: ProviderProfile,
+  environment: NodeJS.ProcessEnv,
+): { generalComputeApiKey?: string } {
+  const ambientGeneralComputeApiKey = environment.GENERALCOMPUTE_API_KEY?.trim();
+  if (ambientGeneralComputeApiKey) registerRuntimeCredential(ambientGeneralComputeApiKey);
+  captureSearchCredentials(environment);
+  scrubSensitiveEnvironment(environment);
+  return profile.preset === "generalcompute" && ambientGeneralComputeApiKey
+    ? { generalComputeApiKey: ambientGeneralComputeApiKey }
+    : {};
 }
 
 async function runAuth(options: CliOptions): Promise<void> {
@@ -544,7 +565,7 @@ async function runAuth(options: CliOptions): Promise<void> {
   process.chdir(workspace);
   process.env.PI_OFFLINE = "1";
   scrubSensitiveEnvironment(process.env);
-  process.stdout.write("LightningLoop authentication is owned by Pi. Use /login, choose OpenAI Codex, Anthropic, or xAI, and complete the provider's browser/device flow. Use /logout to revoke a Pi credential.\n");
+  process.stdout.write("LightningLoop starts the provider sign-in flow. Use /login, choose OpenAI Codex, Anthropic, or xAI, and complete the provider's browser/device flow. Use /logout to revoke a provider credential.\n");
   await runPi(["--session-dir", SESSION_DIR, "--tools", "read", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files"]);
 }
 
@@ -681,7 +702,7 @@ async function entry(): Promise<void> {
   }
   if (options.command === "update") {
     const status = updateChannelStatus(DEFAULT_UPDATE_POLICY);
-    process.stdout.write(`LightningLoop update · ${status.state}\n  ${status.message}\n  Pi package pin: ${DEFAULT_UPDATE_POLICY.piPackageVersion}\n  Managed overlay changed: NO\n`);
+    process.stdout.write(`LightningLoop update · ${status.state}\n  ${status.message}\n  LightningLoop runtime package pin: ${DEFAULT_UPDATE_POLICY.piPackageVersion}\n  Managed overlay changed: NO\n`);
     return;
   }
   if (options.command === "artifact") {

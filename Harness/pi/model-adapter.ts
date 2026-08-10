@@ -13,6 +13,7 @@ import {
 import { SecretRedactor } from "../core/redaction.js";
 import { applyActiveSystemPromptAddenda } from "../core/evolution-store.js";
 import { assertCredentialSafeInput, registerRuntimeCredential } from "../core/credential-safety.js";
+import { encodePiApiKey } from "../core/pi-options.js";
 
 type PiRuntime = Pick<ModelRuntime, "completeSimple" | "getModel" | "registerProvider">;
 type ProfileCredentialReader = (profile: ProviderProfile) => string | undefined;
@@ -28,6 +29,36 @@ function readMacCredential(profile: ProviderProfile): string | undefined {
   return credential || undefined;
 }
 
+/** LightningLoop-managed API-key credentials (never Pi /login). Env is checked for GeneralCompute. */
+export function readLightningLoopManagedCredential(profile: ProviderProfile): string | undefined {
+  if (profile.preset === "generalcompute") {
+    const fromEnv = process.env.GENERALCOMPUTE_API_KEY?.trim();
+    if (fromEnv) return fromEnv;
+  }
+  return readMacCredential(profile);
+}
+
+function missingManagedCredentialMessage(profile: ProviderProfile): string {
+  if (profile.preset === "generalcompute") {
+    return "GeneralCompute requires GENERALCOMPUTE_API_KEY or a LightningLoop Keychain credential (Settings on macOS). It is not managed by runtime /login.";
+  }
+  return "LightningLoop-managed API-key providers require a credential from the macOS Settings Keychain (Custom OpenAI-compatible). GeneralCompute also accepts GENERALCOMPUTE_API_KEY.";
+}
+
+function assertRuntimeModelSnapshot(
+  model: NonNullable<ReturnType<ModelRuntime["getModel"]>>,
+  profile: ProviderProfile,
+): void {
+  const supportsImages = Array.isArray(model.input) && model.input.includes("image");
+  if (supportsImages !== profile.supportsImages
+      || model.contextWindow !== profile.contextWindow
+      || model.maxTokens !== profile.maxOutputTokens) {
+    throw new Error(
+      `The runtime catalog metadata for ${profile.modelID} changed after selection. Refresh the exact model snapshot before starting LightningLoop.`,
+    );
+  }
+}
+
 export class PiProviderAdapter implements AgentAdapter {
   readonly supportsImages: boolean;
   private constructor(
@@ -40,7 +71,7 @@ export class PiProviderAdapter implements AgentAdapter {
   static async create(
     profile = loadProviderProfile(),
     createRuntime: () => Promise<PiRuntime> = () => ModelRuntime.create({ modelsPath: null, allowModelNetwork: false }),
-    credentialReader: ProfileCredentialReader = readMacCredential,
+    credentialReader: ProfileCredentialReader = readLightningLoopManagedCredential,
   ): Promise<PiProviderAdapter> {
     if (isProviderSelectionRequired(profile)) {
       throw new Error("Choose and save an inference provider before starting LightningLoop.");
@@ -50,7 +81,7 @@ export class PiProviderAdapter implements AgentAdapter {
     let credential: string | undefined;
     if (!providerID) {
       credential = credentialReader(profile);
-      if (!credential) throw new Error("Custom providers currently require a credential saved by the LightningLoop macOS GUI.");
+      if (!credential) throw new Error(missingManagedCredentialMessage(profile));
       registerRuntimeCredential(credential);
     }
     const resolvedProviderID = providerID ?? `lightningloop-${profile.id}`;
@@ -58,7 +89,7 @@ export class PiProviderAdapter implements AgentAdapter {
       runtime.registerProvider(resolvedProviderID, {
         name: `LightningLoop / ${profile.displayName}`,
         baseUrl: profile.baseURL,
-        apiKey: credential,
+        apiKey: encodePiApiKey(credential),
         api: "openai-completions",
         authHeader: true,
         headers: providerHeaders(profile),
@@ -75,8 +106,9 @@ export class PiProviderAdapter implements AgentAdapter {
     }
     const model = runtime.getModel(resolvedProviderID, profile.modelID);
     if (!model) throw new Error(profile.piProviderID
-      ? `Pi does not currently catalog ${profile.modelID} for ${profile.displayName}. Choose a model shown by Pi's /model picker, then authenticate with /login if Pi requests it.`
-      : `Pi does not currently catalog ${profile.modelID} for ${profile.displayName}. Choose a model shown by Pi's /model picker.`);
+      ? `The LightningLoop runtime does not currently catalog ${profile.modelID} for ${profile.displayName}. Choose a model shown by the runtime model picker, then complete provider sign-in with /login if requested.`
+      : `The LightningLoop runtime does not currently catalog ${profile.modelID} for ${profile.displayName}. Choose a model shown by the runtime model picker.`);
+    assertRuntimeModelSnapshot(model, profile);
     return new PiProviderAdapter(runtime, model, profile, new SecretRedactor(credential ? [credential] : []));
   }
 
