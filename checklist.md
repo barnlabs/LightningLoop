@@ -1,9 +1,9 @@
 # LightningLoop — phased agent & contributor checklist
 
-> **Who this is for:** Mac (@mac756), AI coding agents, and open-source contributors.  
-> **Who this is not for:** one-shot “finish the product” runs. That path fails.  
-> **Clone root:** wherever you cloned **`https://github.com/barnlabs/LightningLoop`**. All paths below are **repo-relative**. Never hard-code another machine’s home directory.  
-> **Deep ID ledger:** [`PRODUCTION_READINESS_CHECKLIST.md`](PRODUCTION_READINESS_CHECKLIST.md) (LL-001…LL-028). This file sequences work; that file owns status IDs.  
+> **Who this is for:** Mac (@mac756), AI coding agents, and open-source contributors.
+> **Who this is not for:** one-shot “finish the product” runs. That path fails.
+> **Clone root:** wherever you cloned **`https://github.com/barnlabs/LightningLoop`**. All paths below are **repo-relative**. Never hard-code another machine’s home directory.
+> **Deep ID ledger:** [`PRODUCTION_READINESS_CHECKLIST.md`](PRODUCTION_READINESS_CHECKLIST.md) (LL-001…LL-028). This file sequences work; that file owns status IDs.
 > **Human process:** [`CONTRIBUTING.md`](CONTRIBUTING.md) · maintainer agent rules: [`AGENTS.md`](AGENTS.md)
 
 ---

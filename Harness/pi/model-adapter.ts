@@ -13,6 +13,7 @@ import {
 import { SecretRedactor } from "../core/redaction.js";
 import { applyActiveSystemPromptAddenda } from "../core/evolution-store.js";
 import { assertCredentialSafeInput, registerRuntimeCredential } from "../core/credential-safety.js";
+import { encodePiApiKey } from "../core/pi-options.js";
 
 type PiRuntime = Pick<ModelRuntime, "completeSimple" | "getModel" | "registerProvider">;
 type ProfileCredentialReader = (profile: ProviderProfile) => string | undefined;
@@ -88,7 +89,7 @@ export class PiProviderAdapter implements AgentAdapter {
       runtime.registerProvider(resolvedProviderID, {
         name: `LightningLoop / ${profile.displayName}`,
         baseUrl: profile.baseURL,
-        apiKey: credential,
+        apiKey: encodePiApiKey(credential),
         api: "openai-completions",
         authHeader: true,
         headers: providerHeaders(profile),

@@ -2,6 +2,12 @@ const VALUE_OPTIONS = new Set(["-p", "--print", "--thinking"]);
 const FLAG_OPTIONS = new Set(["--no-session"]);
 const THINKING_LEVELS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
 
+/** Encode a captured credential for Pi's config-value grammar without changing its bytes at resolution. */
+export function encodePiApiKey(apiKey: string): string {
+  const escapedDollars = apiKey.replaceAll("$", () => "$$");
+  return escapedDollars.startsWith("!") ? `$!${escapedDollars.slice(1)}` : escapedDollars;
+}
+
 export function validatePiPassthrough(args: readonly string[]): string[] {
   const accepted: string[] = [];
   for (let index = 0; index < args.length; index += 1) {

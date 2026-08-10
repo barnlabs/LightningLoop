@@ -30,6 +30,7 @@ import {
 } from "../core/ledger-management.js";
 import { assertCredentialSafeInput, assertNoConfiguredCredential } from "../core/credential-safety.js";
 import { dispatchNotification } from "../notifications/notification-dispatcher.js";
+import { encodePiApiKey } from "../core/pi-options.js";
 
 function keychainCommand(services: string[]): string {
   if (services.length < 1 || services.some((service) => !/^[A-Za-z0-9.-]+$/.test(service))) {
@@ -38,16 +39,14 @@ function keychainCommand(services: string[]): string {
   return `!/bin/sh -c '${services.map((service) => `/usr/bin/security find-generic-password -s ${service} -w`).join(" || ")}'`;
 }
 
-/** macOS Keychain first, then a bounded env var (GeneralCompute). */
-function keychainThenEnvCommand(service: string, envVar: string): string {
-  if (!/^[A-Za-z0-9.-]+$/.test(service) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar)) {
-    throw new Error("Invalid Keychain service or environment variable name.");
-  }
-  return `!/bin/sh -c '/usr/bin/security find-generic-password -s ${service} -w 2>/dev/null || printf %s "$${envVar}"'`;
+export interface LightningLoopExtensionOptions {
+  /** Captured before TUI environment scrubbing; never read from ambient env here. */
+  generalComputeApiKey?: string;
 }
 
-export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
-  const profile = loadProviderProfile();
+export function createLightningLoopExtension(options: LightningLoopExtensionOptions = {}): ExtensionFactory {
+  return (pi: ExtensionAPI) => {
+    const profile = loadProviderProfile();
   const providerID = `lightningloop-${profile.id}`;
   const workspace = process.cwd();
   const sandbox = new SandboxedBashRuntime(workspace);
@@ -75,7 +74,7 @@ export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
 
   if (!profile.piProviderID) {
     const isGeneralCompute = profile.preset === "generalcompute";
-    const generalComputeEnv = isGeneralCompute ? process.env.GENERALCOMPUTE_API_KEY?.trim() : undefined;
+    const generalComputeEnv = isGeneralCompute ? options.generalComputeApiKey?.trim() : undefined;
     if (process.platform !== "darwin") {
       if (!isGeneralCompute || !generalComputeEnv) {
         throw new Error(
@@ -85,16 +84,14 @@ export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
         );
       }
     }
-    // macOS prefers Keychain; GeneralCompute may also fall back to GENERALCOMPUTE_API_KEY.
-    const apiKey = process.platform === "darwin"
-      ? (isGeneralCompute
-        ? keychainThenEnvCommand(providerCredentialService(profile), "GENERALCOMPUTE_API_KEY")
-        : keychainCommand([providerCredentialService(profile)]))
-      : generalComputeEnv!;
+    // An explicitly captured TUI env key is process-local; otherwise macOS uses Keychain.
+    const apiKey = generalComputeEnv ?? (process.platform === "darwin"
+      ? keychainCommand([providerCredentialService(profile)])
+      : generalComputeEnv!);
     pi.registerProvider(providerID, {
       name: `LightningLoop / ${profile.displayName}`,
       baseUrl: profile.baseURL,
-      apiKey,
+      apiKey: generalComputeEnv ? encodePiApiKey(generalComputeEnv) : apiKey,
       api: "openai-completions",
       authHeader: true,
       headers: providerHeaders(profile),
@@ -744,6 +741,9 @@ export const lightningLoopExtension: ExtensionFactory = (pi: ExtensionAPI) => {
     description: "Exit LightningLoop (alias for /quit)",
     handler: async (_args, ctx) => ctx.shutdown(),
   });
-};
+  };
+}
+
+export const lightningLoopExtension: ExtensionFactory = createLightningLoopExtension();
 
 export default lightningLoopExtension;

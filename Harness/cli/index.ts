@@ -12,7 +12,7 @@ import type { Clarification, LoopEvent } from "../core/loop-types.js";
 import { scrubSensitiveEnvironment } from "../core/environment.js";
 import { validatePiPassthrough } from "../core/pi-options.js";
 import { terminalSafe } from "../core/terminal-output.js";
-import { lightningLoopExtension } from "../pi/lightningloop-extension.js";
+import { createLightningLoopExtension } from "../pi/lightningloop-extension.js";
 import { PiProviderAdapter } from "../pi/model-adapter.js";
 import { captureSearchCredentials, SearchClient, type SearchProvider } from "../search/search-client.js";
 import { runJsonlServer } from "../rpc/server.js";
@@ -26,13 +26,14 @@ import {
   saveProviderPreset,
   selectableProviderPresets,
   type SelectableProviderPreset,
+  type ProviderProfile,
 } from "../core/provider-profile.js";
 import { validateImagePaths } from "../core/image-input.js";
 import { loadEligibleMemoryContext } from "../core/memory-store.js";
 import { WorkspaceArtifactExecutor } from "../artifacts/workspace-artifact-executor.js";
 import { startBrowserArtifactServer } from "../artifacts/browser-artifact-server.js";
 import { artifactSeedsForGoal } from "../artifacts/builtin-artifact-seeds.js";
-import { assertNoConfiguredCredential } from "../core/credential-safety.js";
+import { assertNoConfiguredCredential, registerRuntimeCredential } from "../core/credential-safety.js";
 import { lightningLoopDataPath } from "../core/platform-paths.js";
 import { ManagedOverlay } from "../governance/managed-overlay.js";
 import { DEFAULT_UPDATE_POLICY, updateChannelStatus } from "../update/update-policy.js";
@@ -516,8 +517,7 @@ async function runTUI(options: CliOptions): Promise<void> {
   // Pi otherwise downloads the latest fd/rg release at startup without a
   // repository-pinned checksum. LightningLoop keeps runtime acquisition offline.
   process.env.PI_OFFLINE = "1";
-  captureSearchCredentials(process.env);
-  scrubSensitiveEnvironment(process.env);
+  const { generalComputeApiKey } = prepareTuiRuntimeCredentials(profile, process.env);
 
   // Mutations flow only through the OS-sandboxed bash override. Pi's in-process
   // write/edit tools are intentionally excluded because a confirmation dialog
@@ -541,7 +541,22 @@ async function runTUI(options: CliOptions): Promise<void> {
     ...options.passthrough,
   ];
 
-  await runPi(args, { extensionFactories: [{ name: "lightningloop", factory: lightningLoopExtension }] });
+  const extensionOptions = generalComputeApiKey ? { generalComputeApiKey } : {};
+  await runPi(args, { extensionFactories: [{ name: "lightningloop", factory: createLightningLoopExtension(extensionOptions) }] });
+}
+
+/** Capture only bounded TUI credentials, register them for redaction, then scrub ambient env. */
+export function prepareTuiRuntimeCredentials(
+  profile: ProviderProfile,
+  environment: NodeJS.ProcessEnv,
+): { generalComputeApiKey?: string } {
+  const ambientGeneralComputeApiKey = environment.GENERALCOMPUTE_API_KEY?.trim();
+  if (ambientGeneralComputeApiKey) registerRuntimeCredential(ambientGeneralComputeApiKey);
+  captureSearchCredentials(environment);
+  scrubSensitiveEnvironment(environment);
+  return profile.preset === "generalcompute" && ambientGeneralComputeApiKey
+    ? { generalComputeApiKey: ambientGeneralComputeApiKey }
+    : {};
 }
 
 async function runAuth(options: CliOptions): Promise<void> {

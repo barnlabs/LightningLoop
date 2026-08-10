@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { resolveConfigValueUncached } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/resolve-config-value.js";
 import { parseProviderProfile, profileForPreset } from "../core/provider-profile.js";
 import { PiProviderAdapter } from "./model-adapter.js";
 
@@ -69,7 +70,7 @@ test("missing runtime catalog uses LightningLoop product language", async () => 
 });
 
 test("GeneralCompute accepts GENERALCOMPUTE_API_KEY without Pi ownership", async () => {
-  const credential = "gc-live-synthetic-generalcompute-key-112233";
+  const credential = "!gc-live-$NAME-generalcompute-key-112233";
   const profile = profileForPreset("generalcompute");
   assert.equal(profile.piProviderID, undefined);
   const previous = process.env.GENERALCOMPUTE_API_KEY;
@@ -89,7 +90,7 @@ test("GeneralCompute accepts GENERALCOMPUTE_API_KEY without Pi ownership", async
     } as unknown as Pick<ModelRuntime, "completeSimple" | "getModel" | "registerProvider">;
     const adapter = await PiProviderAdapter.create(profile, async () => runtime);
     assert.equal(adapter.supportsImages, false);
-    assert.equal(registeredKey, credential);
+    assert.equal(resolveConfigValueUncached(registeredKey ?? "", { NAME: "different-ambient-value" }), credential);
   } finally {
     if (previous === undefined) delete process.env.GENERALCOMPUTE_API_KEY;
     else process.env.GENERALCOMPUTE_API_KEY = previous;
@@ -97,7 +98,7 @@ test("GeneralCompute accepts GENERALCOMPUTE_API_KEY without Pi ownership", async
 });
 
 test("custom-provider credentials are redacted from successful model content", async () => {
-  const credential = "custom-credential-without-known-prefix-112233";
+  const credential = "!custom-$NAME-credential-112233";
   const profile = parseProviderProfile({
     schemaVersion: 1,
     id: "example-lab",
@@ -111,7 +112,9 @@ test("custom-provider credentials are redacted from successful model content", a
     maxOutputTokens: 4_096,
   });
   const runtime = {
-    registerProvider: (_providerID: string, options: { apiKey?: string }) => assert.equal(options.apiKey, credential),
+    registerProvider: (_providerID: string, options: { apiKey?: string }) => {
+      assert.equal(resolveConfigValueUncached(options.apiKey ?? "", { NAME: "different-ambient-value" }), credential);
+    },
     getModel: () => runtimeModel(profile),
     completeSimple: async () => ({
       stopReason: "stop",

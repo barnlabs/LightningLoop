@@ -25,12 +25,12 @@ The owner-local untracked `AGENTS.md` is excluded. It is not part of this packet
 - Base `HEAD` before delivery commit: `8d208e55cd40af046ba5052c326e67a2c3f25261`
 - Canonical target: public `barnlabs/LightningLoop`, default branch `main`
 - Delivery branch (authorized): `contrib/lightningloop-product-finish`
-- Safe-stage path count: see exact manifest (original product-finish set plus title/model UX paths)
+- Safe-stage path count: see exact 84-path manifest (original product-finish set plus title/model UX and TUI credential-boundary paths)
 - `AGENTS.md` remains excluded
 
 ## Exact safe-stage manifest
 
-The following paths are the complete proposed stage set (product-finish packet plus 2026-07-23 title/model UX). Reviewers must compare this block to fresh `git diff --name-only` plus `git ls-files --others --exclude-standard` and reject any difference other than intentional exclusion of `AGENTS.md`.
+The following paths are the complete proposed stage set (product-finish packet plus title/model UX, GeneralCompute, and the TUI credential-boundary repair). Reviewers must compare this block to fresh `git diff --name-only` plus `git ls-files --others --exclude-standard` and reject any difference other than intentional exclusion of `AGENTS.md` and the unrelated local `package-lock.json` working-tree edit. The tracked `package-lock.json` path remains in the branch manifest because the reviewed branch itself changes it.
 
 ```text
 .codex/environments/environment.toml
@@ -38,6 +38,7 @@ The following paths are the complete proposed stage set (product-finish packet p
 .github/ISSUE_TEMPLATE/bug_report.yml
 .github/ISSUE_TEMPLATE/feature_request.yml
 .github/pull_request_template.md
+.grok/workflows/add-generalcompute-provider.rhai
 .grok/workflows/finish-lightningloop.rhai
 CONTRIBUTING.md
 DESIGN.md
@@ -87,7 +88,11 @@ LightningLoopUITests/LightningLoopUITests.swift
 PRODUCTION_READINESS_CHECKLIST.md
 README.md
 RUNBOOK.md
+SECURITY.md
+checklist.md
 docs/AGENT_SETUP_AND_MAINTENANCE.md
+docs/ARCHITECTURE.md
+docs/AUTHENTICATION.md
 docs/BRAND.md
 docs/GITHUB_REVIEW_2026-07-20.md
 docs/MODEL_SELECTION.md
@@ -100,13 +105,17 @@ docs/UPDATES.md
 docs/UPDATE_UX_OPTIMIZATION.md
 docs/research/auto-title-and-provider-models-2026-07-23.md
 docs/research/cerebras-provider-2026-07-20.md
+docs/research/generalcompute-provider-2026-07-25.md
 docs/screenshots/lightningloop-current-blocked-history.png
 docs/screenshots/lightningloop-current-new-loop.png
 docs/screenshots/lightningloop-current-settings-model.png
 docs/screenshots/lightningloop-current-settings-update.png
 docs/screenshots/lightningloop-current-working.png
+package-lock.json
+package.json
 script/build_and_run.sh
 script/install_from_github.sh
+script/run-harness-tests.mjs
 script/tests/install_from_github_transaction_test.sh
 ```
 
@@ -167,7 +176,7 @@ No credentialed provider request was made. The repository does not claim indepen
 | `xcodebuild -project LightningLoop.xcodeproj -scheme LightningLoop -derivedDataPath .build/NativeTests CODE_SIGNING_ALLOWED=NO test` | PASS; **84** tests, 0 failures, `TEST SUCCEEDED` (includes 11 `SessionTitleTests` after title-race fixes; re-run 2026-07-23) |
 | `xcodebuild -project LightningLoop.xcodeproj -scheme LightningLoopUI -derivedDataPath .build/UIBuild CODE_SIGNING_ALLOWED=NO build-for-testing` | PASS; `TEST BUILD SUCCEEDED` (prior packet; UI journey compile not re-claimed as live a11y) |
 | `npm run build:harness && node --test dist/rpc/server.test.js dist/update/update-policy.test.js` | PASS; 24 tests, 24 pass, 0 fail, including both same-run concurrency probes and both query-bearing URL rejections |
-| `npm run verify:harness` | PASS; **207** tests, 207 pass, 0 fail (re-run 2026-07-23 delivery) |
+| `npm run verify:harness` | PASS; **211** tests, 211 pass, 0 fail (re-run 2026-08-10 delivery) |
 | `npm run verify:lock-integrity` | PASS; 166 package entries verified |
 | `npm audit --audit-level=low` and the `npm ci` inside build/run | PASS; 0 vulnerabilities |
 | `bash script/tests/install_from_github_transaction_test.sh` | PASS; canonical source, backup/commit/signature/smoke rollback, lock, race/link, process-baseline, and new-PID launch fixtures |
@@ -179,8 +188,9 @@ No credentialed provider request was made. The repository does not claim indepen
 | `node dist/cli/index.js update check` | PASS; `unconfigured`, automatic installation disabled, runtime pin `0.80.10`, overlay changed `NO` |
 | `shellcheck` on the changed build/install/transaction scripts | PASS; no findings |
 | `git diff --check` | PASS |
-| Exact safe-stage path count | **75** paths in the amended manifest (not the pre-title 68) |
-| Gitleaks over exact 75 safe-stage paths | PASS; 75 files / ~888 KB scanned; **0 findings** (2026-07-23 delivery; prior 68-file result superseded) |
+| Exact safe-stage path count | **84** paths in the amended manifest (not the pre-title 68) |
+| Harness verification | PASS; **211/211** local tests, including the active and inactive GeneralCompute TUI capture/register/scrub regressions |
+| Hosted checks | **NOT CLAIMED** for this unpushed head; hosted CI remains a post-push gate |
 
 The full command logs are local under `.build/final-*.log` and are intentionally excluded from staging.
 
@@ -226,13 +236,13 @@ Return exactly `PASS`, `REWORK`, or `BLOCKED`, then list only material findings 
 4. Can paused/failed/loading/setup/update UI strand the user, spin indefinitely, hide cancellation/recovery, or imply signed automatic updates?
 5. Can concurrent create or continue requests with the same run ID cross an await before exclusivity is established, invoke the factory twice, or leave a failed reservation stranded?
 6. Can either an update channel URL or signed artifact URL carry a query string, fragment, credentials, or a non-HTTPS scheme through validation?
-7. Does the exact **75-path** amended manifest exclude `AGENTS.md` and contain every product, test, documentation, and screenshot change needed for this packet (including session titles and model UX)?
+7. Does the exact **84-path** amended manifest exclude `AGENTS.md` and contain every product, test, documentation, and screenshot change needed for this packet (including session titles, model UX, and the TUI credential boundary)?
 8. Does the proposed post-review handoff use only fresh branch `contrib/lightningloop-product-finish` against canonical `barnlabs/LightningLoop`, with draft-PR/hosted-CI gates and no merge/release authority?
 
 ## Rollback and root-owned delivery proposal
 
 No production state exists to roll back. No install, runtime, managed overlay, provider account, Keychain value, release channel, or GitHub setting changed. Build products and logs are local ignored evidence. Before delivery, the current recoverable boundary is the dirty worktree itself; do not discard it or use destructive reset/checkout.
 
-After independent review passes, root may preserve the exact worktree by creating fresh branch `contrib/lightningloop-product-finish`, staging only the **75-path** amended safe-stage manifest, reviewing `git diff --cached --check` and the cached name list, committing once, and pushing exactly `HEAD:refs/heads/contrib/lightningloop-product-finish` to `https://github.com/barnlabs/LightningLoop.git` (do not use a legacy `baney75` remote label if it diverges). The follow-up may be a **draft** PR from that branch to `main`, followed by hosted checks. A failed post-commit review is recoverable with a normal revert commit on the fresh branch.
+After independent review passes, root may preserve the exact worktree by creating fresh branch `contrib/lightningloop-product-finish`, staging only the **84-path** amended safe-stage manifest, reviewing `git diff --cached --check` and the cached name list, committing once, and pushing exactly `HEAD:refs/heads/contrib/lightningloop-product-finish` to `https://github.com/barnlabs/LightningLoop.git` (do not use a legacy `baney75` remote label if it diverges). The follow-up may be a **draft** PR from that branch to `main`, followed by hosted checks. This unpushed head makes no hosted-check claim. A failed post-commit review is recoverable with a normal revert commit on the fresh branch.
 
 No reuse of `codex/lightningloop`; no protected-branch push; no force-push, merge, tag, release, signing, notarization, settings/visibility/collaborator mutation, secret action, or production publication.
