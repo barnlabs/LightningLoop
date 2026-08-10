@@ -1,8 +1,8 @@
-# LightningLoop product-finish review packet — 2026-07-21 (amended 2026-07-23)
+# LightningLoop product-finish review packet — 2026-07-21 (amended 2026-08-10)
 
 ## Disposition and scope
 
-This is the final local packet for the LightningLoop product refresh plus 2026-07-23 session-title and provider-model UX completion. Local deterministic gates are re-proven in this delivery pass. On 2026-07-23 the repository owner (Donovan) authorized finish delivery: create `contrib/lightningloop-product-finish`, stage only the safe manifest, commit, push to `barnlabs/LightningLoop`, and open a **draft** PR to `main`. Still forbidden without separate explicit approval: merge, tag, signing, notarization, release, visibility/settings mutation, or force-push.
+This packet preserves the reviewed LightningLoop product refresh plus 2026-07-23 session-title and provider-model UX evidence, and is amended for the 2026-08-10 three-file dependency follow-up. The original 84-path product-finish set is already committed on `contrib/lightningloop-product-finish` at `7b26988f43f55699fe921eaa643cda8906296135`; it is historical evidence, not the current stage set. Local deterministic gates are re-proven for the dependency follow-up. The current authorized delivery is to stage exactly the three paths listed below, commit on top of the existing branch head, and push the new head to the existing draft PR without force. Still forbidden without separate explicit approval: merge, tag, signing, notarization, release, visibility/settings mutation, or force-push.
 
 The packet covers:
 
@@ -18,19 +18,31 @@ The packet covers:
 
 The owner-local untracked `AGENTS.md` is excluded. It is not part of this packet and must not be staged.
 
-## Frozen repository identity
+## Repository identity and delivery state
 
-- Checkout: `/Users/baney/Documents/Loop`
-- Pre-delivery branch: `codex/lightningloop` (do not push this branch as the delivery head)
-- Base `HEAD` before delivery commit: `8d208e55cd40af046ba5052c326e67a2c3f25261`
+- Primary checkout: `/Users/baney/Documents/Loop` (owner-local dirt remains untouched)
+- Isolated dependency-follow-up checkout: `/private/tmp/lightningloop-pr6-audit.kI85yw`
+- Historical pre-delivery branch: `codex/lightningloop` (not a delivery head)
+- Historical product-finish base: `8d208e55cd40af046ba5052c326e67a2c3f25261`
 - Canonical target: public `barnlabs/LightningLoop`, default branch `main`
-- Delivery branch (authorized): `contrib/lightningloop-product-finish`
-- Safe-stage path count: see exact 84-path manifest (original product-finish set plus title/model UX and TUI credential-boundary paths)
+- Existing delivery branch and current pushed base: `contrib/lightningloop-product-finish` at `7b26988f43f55699fe921eaa643cda8906296135`
+- Current dependency-follow-up stage count: exactly 3 paths
+- Historical committed product-finish path count: 84 paths
 - `AGENTS.md` remains excluded
 
-## Exact safe-stage manifest
+## Current dependency-follow-up stage set
 
-The following paths are the complete proposed stage set (product-finish packet plus title/model UX, GeneralCompute, and the TUI credential-boundary repair). Reviewers must compare this block to fresh `git diff --name-only` plus `git ls-files --others --exclude-standard` and reject any difference other than intentional exclusion of `AGENTS.md` and the unrelated local `package-lock.json` working-tree edit. The tracked `package-lock.json` path remains in the branch manifest because the reviewed branch itself changes it.
+```text
+docs/REVIEW_PACKET_2026-07-21_FINISH.md
+package-lock.json
+package.json
+```
+
+Reviewers must compare this three-path block to the current isolated worktree and cached diff before delivery. No other path belongs in the follow-up commit.
+
+## Historical 84-path product-finish manifest
+
+The following paths are the complete historical stage set already committed in `7b26988f43f55699fe921eaa643cda8906296135` (product-finish packet plus title/model UX, GeneralCompute, and the TUI credential-boundary repair). This block remains as provenance for the original product-finish commit; it is not an instruction to restage those paths for the current follow-up.
 
 ```text
 .codex/environments/environment.toml
@@ -188,9 +200,10 @@ No credentialed provider request was made. The repository does not claim indepen
 | `node dist/cli/index.js update check` | PASS; `unconfigured`, automatic installation disabled, runtime pin `0.80.10`, overlay changed `NO` |
 | `shellcheck` on the changed build/install/transaction scripts | PASS; no findings |
 | `git diff --check` | PASS |
-| Exact safe-stage path count | **84** paths in the amended manifest (not the pre-title 68) |
+| Historical product-finish path count | **84** paths in committed head `7b26988` (not the pre-title 68) |
+| Current dependency-follow-up path count | **3** paths: this packet, `package.json`, and `package-lock.json` |
 | Harness verification | PASS; **211/211** local tests, including the active and inactive GeneralCompute TUI capture/register/scrub regressions |
-| Hosted checks | **NOT CLAIMED** for this unpushed head; hosted CI remains a post-push gate |
+| Hosted checks | **NOT CLAIMED** in this local packet; hosted CI remains a post-push gate |
 
 The full command logs are local under `.build/final-*.log` and are intentionally excluded from staging.
 
@@ -236,13 +249,13 @@ Return exactly `PASS`, `REWORK`, or `BLOCKED`, then list only material findings 
 4. Can paused/failed/loading/setup/update UI strand the user, spin indefinitely, hide cancellation/recovery, or imply signed automatic updates?
 5. Can concurrent create or continue requests with the same run ID cross an await before exclusivity is established, invoke the factory twice, or leave a failed reservation stranded?
 6. Can either an update channel URL or signed artifact URL carry a query string, fragment, credentials, or a non-HTTPS scheme through validation?
-7. Does the exact **84-path** amended manifest exclude `AGENTS.md` and contain every product, test, documentation, and screenshot change needed for this packet (including session titles, model UX, and the TUI credential boundary)?
-8. Does the proposed post-review handoff use only fresh branch `contrib/lightningloop-product-finish` against canonical `barnlabs/LightningLoop`, with draft-PR/hosted-CI gates and no merge/release authority?
+7. Does the current follow-up contain exactly this packet, `package.json`, and `package-lock.json`, while leaving the historical 84-path manifest as provenance only and excluding owner-local `AGENTS.md` and unrelated primary-worktree dirt?
+8. Does the post-review handoff append one normal commit to the existing `contrib/lightningloop-product-finish` branch, push without force to canonical `barnlabs/LightningLoop`, and retain draft-PR/hosted-CI gates with no merge/release authority?
 
 ## Rollback and root-owned delivery proposal
 
 No production state exists to roll back. No install, runtime, managed overlay, provider account, Keychain value, release channel, or GitHub setting changed. Build products and logs are local ignored evidence. Before delivery, the current recoverable boundary is the dirty worktree itself; do not discard it or use destructive reset/checkout.
 
-After independent review passes, root may preserve the exact worktree by creating fresh branch `contrib/lightningloop-product-finish`, staging only the **84-path** amended safe-stage manifest, reviewing `git diff --cached --check` and the cached name list, committing once, and pushing exactly `HEAD:refs/heads/contrib/lightningloop-product-finish` to `https://github.com/barnlabs/LightningLoop.git` (do not use a legacy `baney75` remote label if it diverges). The follow-up may be a **draft** PR from that branch to `main`, followed by hosted checks. This unpushed head makes no hosted-check claim. A failed post-commit review is recoverable with a normal revert commit on the fresh branch.
+After independent review passes, root may stage exactly `docs/REVIEW_PACKET_2026-07-21_FINISH.md`, `package.json`, and `package-lock.json` in the isolated checkout, review `git diff --cached --check`, the cached name list, and the cached diff, then create one normal follow-up commit on top of `7b26988f43f55699fe921eaa643cda8906296135`. Push exactly `HEAD:refs/heads/contrib/lightningloop-product-finish` to `https://github.com/barnlabs/LightningLoop.git` without force. The existing draft PR then receives fresh hosted checks. This local packet does not claim those post-push results. A failed post-commit review is recoverable with a normal revert commit on the existing delivery branch.
 
 No reuse of `codex/lightningloop`; no protected-branch push; no force-push, merge, tag, release, signing, notarization, settings/visibility/collaborator mutation, secret action, or production publication.
