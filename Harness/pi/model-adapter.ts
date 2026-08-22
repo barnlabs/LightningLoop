@@ -29,18 +29,32 @@ function readMacCredential(profile: ProviderProfile): string | undefined {
   return credential || undefined;
 }
 
-/** LightningLoop-managed API-key credentials (never Pi /login). Env is checked for GeneralCompute. */
-export function readLightningLoopManagedCredential(profile: ProviderProfile): string | undefined {
+/**
+ * Environment API key for a LightningLoop-managed API-key preset. GeneralCompute
+ * reads GENERALCOMPUTE_API_KEY; OpenRouter reads OPENROUTER_API_KEY (falling back
+ * to OPENROUTER_KEY). Returns undefined for every other preset.
+ */
+export function providerEnvApiKey(profile: ProviderProfile): string | undefined {
   if (profile.preset === "generalcompute") {
-    const fromEnv = process.env.GENERALCOMPUTE_API_KEY?.trim();
-    if (fromEnv) return fromEnv;
+    return process.env.GENERALCOMPUTE_API_KEY?.trim() || undefined;
   }
-  return readMacCredential(profile);
+  if (profile.preset === "openrouter") {
+    return process.env.OPENROUTER_API_KEY?.trim() || process.env.OPENROUTER_KEY?.trim() || undefined;
+  }
+  return undefined;
+}
+
+/** LightningLoop-managed API-key credentials (never Pi /login). Env is checked for GeneralCompute and OpenRouter. */
+export function readLightningLoopManagedCredential(profile: ProviderProfile): string | undefined {
+  return providerEnvApiKey(profile) ?? readMacCredential(profile);
 }
 
 function missingManagedCredentialMessage(profile: ProviderProfile): string {
   if (profile.preset === "generalcompute") {
     return "GeneralCompute requires GENERALCOMPUTE_API_KEY or a LightningLoop Keychain credential (Settings on macOS). It is not managed by runtime /login.";
+  }
+  if (profile.preset === "openrouter") {
+    return "OpenRouter requires OPENROUTER_API_KEY (or OPENROUTER_KEY) or a LightningLoop Keychain credential (Settings on macOS). It is not managed by runtime /login.";
   }
   return "LightningLoop-managed API-key providers require a credential from the macOS Settings Keychain (Custom OpenAI-compatible). GeneralCompute also accepts GENERALCOMPUTE_API_KEY.";
 }

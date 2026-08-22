@@ -67,7 +67,7 @@ test("reviewed presets can be selected without storing credentials", () => {
   const directory = mkdtempSync(join(tmpdir(), "lightningloop-provider-select-"));
   const config = join(directory, "provider.json");
   try {
-    assert.deepEqual(selectableProviderPresets, ["cerebras", "groq", "fireworks", "generalcompute", "xai", "openai-codex", "anthropic"]);
+    assert.deepEqual(selectableProviderPresets, ["cerebras", "groq", "fireworks", "generalcompute", "openrouter", "xai", "openai-codex", "anthropic"]);
     const selected = saveProviderPreset("cerebras", config);
     assert.equal(selected.preset, "cerebras");
     assert.equal(loadProviderProfile(config).modelID, "gemma-4-31b");
@@ -109,6 +109,41 @@ test("GeneralCompute is a LightningLoop-managed fixed API-key preset without Pi 
   const roundTrip = parseProviderProfile(profile);
   assert.equal(roundTrip.piProviderID, undefined);
   assert.equal(roundTrip.baseURL, "https://api.generalcompute.com/v1");
+});
+
+test("OpenRouter is a LightningLoop-managed OpenAI-compatible preset with a free default model", () => {
+  const profile = profileForPreset("openrouter");
+  assert.equal(profile.preset, "openrouter");
+  assert.equal(profile.id, "openrouter");
+  assert.equal(profile.displayName, "OpenRouter");
+  assert.equal(profile.baseURL, "https://openrouter.ai/api/v1");
+  assert.equal(profile.piProviderID, undefined);
+  assert.match(profile.modelID, /:free$/u);
+  assert.equal(providerCredentialService(profile), "com.barnlabs.LightningLoop.provider.openrouter.apiKey");
+  assert.ok(selectableProviderPresets.includes("openrouter"));
+  const roundTrip = parseProviderProfile(profile);
+  assert.equal(roundTrip.baseURL, "https://openrouter.ai/api/v1");
+  assert.equal(roundTrip.piProviderID, undefined);
+  assert.throws(() => parseProviderProfile({ ...profile, baseURL: "https://example.com/v1" }), /verified API base URL/);
+});
+
+test("provider select openrouter can persist a chosen model and rejects it for runtime-managed presets", () => {
+  const directory = mkdtempSync(join(tmpdir(), "lightningloop-openrouter-select-"));
+  const config = join(directory, "provider.json");
+  try {
+    const selected = saveProviderPreset("openrouter", config, { modelID: "meta/llama-guard-4:free" });
+    assert.equal(selected.preset, "openrouter");
+    assert.equal(selected.modelID, "meta/llama-guard-4:free");
+    assert.equal(loadProviderProfile(config).modelID, "meta/llama-guard-4:free");
+    const encoded = readFileSync(config, "utf8");
+    assert.doesNotMatch(encoded, /(?:api.?key|authorization|bearer\s|(?:csk|sk)-)/iu);
+    // A model override is meaningless for a runtime-managed (Pi) preset.
+    assert.throws(() => saveProviderPreset("cerebras", config, { modelID: "gemma-4-31b" }), /runtime-managed provider/);
+    // Unsafe model IDs are rejected.
+    assert.throws(() => saveProviderPreset("openrouter", config, { modelID: "bad\nid" }), /1-200 safe characters/);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
 });
 
 test("official login providers map directly onto Pi's built-in provider IDs", () => {

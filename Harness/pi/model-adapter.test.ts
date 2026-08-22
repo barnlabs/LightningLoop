@@ -97,6 +97,39 @@ test("GeneralCompute accepts GENERALCOMPUTE_API_KEY without Pi ownership", async
   }
 });
 
+test("OpenRouter reads OPENROUTER_API_KEY and falls back to OPENROUTER_KEY", async () => {
+  const profile = profileForPreset("openrouter");
+  assert.equal(profile.piProviderID, undefined);
+  const previousApi = process.env.OPENROUTER_API_KEY;
+  const previousKey = process.env.OPENROUTER_KEY;
+  const makeRuntime = (expectedKey: string) => ({
+    registerProvider: (providerID: string, options: { apiKey?: string }) => {
+      assert.equal(providerID, "lightningloop-openrouter");
+      assert.equal(resolveConfigValueUncached(options.apiKey ?? "", {}), expectedKey);
+    },
+    getModel: (providerID: string, modelID: string) => {
+      assert.equal(providerID, "lightningloop-openrouter");
+      assert.equal(modelID, profile.modelID);
+      return runtimeModel(profile);
+    },
+    completeSimple: async () => assert.fail("not exercised"),
+  } as unknown as Pick<ModelRuntime, "completeSimple" | "getModel" | "registerProvider">);
+  try {
+    delete process.env.OPENROUTER_KEY;
+    process.env.OPENROUTER_API_KEY = "or-primary-key-1234567890";
+    await PiProviderAdapter.create(profile, async () => makeRuntime("or-primary-key-1234567890"));
+
+    delete process.env.OPENROUTER_API_KEY;
+    process.env.OPENROUTER_KEY = "or-fallback-key-0987654321";
+    await PiProviderAdapter.create(profile, async () => makeRuntime("or-fallback-key-0987654321"));
+  } finally {
+    if (previousApi === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = previousApi;
+    if (previousKey === undefined) delete process.env.OPENROUTER_KEY;
+    else process.env.OPENROUTER_KEY = previousKey;
+  }
+});
+
 test("custom-provider credentials are redacted from successful model content", async () => {
   const credential = "!custom-$NAME-credential-112233";
   const profile = parseProviderProfile({

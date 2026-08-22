@@ -22,12 +22,14 @@ import {
   isProviderSelectionRequired,
   loadProviderProfile,
   profileForPreset,
+  providerConfigPath,
   providerCredentialService,
   saveProviderPreset,
   selectableProviderPresets,
   type SelectableProviderPreset,
   type ProviderProfile,
 } from "../core/provider-profile.js";
+import { fetchOpenRouterModels, selectFreeModels } from "../core/openrouter.js";
 import { validateImagePaths } from "../core/image-input.js";
 import { loadEligibleMemoryContext } from "../core/memory-store.js";
 import { WorkspaceArtifactExecutor } from "../artifacts/workspace-artifact-executor.js";
@@ -74,8 +76,10 @@ interface CliOptions {
   skillArgument?: string;
   approveSkillInstall: boolean;
   approveSkillEnableHash?: string;
-  providerAction?: "list" | "select";
+  providerAction?: "list" | "select" | "models";
   providerArgument?: SelectableProviderPreset;
+  providerModel?: string;
+  providerFreeOnly: boolean;
   doctorRuntimeOnly: boolean;
 }
 
@@ -88,7 +92,8 @@ Usage:
   llp | lloop | lightningloop [tui] [--workspace PATH] [--allow-execution] [-- RUNTIME_OPTIONS...]
   lightningloop auth
   lightningloop provider list
-  lightningloop provider select <cerebras|groq|fireworks|generalcompute|xai|openai-codex|anthropic>
+  lightningloop provider select <cerebras|groq|fireworks|generalcompute|openrouter|xai|openai-codex|anthropic> [--model ID]
+  lightningloop provider models [--free]
   lightningloop loop [GOAL] [--cycles 1-8] [--image PATH] [--research exa|brave|firecrawl]
     [--workspace EMPTY_DIR --approve-artifact-writes [--approve-verification-commands]]
   lightningloop search <exa|brave|firecrawl> QUERY [--limit 1-20]
@@ -145,6 +150,8 @@ export function parse(args: string[]): CliOptions {
   let approveSkillEnableHash: string | undefined;
   let providerAction: CliOptions["providerAction"];
   let providerArgument: SelectableProviderPreset | undefined;
+  let providerModel: string | undefined;
+  let providerFreeOnly = false;
   let doctorRuntimeOnly = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -171,6 +178,13 @@ export function parse(args: string[]): CliOptions {
     else if (arg === "--approve-restore") approveRestore = true;
     else if (arg === "--approve-skill-install") approveSkillInstall = true;
     else if (arg === "--runtime-only") doctorRuntimeOnly = true;
+    else if (arg === "--free") providerFreeOnly = true;
+    else if (arg === "--model") {
+      const value = args[index + 1];
+      if (!value || value.length > 200 || /[\r\n\0]/u.test(value)) throw new Error("--model requires a bounded model ID.");
+      providerModel = value;
+      index += 1;
+    }
     else if (arg === "--approve-skill-enable") {
       const value = args[index + 1];
       if (!value || !/^[a-f0-9]{64}$/u.test(value)) throw new Error("--approve-skill-enable requires the exact 64-character reviewed SHA-256 from skills list.");
@@ -267,7 +281,7 @@ export function parse(args: string[]): CliOptions {
       } else throw new Error("Skill command contains too many positional arguments.");
     } else if (command === "provider" && !arg.startsWith("--")) {
       if (!providerAction) {
-        if (arg !== "list" && arg !== "select") throw new Error("Provider action must be list or select.");
+        if (arg !== "list" && arg !== "select" && arg !== "models") throw new Error("Provider action must be list, select, or models.");
         providerAction = arg;
       } else if (providerAction === "select" && !providerArgument) {
         if (!selectableProviderPresets.includes(arg as SelectableProviderPreset)) {
@@ -322,6 +336,8 @@ export function parse(args: string[]): CliOptions {
     ...(approveSkillEnableHash ? { approveSkillEnableHash } : {}),
     ...(providerAction ? { providerAction } : {}),
     ...(providerArgument ? { providerArgument } : {}),
+    ...(providerModel ? { providerModel } : {}),
+    providerFreeOnly,
     doctorRuntimeOnly,
   };
 }
@@ -447,8 +463,11 @@ export async function doctor(runtimeOnly = false): Promise<number> {
   const selectionRequired = isProviderSelectionRequired(profile);
   const piManaged = !selectionRequired && Boolean(profile.piProviderID);
   const keychainCredential = !selectionRequired && !piManaged && process.platform === "darwin" && keychainConfigured(providerCredentialService(profile));
-  const generalComputeEnv = !selectionRequired && profile.preset === "generalcompute" && Boolean(process.env.GENERALCOMPUTE_API_KEY?.trim());
-  const managedApiKeyReady = keychainCredential || generalComputeEnv;
+  const managedEnvKey = !selectionRequired && !piManaged && (
+    (profile.preset === "generalcompute" && Boolean(process.env.GENERALCOMPUTE_API_KEY?.trim()))
+    || (profile.preset === "openrouter" && Boolean(process.env.OPENROUTER_API_KEY?.trim() || process.env.OPENROUTER_KEY?.trim()))
+  );
+  const managedApiKeyReady = keychainCredential || managedEnvKey;
   process.stdout.write("LightningLoop doctor\n");
   process.stdout.write(`  Node >=22.19: ${nodeOK ? "PASS" : "FAIL"} (${process.version})\n`);
   process.stdout.write(selectionRequired
@@ -468,14 +487,22 @@ export async function doctor(runtimeOnly = false): Promise<number> {
   return runtimeOnly ? (nodeOK ? 0 : 1) : (nodeOK && !selectionRequired && (piManaged || managedApiKeyReady) ? 0 : 1);
 }
 
-function runProviderCommand(options: CliOptions): void {
+async function runProviderCommand(options: CliOptions): Promise<void> {
   const action = options.providerAction ?? "list";
+  if (action === "models") {
+    await runProviderModels(options);
+    return;
+  }
   if (action === "select") {
     if (!options.providerArgument) throw new Error("Provider select requires a reviewed preset.");
-    const selected = saveProviderPreset(options.providerArgument);
+    const override = options.providerModel ? { modelID: options.providerModel } : undefined;
+    const selected = saveProviderPreset(options.providerArgument, providerConfigPath(), override);
     process.stdout.write(`Selected ${terminalSafe(selected.displayName)} · ${terminalSafe(selected.modelName)}\n`);
     if (selected.preset === "generalcompute") {
-      process.stdout.write("Credential: LightningLoop-managed API key (Settings Keychain on macOS, or GENERALCOMPUTE_API_KEY). Not Pi /login.\n");
+      process.stdout.write("Credential: LightningLoop-managed API key (Settings Keychain on macOS, or GENERALCOMPUTE_API_KEY). Not runtime /login.\n");
+    } else if (selected.preset === "openrouter") {
+      process.stdout.write("Credential: LightningLoop-managed API key (Settings Keychain on macOS, or OPENROUTER_API_KEY / OPENROUTER_KEY). Not runtime /login.\n");
+      process.stdout.write("Discover free models with: lightningloop provider models --free\n");
     } else {
       process.stdout.write("Credential stored by LightningLoop: NO. Use 'lightningloop auth' to start provider sign-in.\n");
     }
@@ -487,6 +514,21 @@ function runProviderCommand(options: CliOptions): void {
     process.stdout.write(`  ${preset} · ${terminalSafe(profile.displayName)} · ${terminalSafe(profile.modelName)}\n`);
   }
   process.stdout.write("Select with: lightningloop provider select PRESET\n");
+}
+
+/** Credential-free live discovery of the OpenRouter catalog, optionally free models only. */
+async function runProviderModels(options: CliOptions): Promise<void> {
+  const models = await fetchOpenRouterModels();
+  const shown = options.providerFreeOnly
+    ? selectFreeModels(models)
+    : models.slice().sort((a, b) => a.id.localeCompare(b.id));
+  const scope = options.providerFreeOnly ? "free" : "all";
+  process.stdout.write(`OpenRouter models · ${scope} · ${shown.length} of ${models.length}\n`);
+  for (const model of shown) {
+    const price = model.free ? "free" : `in ${model.promptPrice} · out ${model.completionPrice} (USD/token)`;
+    process.stdout.write(`  ${terminalSafe(model.id)} · ${terminalSafe(model.name)} · ctx ${model.contextWindow} · ${price}\n`);
+  }
+  process.stdout.write("Select one with: lightningloop provider select openrouter --model <id>\n");
 }
 
 async function runSearch(options: CliOptions): Promise<void> {
@@ -517,7 +559,7 @@ async function runTUI(options: CliOptions): Promise<void> {
   // Pi otherwise downloads the latest fd/rg release at startup without a
   // repository-pinned checksum. LightningLoop keeps runtime acquisition offline.
   process.env.PI_OFFLINE = "1";
-  const { generalComputeApiKey } = prepareTuiRuntimeCredentials(profile, process.env);
+  const { generalComputeApiKey, openRouterApiKey } = prepareTuiRuntimeCredentials(profile, process.env);
 
   // Mutations flow only through the OS-sandboxed bash override. Pi's in-process
   // write/edit tools are intentionally excluded because a confirmation dialog
@@ -541,7 +583,10 @@ async function runTUI(options: CliOptions): Promise<void> {
     ...options.passthrough,
   ];
 
-  const extensionOptions = generalComputeApiKey ? { generalComputeApiKey } : {};
+  const extensionOptions = {
+    ...(generalComputeApiKey ? { generalComputeApiKey } : {}),
+    ...(openRouterApiKey ? { openRouterApiKey } : {}),
+  };
   await runPi(args, { extensionFactories: [{ name: "lightningloop", factory: createLightningLoopExtension(extensionOptions) }] });
 }
 
@@ -549,14 +594,21 @@ async function runTUI(options: CliOptions): Promise<void> {
 export function prepareTuiRuntimeCredentials(
   profile: ProviderProfile,
   environment: NodeJS.ProcessEnv,
-): { generalComputeApiKey?: string } {
+): { generalComputeApiKey?: string; openRouterApiKey?: string } {
   const ambientGeneralComputeApiKey = environment.GENERALCOMPUTE_API_KEY?.trim();
+  const ambientOpenRouterApiKey = environment.OPENROUTER_API_KEY?.trim() || environment.OPENROUTER_KEY?.trim();
   if (ambientGeneralComputeApiKey) registerRuntimeCredential(ambientGeneralComputeApiKey);
+  if (ambientOpenRouterApiKey) registerRuntimeCredential(ambientOpenRouterApiKey);
   captureSearchCredentials(environment);
   scrubSensitiveEnvironment(environment);
-  return profile.preset === "generalcompute" && ambientGeneralComputeApiKey
-    ? { generalComputeApiKey: ambientGeneralComputeApiKey }
-    : {};
+  // The shared scrubber matches *_API_KEY, but the OPENROUTER_KEY alias does not
+  // match its pattern. Delete it explicitly so no credential reaches the child
+  // tool environment.
+  delete environment.OPENROUTER_KEY;
+  return {
+    ...(profile.preset === "generalcompute" && ambientGeneralComputeApiKey ? { generalComputeApiKey: ambientGeneralComputeApiKey } : {}),
+    ...(profile.preset === "openrouter" && ambientOpenRouterApiKey ? { openRouterApiKey: ambientOpenRouterApiKey } : {}),
+  };
 }
 
 async function runAuth(options: CliOptions): Promise<void> {
@@ -685,7 +737,7 @@ async function entry(): Promise<void> {
     return;
   }
   if (options.command === "provider") {
-    runProviderCommand(options);
+    await runProviderCommand(options);
     return;
   }
   if (options.command === "auth") {

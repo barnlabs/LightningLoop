@@ -29,9 +29,16 @@ test("help remains a noninteractive command", () => {
 test("provider and install-doctor commands parse as bounded first-run operations", () => {
   assert.equal(parse(["provider", "list"]).providerAction, "list");
   assert.equal(parse(["provider", "select", "cerebras"]).providerArgument, "cerebras");
+  assert.equal(parse(["provider", "select", "openrouter"]).providerArgument, "openrouter");
+  assert.equal(parse(["provider", "models", "--free"]).providerAction, "models");
+  assert.equal(parse(["provider", "models", "--free"]).providerFreeOnly, true);
+  assert.equal(parse(["provider", "models"]).providerFreeOnly, false);
+  assert.equal(parse(["provider", "select", "openrouter", "--model", "vendor/model-1:free"]).providerModel, "vendor/model-1:free");
   assert.equal(parse(["doctor", "--runtime-only"]).doctorRuntimeOnly, true);
   assert.throws(() => parse(["provider", "select", "custom"]), /must be one of/);
   assert.throws(() => parse(["provider", "list", "cerebras"]), /too many/);
+  assert.throws(() => parse(["provider", "action-x"]), /list, select, or models/);
+  assert.throws(() => parse(["provider", "select", "openrouter", "--model", "bad\nid"]), /bounded model ID/);
   assert.throws(() => parse(["tui", "--runtime-only"]), /valid only with doctor/);
 });
 
@@ -162,6 +169,32 @@ test("clean cross-platform data flow requires selection, lists presets, and stor
 
     const selectedDoctor = spawnSync(process.execPath, [cli, "doctor"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(selectedDoctor.status, 0, selectedDoctor.stderr);
+  } finally {
+    await rm(dataDirectory, { recursive: true, force: true });
+  }
+});
+
+test("OpenRouter is listed and selectable with a chosen model without a runtime login", async () => {
+  const dataDirectory = await mkdtemp(join(tmpdir(), "lightningloop-cli-openrouter-"));
+  const cli = resolve(repositoryRoot, "dist/cli/index.js");
+  const env: NodeJS.ProcessEnv = { ...process.env, LIGHTNINGLOOP_DATA_DIR: dataDirectory };
+  delete env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+  try {
+    const list = spawnSync(process.execPath, [cli, "provider", "list"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.equal(list.status, 0, list.stderr);
+    assert.match(list.stdout, /openrouter · OpenRouter/u);
+
+    const select = spawnSync(process.execPath, [cli, "provider", "select", "openrouter", "--model", "vendor/model-1:free"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.equal(select.status, 0, select.stderr);
+    assert.match(select.stdout, /OPENROUTER_API_KEY/u);
+    assert.match(select.stdout, /provider models --free/u);
+
+    const encoded = await readFile(join(dataDirectory, "provider.json"), "utf8");
+    const parsed = JSON.parse(encoded) as { preset: string; modelID: string; piProviderID?: string };
+    assert.equal(parsed.preset, "openrouter");
+    assert.equal(parsed.modelID, "vendor/model-1:free");
+    assert.equal(parsed.piProviderID, undefined);
+    assert.doesNotMatch(encoded, /(?:api.?key|authorization|bearer\s|(?:csk|sk)-)/iu);
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
   }

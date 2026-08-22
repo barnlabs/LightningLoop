@@ -42,6 +42,8 @@ function keychainCommand(services: string[]): string {
 export interface LightningLoopExtensionOptions {
   /** Captured before TUI environment scrubbing; never read from ambient env here. */
   generalComputeApiKey?: string;
+  /** OpenRouter API key captured before TUI environment scrubbing. */
+  openRouterApiKey?: string;
 }
 
 export function createLightningLoopExtension(options: LightningLoopExtensionOptions = {}): ExtensionFactory {
@@ -73,25 +75,30 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
   });
 
   if (!profile.piProviderID) {
-    const isGeneralCompute = profile.preset === "generalcompute";
-    const generalComputeEnv = isGeneralCompute ? options.generalComputeApiKey?.trim() : undefined;
+    const envApiKey = profile.preset === "generalcompute"
+      ? options.generalComputeApiKey?.trim()
+      : profile.preset === "openrouter"
+        ? options.openRouterApiKey?.trim()
+        : undefined;
     if (process.platform !== "darwin") {
-      if (!isGeneralCompute || !generalComputeEnv) {
+      if (!envApiKey) {
         throw new Error(
-          isGeneralCompute
+          profile.preset === "generalcompute"
             ? "GeneralCompute on non-macOS requires GENERALCOMPUTE_API_KEY. It is not managed by runtime /login."
-            : "Custom provider Keychain profiles are macOS-only. Configure GeneralCompute with GENERALCOMPUTE_API_KEY or a runtime-managed built-in provider for cross-platform use.",
+            : profile.preset === "openrouter"
+              ? "OpenRouter on non-macOS requires OPENROUTER_API_KEY (or OPENROUTER_KEY). It is not managed by runtime /login."
+              : "Custom provider Keychain profiles are macOS-only. Configure GeneralCompute or OpenRouter with an API key environment variable, or a runtime-managed built-in provider for cross-platform use.",
         );
       }
     }
     // An explicitly captured TUI env key is process-local; otherwise macOS uses Keychain.
-    const apiKey = generalComputeEnv ?? (process.platform === "darwin"
+    const apiKey = envApiKey ?? (process.platform === "darwin"
       ? keychainCommand([providerCredentialService(profile)])
-      : generalComputeEnv!);
+      : envApiKey!);
     pi.registerProvider(providerID, {
       name: `LightningLoop / ${profile.displayName}`,
       baseUrl: profile.baseURL,
-      apiKey: generalComputeEnv ? encodePiApiKey(generalComputeEnv) : apiKey,
+      apiKey: envApiKey ? encodePiApiKey(envApiKey) : apiKey,
       api: "openai-completions",
       authHeader: true,
       headers: providerHeaders(profile),
@@ -133,7 +140,9 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
             ? "Provider-neutral · authentication and model catalog managed by the LightningLoop runtime"
             : profile.preset === "generalcompute"
               ? "GeneralCompute · LightningLoop-managed fixed provider · Keychain or GENERALCOMPUTE_API_KEY"
-              : profile.preset === "selection-required"
+              : profile.preset === "openrouter"
+                ? "OpenRouter · LightningLoop-managed · Keychain or OPENROUTER_API_KEY · free models via provider models --free"
+                : profile.preset === "selection-required"
                 ? "Provider selection required · run lightningloop provider select"
                 : "Custom provider · credential stays in macOS Keychain");
           return [

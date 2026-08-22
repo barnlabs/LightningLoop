@@ -14,7 +14,16 @@ export const PROVIDER_CONFIG_VERSION = 1 as const;
 export const CEREBRAS_GEMMA_4_31B_ID = "gemma-4-31b";
 export const CEREBRAS_GEMMA_4_31B_NAME = "Gemma 4 31B";
 
-export type ProviderPreset = "cerebras" | "groq" | "fireworks" | "generalcompute" | "xai" | "openai-codex" | "anthropic" | "custom" | "selection-required";
+/**
+ * OpenRouter's model catalog is discovered live (see core/openrouter.ts) and its
+ * free models change over time. This is only a valid-format starting default;
+ * users pick a current free model with `provider models --free` and
+ * `provider select openrouter --model <id>`.
+ */
+export const OPENROUTER_DEFAULT_FREE_MODEL_ID = "deepseek/deepseek-chat-v3-0324:free";
+export const OPENROUTER_DEFAULT_FREE_MODEL_NAME = "DeepSeek V3 (free)";
+
+export type ProviderPreset = "cerebras" | "groq" | "fireworks" | "generalcompute" | "openrouter" | "xai" | "openai-codex" | "anthropic" | "custom" | "selection-required";
 
 export interface ProviderProfile {
   schemaVersion: typeof PROVIDER_CONFIG_VERSION;
@@ -71,6 +80,13 @@ const presets: Record<Exclude<ProviderPreset, "custom" | "selection-required">, 
     displayName: "GeneralCompute",
     baseURL: "https://api.generalcompute.com/v1",
   },
+  openrouter: {
+    schemaVersion: PROVIDER_CONFIG_VERSION,
+    id: "openrouter",
+    preset: "openrouter",
+    displayName: "OpenRouter",
+    baseURL: "https://openrouter.ai/api/v1",
+  },
   xai: {
     schemaVersion: PROVIDER_CONFIG_VERSION,
     id: "xai",
@@ -94,7 +110,10 @@ const presets: Record<Exclude<ProviderPreset, "custom" | "selection-required">, 
   },
 };
 
-export const selectableProviderPresets = ["cerebras", "groq", "fireworks", "generalcompute", "xai", "openai-codex", "anthropic"] as const;
+export const selectableProviderPresets = ["cerebras", "groq", "fireworks", "generalcompute", "openrouter", "xai", "openai-codex", "anthropic"] as const;
+
+/** LightningLoop-managed API-key presets (no Pi /login; key via env or macOS Keychain). */
+export const lightningLoopManagedApiKeyPresets = ["generalcompute", "openrouter"] as const;
 export type SelectableProviderPreset = typeof selectableProviderPresets[number];
 
 export const defaultProviderProfile = (): ProviderProfile => profileForPreset("openai-codex");
@@ -168,7 +187,7 @@ export function parseProviderProfile(value: unknown): ProviderProfile {
   const root = objectValue(value, "provider profile");
   if (root.schemaVersion !== PROVIDER_CONFIG_VERSION) throw new Error("Provider profile version is unsupported.");
   const presetValue = stringValue(root.preset, "provider.preset");
-  if (!["cerebras", "groq", "fireworks", "generalcompute", "xai", "openai-codex", "anthropic", "custom"].includes(presetValue)) {
+  if (!["cerebras", "groq", "fireworks", "generalcompute", "openrouter", "xai", "openai-codex", "anthropic", "custom"].includes(presetValue)) {
     throw new Error("Provider preset is unsupported.");
   }
   const preset = presetValue as Exclude<ProviderPreset, "selection-required">;
@@ -203,6 +222,7 @@ export function profileForPreset(preset: Exclude<ProviderPreset, "custom" | "sel
     groq: { modelID: "openai/gpt-oss-120b", modelName: "GPT-OSS 120B", supportsImages: false, contextWindow: 131_072, maxOutputTokens: 32_768 },
     fireworks: { modelID: "accounts/fireworks/models/kimi-k2p6", modelName: "Kimi K2.6", supportsImages: true, contextWindow: 262_000, maxOutputTokens: 32_768 },
     generalcompute: { modelID: "minimax-m2.7", modelName: "MiniMax M2.7", supportsImages: false, contextWindow: 192_000, maxOutputTokens: 131_072 },
+    openrouter: { modelID: OPENROUTER_DEFAULT_FREE_MODEL_ID, modelName: OPENROUTER_DEFAULT_FREE_MODEL_NAME, supportsImages: false, contextWindow: 131_072, maxOutputTokens: 32_768 },
     xai: { modelID: "grok-4.5", modelName: "Grok 4.5", supportsImages: true, contextWindow: 256_000, maxOutputTokens: 32_768 },
     "openai-codex": { modelID: "gpt-5.6-terra", modelName: "GPT-5.6 Terra", supportsImages: true, contextWindow: 400_000, maxOutputTokens: 131_072 },
     anthropic: { modelID: "claude-sonnet-4-6", modelName: "Claude Sonnet 4.6", supportsImages: true, contextWindow: 200_000, maxOutputTokens: 64_000 },
@@ -231,9 +251,42 @@ export function loadProviderProfile(path = providerConfigPath()): ProviderProfil
   }
 }
 
-export function saveProviderPreset(preset: SelectableProviderPreset, path = providerConfigPath()): ProviderProfile {
+export interface ProviderModelOverride {
+  modelID: string;
+  modelName?: string;
+  supportsImages?: boolean;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
+/**
+ * Apply a chosen model to a preset profile. Only LightningLoop-managed API-key
+ * presets (GeneralCompute, OpenRouter) may override the model here, because
+ * Pi-managed presets are validated against the runtime catalog instead.
+ */
+export function applyModelOverride(profile: ProviderProfile, override: ProviderModelOverride): ProviderProfile {
+  if (profile.piProviderID) {
+    throw new Error("A model cannot be chosen this way for a runtime-managed provider; use the runtime model catalog.");
+  }
+  const modelID = override.modelID.trim();
+  if (!modelID || modelID.length > 200 || /[\r\n\0]/u.test(modelID)) {
+    throw new Error("Model ID must contain 1-200 safe characters.");
+  }
+  const modelName = (override.modelName ?? modelID).trim().slice(0, 120) || modelID;
+  return {
+    ...profile,
+    modelID,
+    modelName,
+    ...(override.supportsImages !== undefined ? { supportsImages: override.supportsImages } : {}),
+    ...(override.contextWindow !== undefined ? { contextWindow: boundedInteger(override.contextWindow, "contextWindow", 1_024, 2_000_000) } : {}),
+    ...(override.maxOutputTokens !== undefined ? { maxOutputTokens: boundedInteger(override.maxOutputTokens, "maxOutputTokens", 256, 131_072) } : {}),
+  };
+}
+
+export function saveProviderPreset(preset: SelectableProviderPreset, path = providerConfigPath(), modelOverride?: ProviderModelOverride): ProviderProfile {
   if (!selectableProviderPresets.includes(preset)) throw new Error("Provider preset is not selectable.");
-  const profile = profileForPreset(preset);
+  const baseProfile = profileForPreset(preset);
+  const profile = modelOverride ? applyModelOverride(baseProfile, modelOverride) : baseProfile;
   const encoded = `${JSON.stringify(profile, null, 2)}\n`;
   if (Buffer.byteLength(encoded) > 16_384 || /(?:api.?key|authorization|bearer\s|(?:csk|sk)-[a-z0-9])/iu.test(encoded)) {
     throw new Error("Provider configuration must remain bounded and credential-free.");
@@ -295,6 +348,7 @@ export const fixedLightningLoopCredentialServices = [
   "com.barnlabs.LightningLoop.provider.groq.apiKey",
   "com.barnlabs.LightningLoop.provider.fireworks.apiKey",
   "com.barnlabs.LightningLoop.provider.generalcompute.apiKey",
+  "com.barnlabs.LightningLoop.provider.openrouter.apiKey",
   ...historicalReadOnlyProviderCredentialServices,
   "com.barnlabs.LightningLoop.provider.custom.apiKey",
   "com.barnlabs.LightningLoop.search.exa",
