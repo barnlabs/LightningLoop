@@ -9,7 +9,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { assertCredentialSafeInput, registerRuntimeCredential } from "../core/credential-safety.js";
 import { createLightningLoopExtension, lightningLoopExtension } from "./lightningloop-extension.js";
 import { encodePiApiKey } from "../core/pi-options.js";
-import { loadProviderProfile } from "../core/provider-profile.js";
+import { loadProviderProfile, profileForPreset } from "../core/provider-profile.js";
 import { prepareTuiRuntimeCredentials } from "../cli/index.js";
 import { resolveConfigValueUncached } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/resolve-config-value.js";
 
@@ -53,6 +53,19 @@ test("extension rejects a credential-bearing goal before session naming, UI resu
   assert.equal(notifications.some((message) => /credential-safety boundary/u.test(message)), true);
   assert.equal(notifications.some((message) => message.includes(credential)), false);
   assert.equal(notifications.some((message) => message.includes(encodedCredential)), false);
+});
+
+test("TUI preparation scrubs the OPENROUTER_KEY alias from the child tool environment", () => {
+  // The shared scrubber matches *_API_KEY but not the bare OPENROUTER_KEY alias,
+  // so prepareTuiRuntimeCredentials must delete it explicitly. This pins that guard.
+  const env: NodeJS.ProcessEnv = {
+    OPENROUTER_API_KEY: "or-api-secret-alpha-123456",
+    OPENROUTER_KEY: "or-alias-secret-bravo-654321",
+  };
+  const options = prepareTuiRuntimeCredentials(profileForPreset("openrouter"), env);
+  assert.equal(env.OPENROUTER_API_KEY, undefined);
+  assert.equal(env.OPENROUTER_KEY, undefined);
+  assert.equal(options.openRouterApiKey, "or-api-secret-alpha-123456");
 });
 
 test("TUI preparation passes GeneralCompute env credential across the scrub boundary", () => {

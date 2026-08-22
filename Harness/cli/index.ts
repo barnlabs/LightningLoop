@@ -29,7 +29,8 @@ import {
   type SelectableProviderPreset,
   type ProviderProfile,
 } from "../core/provider-profile.js";
-import { fetchOpenRouterModels, selectFreeModels } from "../core/openrouter.js";
+import { fetchOpenRouterModels, resolveSelectableModel, selectFreeModels } from "../core/openrouter.js";
+import type { ProviderModelOverride } from "../core/provider-profile.js";
 import { validateImagePaths } from "../core/image-input.js";
 import { loadEligibleMemoryContext } from "../core/memory-store.js";
 import { WorkspaceArtifactExecutor } from "../artifacts/workspace-artifact-executor.js";
@@ -495,7 +496,22 @@ async function runProviderCommand(options: CliOptions): Promise<void> {
   }
   if (action === "select") {
     if (!options.providerArgument) throw new Error("Provider select requires a reviewed preset.");
-    const override = options.providerModel ? { modelID: options.providerModel } : undefined;
+    let override: ProviderModelOverride | undefined;
+    if (options.providerModel) {
+      if (options.providerArgument === "openrouter") {
+        // Validate the chosen model against the live OpenRouter catalog and, under
+        // --free, require it to be a free model. Fail closed on an unknown id.
+        const catalog = await fetchOpenRouterModels();
+        const match = resolveSelectableModel(catalog, options.providerModel, options.providerFreeOnly);
+        override = {
+          modelID: match.id,
+          modelName: match.name,
+          ...(match.contextWindow >= 1_024 && match.contextWindow <= 2_000_000 ? { contextWindow: match.contextWindow } : {}),
+        };
+      } else {
+        override = { modelID: options.providerModel };
+      }
+    }
     const selected = saveProviderPreset(options.providerArgument, providerConfigPath(), override);
     process.stdout.write(`Selected ${terminalSafe(selected.displayName)} · ${terminalSafe(selected.modelName)}\n`);
     if (selected.preset === "generalcompute") {

@@ -5,8 +5,12 @@ import {
   isFreeModel,
   OPENROUTER_MODELS_URL,
   parseOpenRouterModels,
+  resolveSelectableModel,
   selectFreeModels,
 } from "./openrouter.js";
+
+const freeModel = { id: "vendor/free:free", name: "Free", contextWindow: 65536, promptPrice: 0, completionPrice: 0, free: true };
+const paidModel = { id: "vendor/paid", name: "Paid", contextWindow: 128000, promptPrice: 0.0000004, completionPrice: 0.0000012, free: false };
 
 test("isFreeModel is true only when both prices are exactly zero", () => {
   assert.equal(isFreeModel({ promptPrice: 0, completionPrice: 0 }), true);
@@ -61,6 +65,31 @@ test("selectFreeModels keeps only free models, sorted by id", () => {
     { id: "a/free:free", name: "a", contextWindow: 0, promptPrice: 0, completionPrice: 0, free: true },
   ]);
   assert.deepEqual(free.map((m) => m.id), ["a/free:free", "z/free:free"]);
+});
+
+test("resolveSelectableModel validates against the catalog and enforces free-only", () => {
+  const catalog = [freeModel, paidModel];
+  // Happy path: a known free model is returned.
+  assert.equal(resolveSelectableModel(catalog, "vendor/free:free", true).id, "vendor/free:free");
+  // A paid model is allowed when free-only is off.
+  assert.equal(resolveSelectableModel(catalog, "vendor/paid", false).id, "vendor/paid");
+  // Fail closed: unknown id is rejected.
+  assert.throws(() => resolveSelectableModel(catalog, "vendor/does-not-exist", false), /not in the current OpenRouter catalog/);
+  // Fail closed: a non-free model under --free is rejected.
+  assert.throws(() => resolveSelectableModel(catalog, "vendor/paid", true), /is not a free model/);
+});
+
+test("parseOpenRouterModels rejects a catalog that exceeds the entry bound", () => {
+  const data = Array.from({ length: 10_001 }, (_unused, index) => ({ id: `vendor/model-${index}`, pricing: { prompt: "0", completion: "0" } }));
+  assert.throws(() => parseOpenRouterModels({ data }), /exceeds the supported bound/);
+});
+
+test("fetchOpenRouterModels rejects an oversized declared body before parsing", async () => {
+  const oversized: typeof fetch = async () => new Response(JSON.stringify({ data: [] }), {
+    status: 200,
+    headers: { "content-type": "application/json", "content-length": String(5 * 1024 * 1024) },
+  });
+  await assert.rejects(() => fetchOpenRouterModels({ fetchImpl: oversized }), /exceeded the size bound/);
 });
 
 test("fetchOpenRouterModels uses a bounded, no-redirect JSON request and rejects non-OK responses", async () => {

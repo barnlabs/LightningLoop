@@ -109,6 +109,58 @@ export function selectFreeModels(models: readonly OpenRouterModel[]): OpenRouter
   return models.filter((model) => model.free).sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/**
+ * Resolve a chosen model id against a discovered catalog. Throws when the id is
+ * not in the catalog, or (when freeOnly) when the model is not free. This is the
+ * fail-closed validation behind `provider select openrouter --model <id> [--free]`.
+ */
+export function resolveSelectableModel(
+  models: readonly OpenRouterModel[],
+  id: string,
+  freeOnly: boolean,
+): OpenRouterModel {
+  const match = models.find((model) => model.id === id);
+  if (!match) {
+    throw new Error(`Model '${id}' is not in the current OpenRouter catalog. Run 'lightningloop provider models --free' to list available IDs.`);
+  }
+  if (freeOnly && !match.free) {
+    throw new Error(`Model '${match.id}' is not a free model. Remove --free or choose one from 'lightningloop provider models --free'.`);
+  }
+  return match;
+}
+
+/** Read a response body with a hard byte cap enforced while streaming, not after. */
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+  const declaredLength = Number(response.headers.get("content-length") ?? "");
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new Error("OpenRouter model discovery response exceeded the size bound.");
+  }
+  const body = response.body;
+  if (!body) {
+    const text = await response.text();
+    if (Buffer.byteLength(text) > maxBytes) {
+      throw new Error("OpenRouter model discovery response exceeded the size bound.");
+    }
+    return text;
+  }
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error("OpenRouter model discovery response exceeded the size bound.");
+      }
+      chunks.push(value);
+    }
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 export interface FetchOpenRouterModelsOptions {
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
@@ -144,10 +196,7 @@ export async function fetchOpenRouterModels(options: FetchOpenRouterModelsOption
     if (!/application\/json/iu.test(contentType)) {
       throw new Error("OpenRouter model discovery returned a non-JSON response.");
     }
-    const raw = await response.text();
-    if (raw.length > MAX_MODELS_RESPONSE_BYTES) {
-      throw new Error("OpenRouter model discovery response exceeded the size bound.");
-    }
+    const raw = await readBoundedText(response, MAX_MODELS_RESPONSE_BYTES);
     return parseOpenRouterModels(JSON.parse(raw) as unknown);
   } finally {
     clearTimeout(timeout);

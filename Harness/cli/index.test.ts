@@ -174,7 +174,7 @@ test("clean cross-platform data flow requires selection, lists presets, and stor
   }
 });
 
-test("OpenRouter is listed and selectable with a chosen model without a runtime login", async () => {
+test("OpenRouter is listed and selectable with the free default without a runtime login", async () => {
   const dataDirectory = await mkdtemp(join(tmpdir(), "lightningloop-cli-openrouter-"));
   const cli = resolve(repositoryRoot, "dist/cli/index.js");
   const env: NodeJS.ProcessEnv = { ...process.env, LIGHTNINGLOOP_DATA_DIR: dataDirectory };
@@ -184,7 +184,8 @@ test("OpenRouter is listed and selectable with a chosen model without a runtime 
     assert.equal(list.status, 0, list.stderr);
     assert.match(list.stdout, /openrouter · OpenRouter/u);
 
-    const select = spawnSync(process.execPath, [cli, "provider", "select", "openrouter", "--model", "vendor/model-1:free"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    // Default select needs no network (no --model): it persists the free default.
+    const select = spawnSync(process.execPath, [cli, "provider", "select", "openrouter"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(select.status, 0, select.stderr);
     assert.match(select.stdout, /OPENROUTER_API_KEY/u);
     assert.match(select.stdout, /provider models --free/u);
@@ -192,9 +193,39 @@ test("OpenRouter is listed and selectable with a chosen model without a runtime 
     const encoded = await readFile(join(dataDirectory, "provider.json"), "utf8");
     const parsed = JSON.parse(encoded) as { preset: string; modelID: string; piProviderID?: string };
     assert.equal(parsed.preset, "openrouter");
-    assert.equal(parsed.modelID, "vendor/model-1:free");
+    assert.match(parsed.modelID, /:free$/u);
     assert.equal(parsed.piProviderID, undefined);
     assert.doesNotMatch(encoded, /(?:api.?key|authorization|bearer\s|(?:csk|sk)-)/iu);
+  } finally {
+    await rm(dataDirectory, { recursive: true, force: true });
+  }
+});
+
+test("OpenRouter --model select validates against the live catalog when egress is available", async () => {
+  const dataDirectory = await mkdtemp(join(tmpdir(), "lightningloop-cli-openrouter-live-"));
+  const cli = resolve(repositoryRoot, "dist/cli/index.js");
+  const env: NodeJS.ProcessEnv = { ...process.env, LIGHTNINGLOOP_DATA_DIR: dataDirectory };
+  delete env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+  try {
+    const models = spawnSync(process.execPath, [cli, "provider", "models", "--free"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    if (models.status !== 0) {
+      // No egress in this environment: the live catalog path is covered by the
+      // resolveSelectableModel unit tests instead.
+      return;
+    }
+    const freeId = models.stdout.split(/\r?\n/u).map((line) => line.trim().split(" ")[0]).find((id) => id?.endsWith(":free"));
+    assert.ok(freeId, "expected at least one free model id from discovery");
+
+    // A real free id is accepted under --free and persisted.
+    const good = spawnSync(process.execPath, [cli, "provider", "select", "openrouter", "--model", freeId!, "--free"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.equal(good.status, 0, good.stderr);
+    const parsed = JSON.parse(await readFile(join(dataDirectory, "provider.json"), "utf8")) as { modelID: string };
+    assert.equal(parsed.modelID, freeId);
+
+    // An unknown id is rejected (fail closed).
+    const unknown = spawnSync(process.execPath, [cli, "provider", "select", "openrouter", "--model", "totally/made-up-model-xyz:free"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.notEqual(unknown.status, 0);
+    assert.match(`${unknown.stderr}${unknown.stdout}`, /not in the current OpenRouter catalog/u);
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
   }
