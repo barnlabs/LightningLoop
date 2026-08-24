@@ -4,6 +4,7 @@ import {
   BROWSE_MAX_BYTES,
   browseReputablePage,
   describeBrowseRefusal,
+  executeBrowseCommand,
   extractLinks,
   extractTitle,
   renderBrowsePage,
@@ -37,6 +38,10 @@ test("browseReputablePage fetches a reputable host and fails closed otherwise", 
   assert.match(page.text, /HTTP semantics/);
   assert.equal(page.links.length, 1);
   assert.match(renderBrowsePage(page).join("\n"), /ϟ browse/);
+  const rendered = await executeBrowseCommand("https://www.rfc-editor.org/rfc/rfc9110", fetchImpl);
+  assert.match(rendered, /ϟ browse  https:\/\/www\.rfc-editor\.org\/rfc\/rfc9110/);
+  assert.match(rendered, /RFC 9110/);
+  await assert.rejects(() => executeBrowseCommand("https://example.com/x", fetchImpl), /not a reputable primary source/);
   await assert.rejects(() => browseReputablePage("https://example.com/x", fetchImpl), /not a reputable primary source/);
   assert.match(describeBrowseRefusal("https://example.com/x"), /not a reputable primary source/);
 });

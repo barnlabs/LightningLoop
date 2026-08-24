@@ -58,7 +58,7 @@ import {
   type LoopAgent,
 } from "../core/loop-roster.js";
 import { SHIPPED_SKILLS } from "../core/skill-disclosure.js";
-import { browseReputablePage, renderBrowsePage } from "../core/terminal-browser.js";
+import { executeBrowseCommand } from "../core/terminal-browser.js";
 import { loadActiveGuidance } from "../core/evolution-store.js";
 
 const SESSION_DIR = lightningLoopDataPath("harness-sessions");
@@ -722,6 +722,10 @@ async function runTUI(options: CliOptions): Promise<void> {
     process.stdout.write("LightningLoop first run: choose a provider before opening the TUI.\n");
     process.stdout.write("  lightningloop provider list\n");
     process.stdout.write("  lightningloop provider select PRESET\n");
+    process.stdout.write("Without a provider you can still pin the three agents and browse a reputable source:\n");
+    process.stdout.write("  lightningloop agents list\n");
+    process.stdout.write("  lightningloop agents select researcher|engineer|verifier --model ID\n");
+    process.stdout.write("  lightningloop browse URL\n");
     process.stdout.write("No credential has been read or stored. After selection, run llp again.\n");
     process.exitCode = 2;
     return;
@@ -890,8 +894,8 @@ function runAgentsCommand(options: CliOptions): void {
 
 async function runBrowseCommand(options: CliOptions): Promise<void> {
   if (!options.browseURL) throw new Error("Usage: lightningloop browse URL");
-  const page = await browseReputablePage(options.browseURL);
-  process.stdout.write(`${renderBrowsePage(page).map((line) => terminalSafe(line)).join("\n")}\n`);
+  const rendered = await executeBrowseCommand(options.browseURL);
+  process.stdout.write(`${rendered.split("\n").map((line) => terminalSafe(line)).join("\n")}\n`);
 }
 
 async function buildLoopAdapter(profile: ProviderProfile, options: CliOptions): Promise<AgentAdapter> {

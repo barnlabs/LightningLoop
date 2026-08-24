@@ -159,3 +159,8 @@ export function describeBrowseRefusal(rawUrl: string): string {
     ? "Refused: not a reputable primary source."
     : "Refused: browse failed closed.";
 }
+
+/** Shared CLI / TUI browse command. Tests inject fetch; production uses defaultFetch. */
+export async function executeBrowseCommand(rawUrl: string, fetchImpl: BrowseFetch = defaultFetch): Promise<string> {
+  return renderBrowsePage(await browseReputablePage(rawUrl, fetchImpl)).join("\n");
+}
