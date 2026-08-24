@@ -49,7 +49,7 @@ test("header renders the coherent LightningLoop / BarnLabs brand band (plain-tex
   assert.deepEqual(lines, [
     "━".repeat(120),
     "ϟ  LIGHTNINGLOOP  /  BARNLABS",
-    "OpenAI Codex · GPT-5.6 Terra  clarify → challenge → implement → verify",
+    "OpenAI Codex · GPT-5.6 Terra  research → engineer → verify",
     "Provider-neutral · authentication and model catalog managed by the LightningLoop runtime",
     "",
   ]);

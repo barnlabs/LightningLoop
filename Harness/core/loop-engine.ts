@@ -19,6 +19,9 @@ import { objectValue, parseStructuredJSON, stringArray, stringValue } from "./st
 import { applyManagedMemoryContext } from "./memory-store.js";
 import { evaluateObjectiveContract } from "./objective-oracle.js";
 import { PromiseGraph, type PromiseGraphTraceEntry } from "../graph/promise-graph.js";
+import { loopAgentForRequestRole } from "./loop-roster.js";
+import { discloseSkills } from "./skill-disclosure.js";
+import { filterReputableSearchResults, isReputableSourceUrl } from "./source-policy.js";
 
 interface CriterionAssessment {
   criterionID: string;
@@ -419,9 +422,10 @@ export class LoopEngine {
     const images = [...(request.images ?? []), ...(this.context.images ?? [])]
       .filter((image, index, all) => all.findIndex((candidate) => candidate.path === image.path) === index)
       .slice(0, 4);
+    const disclosure = discloseSkills(loopAgentForRequestRole(request.role));
     return {
       ...request,
-      system: applyManagedMemoryContext(request.system, this.context.memories ?? []),
+      system: applyManagedMemoryContext(`${request.system}\n\n${disclosure.promptBlock}`, this.context.memories ?? []),
       user: `${request.user}${evidence}`,
       ...(images.length ? { images } : {}),
     };
@@ -474,8 +478,8 @@ export class LoopEngine {
         signal?.throwIfAborted();
         seenResearchQueries.add(query.toLowerCase());
         researchQueryCount += 1;
-        const results = await this.context.research.search(query);
-        const documentation = /\b(?:docs?|documentation|api|sdk|reference|official)\b/i.test(query) && results[0] && this.context.research.documentationContext
+        const results = filterReputableSearchResults(await this.context.research.search(query));
+        const documentation = /\b(?:docs?|documentation|api|sdk|reference|official)\b/i.test(query) && results[0] && this.context.research.documentationContext && isReputableSourceUrl(results[0].url)
           ? await this.context.research.documentationContext(results[0].url)
           : undefined;
         if (documentation) {
@@ -499,8 +503,9 @@ export class LoopEngine {
             snippet: result.snippet,
             ...(result.publishedAt ? { publishedAt: result.publishedAt } : {}),
           });
-          if (this.context.research.openSource && results.indexOf(result) < 2) {
+          if (this.context.research.openSource && results.indexOf(result) < 2 && isReputableSourceUrl(result.url)) {
             const opened = await this.context.research.openSource(result.url);
+            if (opened && !isReputableSourceUrl(opened.url)) continue;
             if (opened) {
               researchEvidence.push({
                 verified: true,

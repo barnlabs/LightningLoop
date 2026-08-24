@@ -35,7 +35,7 @@ export interface FooterModel {
 export const BRAND_WORDMARK = "ϟ  LIGHTNINGLOOP";
 export const BRAND_OWNER = "  /  BARNLABS";
 /** The fixed pipeline shown next to the active model. */
-export const PIPELINE_TAGLINE = "clarify → challenge → implement → verify";
+export const PIPELINE_TAGLINE = "research → engineer → verify";
 export const FOOTER_HELP = "Attach /image · set /research or /artifacts · run /loop <goal>";
 /** Below this width the footer stacks its segments instead of justifying them. */
 export const FOOTER_JUSTIFY_MIN_WIDTH = 68;

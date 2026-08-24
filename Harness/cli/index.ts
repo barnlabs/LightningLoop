@@ -48,13 +48,24 @@ import { lightningLoopDataPath } from "../core/platform-paths.js";
 import { ManagedOverlay } from "../governance/managed-overlay.js";
 import { DEFAULT_UPDATE_POLICY, updateChannelStatus } from "../update/update-policy.js";
 import { dispatchNotification } from "../notifications/notification-dispatcher.js";
+import {
+  RosterAdapter,
+  buildRosterMembers,
+  formatRosterLines,
+  isLoopAgent,
+  loadLoopRoster,
+  saveLoopAgentModel,
+  type LoopAgent,
+} from "../core/loop-roster.js";
+import { SHIPPED_SKILLS } from "../core/skill-disclosure.js";
+import { browseReputablePage, renderBrowsePage } from "../core/terminal-browser.js";
 
 const SESSION_DIR = lightningLoopDataPath("harness-sessions");
 const SHIPPED_SKILLS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../skills");
 const MANAGED_SKILLS_DIR = lightningLoopDataPath("managed", "current", "enabled-skills");
 
 interface CliOptions {
-  command: "tui" | "auth" | "provider" | "free" | "key" | "loop" | "search" | "mcp" | "harness" | "skills" | "update" | "artifact" | "serve" | "doctor" | "help";
+  command: "tui" | "auth" | "provider" | "free" | "key" | "loop" | "search" | "mcp" | "harness" | "skills" | "update" | "artifact" | "serve" | "doctor" | "help" | "agents" | "browse";
   workspace: string;
   allowExecution: boolean;
   goal?: string;
@@ -94,6 +105,9 @@ interface CliOptions {
   keyAction?: "set" | "status" | "clear";
   keyProvider?: string;
   doctorRuntimeOnly: boolean;
+  agentAction?: "list" | "select";
+  agentRole?: LoopAgent;
+  browseURL?: string;
 }
 
 export function usage(): string {
@@ -119,6 +133,9 @@ Usage:
   lightningloop mcp call MANIFEST.json TOOL --input PARAMS.json --workspace PATH --approve-manifest
   lightningloop harness status|backup|restore|reset [--slot 0-2] [--approve-restore|--approve-reset]
   lightningloop skills list|install|enable|disable [SOURCE_OR_ID] [--approve-skill-install|--approve-skill-enable HASH]
+  lightningloop agents list
+  lightningloop agents select <researcher|engineer|verifier> --model ID
+  lightningloop browse URL
   lightningloop update check
   lightningloop artifact serve --workspace PATH --source RELATIVE.html --sha256 HASH [--manifest-json JSON]
   lightningloop serve
@@ -176,6 +193,9 @@ export function parse(args: string[]): CliOptions {
   let keyAction: CliOptions["keyAction"];
   let keyProvider: string | undefined;
   let doctorRuntimeOnly = false;
+  let agentAction: CliOptions["agentAction"];
+  let agentRole: LoopAgent | undefined;
+  let browseURL: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -192,6 +212,8 @@ export function parse(args: string[]): CliOptions {
     else if (arg === "mcp") command = "mcp";
     else if (arg === "harness") command = "harness";
     else if (arg === "skills") command = "skills";
+    else if (arg === "agents" && index === 0) command = "agents";
+    else if (arg === "browse" && index === 0) command = "browse";
     else if (arg === "update") command = "update";
     else if (arg === "artifact") command = "artifact";
     else if (arg === "serve") command = "serve";
@@ -340,6 +362,19 @@ export function parse(args: string[]): CliOptions {
       } else {
         throw new Error("Key command contains too many positional arguments.");
       }
+    } else if (command === "agents" && !arg.startsWith("--")) {
+      if (!agentAction) {
+        if (arg !== "list" && arg !== "select") throw new Error("Agent action must be list or select.");
+        agentAction = arg;
+      } else if (agentAction === "select" && !agentRole) {
+        if (!isLoopAgent(arg)) throw new Error("Agent must be researcher, engineer, or verifier.");
+        agentRole = arg;
+      } else {
+        throw new Error("Agents command contains too many positional arguments.");
+      }
+    } else if (command === "browse" && !arg.startsWith("--")) {
+      if (browseURL) throw new Error("Browse accepts one URL.");
+      browseURL = arg;
     } else if (command === "update" && !arg.startsWith("--")) {
       if (arg !== "check") throw new Error("The only enabled update action is check; installation remains disabled until a signed release channel exists.");
     } else if (command === "artifact" && !arg.startsWith("--")) {
@@ -393,6 +428,9 @@ export function parse(args: string[]): CliOptions {
     ...(keyAction ? { keyAction } : {}),
     ...(keyProvider ? { keyProvider } : {}),
     doctorRuntimeOnly,
+    ...(agentAction ? { agentAction } : {}),
+    ...(agentRole ? { agentRole } : {}),
+    ...(browseURL ? { browseURL } : {}),
   };
 }
 
@@ -535,6 +573,13 @@ export async function doctor(runtimeOnly = false): Promise<number> {
     ? "  Active provider: SELECTION REQUIRED · run 'lightningloop provider list' then 'lightningloop provider select PRESET'\n"
     : `  Active provider: ${terminalSafe(profile.displayName)} · ${terminalSafe(profile.modelID)}\n`);
   if (!selectionRequired) process.stdout.write(`  Free mode: ${profile.freeOnly ? "ON · only zero-cost models" : "off"}\n`);
+  const roster = loadLoopRoster();
+  process.stdout.write("  Loop agents:\n");
+  for (const line of formatRosterLines(roster, selectionRequired ? "" : profile.modelID)) {
+    process.stdout.write(`    ${terminalSafe(line)}\n`);
+  }
+  process.stdout.write(`  Shipped skills: ${SHIPPED_SKILLS.length} (progressive disclosure)\n`);
+  process.stdout.write("  Source policy: reputable primary hosts only\n");
   process.stdout.write(`  Provider sign-in: ${piManaged ? "MANAGED BY RUNTIME/UNKNOWN" : "NOT APPLICABLE"}\n`);
   const researchStatus = (environmentName: string, service: string): string => process.env[environmentName]?.trim()
     || keychainConfigured(service) ? "CONFIGURED" : "MISSING";
@@ -826,8 +871,38 @@ function renderFusionProvenance(provenance: FusionCallProvenance): string {
  * adapter, so every deterministic gate is unchanged. Otherwise the single
  * configured provider adapter is returned.
  */
+function runAgentsCommand(options: CliOptions): void {
+  const action = options.agentAction ?? "list";
+  const fallback = loadProviderProfile().modelID;
+  if (action === "select") {
+    if (!options.agentRole) throw new Error("Usage: lightningloop agents select researcher|engineer|verifier --model ID");
+    if (!options.providerModel) throw new Error("agents select requires --model ID.");
+    const roster = saveLoopAgentModel(options.agentRole, options.providerModel);
+    process.stdout.write(`Pinned ${options.agentRole} · ${terminalSafe(options.providerModel)}\n`);
+    for (const line of formatRosterLines(roster, fallback)) process.stdout.write(`  ${terminalSafe(line)}\n`);
+    return;
+  }
+  process.stdout.write("LightningLoop agents\n");
+  for (const line of formatRosterLines(loadLoopRoster(), fallback)) process.stdout.write(`  ${terminalSafe(line)}\n`);
+  process.stdout.write("  Pin a model with: lightningloop agents select researcher|engineer|verifier --model ID\n");
+}
+
+async function runBrowseCommand(options: CliOptions): Promise<void> {
+  if (!options.browseURL) throw new Error("Usage: lightningloop browse URL");
+  const page = await browseReputablePage(options.browseURL);
+  process.stdout.write(`${renderBrowsePage(page).map((line) => terminalSafe(line)).join("\n")}\n`);
+}
+
 async function buildLoopAdapter(profile: ProviderProfile, options: CliOptions): Promise<AgentAdapter> {
-  if (!options.fusionModels) return PiProviderAdapter.create(profile);
+  if (!options.fusionModels) {
+    const fallback = await PiProviderAdapter.create(profile);
+    const members = await buildRosterMembers(profile, loadLoopRoster(), async (memberProfile) => (
+      memberProfile.modelID === profile.modelID ? fallback : PiProviderAdapter.create(memberProfile)
+    ));
+    process.stdout.write("Agents:\n");
+    for (const member of members) process.stdout.write(`  ${member.agent} · ${terminalSafe(member.modelID)}\n`);
+    return new RosterAdapter(members, fallback);
+  }
   if (profile.preset !== "openrouter") {
     throw new Error("Model fusion is currently supported only for the OpenRouter provider. Run 'provider select openrouter' first, then pass --fusion \"id1,id2\".");
   }
@@ -974,6 +1049,14 @@ async function entry(): Promise<void> {
   }
   if (options.command === "skills") {
     runSkillGovernance(options);
+    return;
+  }
+  if (options.command === "agents") {
+    runAgentsCommand(options);
+    return;
+  }
+  if (options.command === "browse") {
+    await runBrowseCommand(options);
     return;
   }
   if (options.command === "update") {

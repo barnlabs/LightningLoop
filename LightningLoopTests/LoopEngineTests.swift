@@ -84,3 +84,21 @@ private actor NativeEventCallRecorder {
 private enum RecorderError: Error {
     case unexpectedCall
 }
+
+final class LoopAgentSourceTrustTests: XCTestCase {
+    func testThreeAgentsMapFromLegacyRoles() {
+        XCTAssertEqual(AgentRole.orchestrator.loopAgent, .researcher)
+        XCTAssertEqual(AgentRole.implementer.loopAgent, .engineer)
+        XCTAssertEqual(AgentRole.reviewer.loopAgent, .verifier)
+        XCTAssertEqual(LoopAgent.allCases.map(\.rawValue), ["researcher", "engineer", "verifier"])
+    }
+
+    func testSourceTrustAllowsPrimaryHostsAndLoopbackAndRejectsBlogs() {
+        XCTAssertTrue(SourceTrust.isReputable(URL(string: "https://www.rfc-editor.org/rfc/rfc9110")!))
+        XCTAssertTrue(SourceTrust.isReputable(URL(string: "https://cdc.gov/x")!))
+        XCTAssertTrue(SourceTrust.isReputable(URL(string: "http://127.0.0.1:9/token/index.html")!))
+        XCTAssertFalse(SourceTrust.isReputable(URL(string: "https://example.com/")!))
+        XCTAssertFalse(SourceTrust.isReputable(URL(string: "https://medium.com/p/1")!))
+        XCTAssertFalse(SourceTrust.isReputable(URL(string: "http://cdc.gov/x")!))
+    }
+}

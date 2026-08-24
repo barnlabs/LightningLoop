@@ -15,6 +15,7 @@ struct SettingsView: View {
     @AppStorage("researchProvider") private var researchProvider = "brave"
     @AppStorage(AppModel.autoTitleLLMPreferenceKey) private var autoTitleLLMEnabled = false
     @AppStorage(LoopNotificationService.preferenceKey) private var notificationsEnabled = false
+    @State private var agentRoster = LoopAgentRoster.load()
     @State private var isTesting = false
     @State private var draft: ProviderConfiguration
     @State private var confirmsHarnessReset = false
@@ -154,6 +155,21 @@ struct SettingsView: View {
                     }
                     if let metrics = model.connectionMetrics { MetricsStrip(metrics: metrics) }
                     Text("Clarification, execution, and Gold require the shared LightningLoop runtime. For GeneralCompute or Custom, Discover Models & Test is the only direct native provider operation.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Loop agents") {
+                    ForEach(LoopAgent.allCases) { agent in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(agent.displayName).font(.headline)
+                            Text(agent.duty).font(.caption).foregroundStyle(.secondary)
+                            TextField("Model ID (provider default if empty)", text: agentModelBinding(agent))
+                                .textFieldStyle(.roundedBorder)
+                                .font(.body.monospaced())
+                        }
+                    }
+                    Text("Researcher, Engineer, and Verifier each get their own model. Empty means the active provider model. Same source rule for all three: reputable primary hosts only. `llp agents select` writes this roster too.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -430,6 +446,16 @@ struct SettingsView: View {
 #else
         return false
 #endif
+    }
+
+    private func agentModelBinding(_ agent: LoopAgent) -> Binding<String> {
+        Binding(
+            get: { agentRoster.modelID(for: agent) },
+            set: { value in
+                agentRoster.setModelID(value.trimmingCharacters(in: .whitespacesAndNewlines), for: agent)
+                try? agentRoster.save()
+            }
+        )
     }
 
     private var providerPresetBinding: Binding<ProviderPreset> {

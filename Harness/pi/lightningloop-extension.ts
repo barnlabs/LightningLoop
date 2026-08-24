@@ -34,6 +34,10 @@ import {
 import { assertCredentialSafeInput, assertNoConfiguredCredential } from "../core/credential-safety.js";
 import { dispatchNotification } from "../notifications/notification-dispatcher.js";
 import { encodePiApiKey } from "../core/pi-options.js";
+import { RosterAdapter, buildRosterMembers, formatRosterLines, isLoopAgent, loadLoopRoster, saveLoopAgentModel } from "../core/loop-roster.js";
+import { browseReputablePage, renderBrowsePage } from "../core/terminal-browser.js";
+import type { ProviderProfile } from "../core/provider-profile.js";
+import type { AgentAdapter } from "../core/loop-types.js";
 
 function keychainCommand(services: string[]): string {
   if (services.length < 1 || services.some((service) => !/^[A-Za-z0-9.-]+$/.test(service))) {
@@ -56,6 +60,14 @@ export interface LightningLoopExtensionOptions {
 }
 
 type ManagedProviderRegistration = Parameters<ExtensionAPI["registerProvider"]>[1];
+
+async function createRosterAdapter(profile: ProviderProfile): Promise<AgentAdapter> {
+  const fallback = await PiProviderAdapter.create(profile);
+  const members = await buildRosterMembers(profile, loadLoopRoster(), async (memberProfile) => (
+    memberProfile.modelID === profile.modelID ? fallback : PiProviderAdapter.create(memberProfile)
+  ));
+  return new RosterAdapter(members, fallback);
+}
 
 /** OpenAI-compatible LightningLoop-managed provider registration for an API-key credential. */
 function managedOpenAiProviderRegistration(
@@ -324,7 +336,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
         assertNoConfiguredCredential(memories, profile);
         // Just-free-mode guarantee: refuse to run a model that is no longer free.
         await enforceFreeMode(profile);
-        const engine = new LoopEngine(await PiProviderAdapter.create(profile), {
+        const engine = new LoopEngine(await createRosterAdapter(profile), {
           images,
           memories,
           ...(artifactExecutor ? { artifactExecutor } : {}),
@@ -414,6 +426,46 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
       }
       activeLoopController.abort(new DOMException("Run cancelled.", "AbortError"));
       ctx.ui.notify("Cancelling the active LightningLoop run…", "warning");
+    },
+  });
+
+  pi.registerCommand("agents", {
+    description: "List or pin models for Researcher, Engineer, and Verifier",
+    handler: async (args, ctx) => {
+      const tokens = args.trim().split(/\s+/u).filter(Boolean);
+      try {
+        if (tokens[0] === "select") {
+          const role = tokens[1] ?? "";
+          const model = tokens[2] ?? "";
+          if (!isLoopAgent(role) || !model) {
+            ctx.ui.notify("Usage: /agents select researcher|engineer|verifier MODEL_ID", "warning");
+            return;
+          }
+          const roster = saveLoopAgentModel(role, model);
+          ctx.ui.notify(`Pinned ${role} · ${model}\n${formatRosterLines(roster, profile.modelID).join("\n")}`, "info");
+          return;
+        }
+        ctx.ui.notify(`LightningLoop agents\n${formatRosterLines(loadLoopRoster(), profile.modelID).join("\n")}`, "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Agent roster failed closed.", "error");
+      }
+    },
+  });
+
+  pi.registerCommand("browse", {
+    description: "Open one reputable HTTPS page as a terminal snapshot",
+    handler: async (args, ctx) => {
+      const url = args.trim();
+      if (!url) {
+        ctx.ui.notify("Usage: /browse https://reputable.example/path", "warning");
+        return;
+      }
+      try {
+        const page = await browseReputablePage(url);
+        ctx.ui.notify(renderBrowsePage(page).join("\n"), "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Browse failed closed.", "error");
+      }
     },
   });
 
@@ -809,7 +861,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
     description: "Show the LightningLoop quick start",
     handler: async (_args, ctx) => {
       ctx.ui.notify(
-        "Queue images with /image, choose /research, and use /artifacts /empty/output [--verify] for real run-owned files. Run /loop <goal>. Capture preferences with /desire and /desire-add global|project. Govern durable context with /memory and /memory-add; govern reviewed changes with /evolution and /evolution-propose. Use /loop-cancel to stop safely and /quit or /exit to close.",
+        "Pin /agents select researcher|engineer|verifier MODEL. Browse a reputable page with /browse URL. Queue images with /image, choose /research free, and use /artifacts /empty/output [--verify] for run-owned files. Run /loop <goal>. Capture /desire. Govern /memory and /evolution. /loop-cancel stops the run.",
         "info",
       );
     },

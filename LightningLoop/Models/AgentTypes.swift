@@ -1,9 +1,103 @@
 import Foundation
 
+enum LoopAgent: String, Codable, CaseIterable, Identifiable, Sendable {
+    case researcher
+    case engineer
+    case verifier
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .researcher: "Researcher"
+        case .engineer: "Engineer"
+        case .verifier: "Verifier"
+        }
+    }
+
+    var duty: String {
+        switch self {
+        case .researcher: "Find current facts from reputable primary sources."
+        case .engineer: "Implement the approved contract."
+        case .verifier: "Falsify the work. Default to revise."
+        }
+    }
+}
+
+enum SourceTrust {
+    static let documentationHosts: Set<String> = [
+        "developer.mozilla.org", "www.rfc-editor.org", "rfc-editor.org",
+        "www.w3.org", "w3.org", "datatracker.ietf.org", "www.ietf.org",
+        "spec.whatwg.org", "nodejs.org", "www.typescriptlang.org", "typescriptlang.org",
+        "doc.rust-lang.org", "www.rust-lang.org", "go.dev", "pkg.go.dev",
+        "docs.python.org", "www.python.org", "kubernetes.io", "learn.microsoft.com",
+        "developer.apple.com", "docs.oracle.com", "openjdk.org",
+        "www.unicode.org", "unicode.org", "crates.io", "docs.rs",
+    ]
+
+    static func isLoopbackArtifact(_ url: URL) -> Bool {
+        url.scheme == "http" && url.host == "127.0.0.1"
+    }
+
+    static func isReputable(_ url: URL) -> Bool {
+        if isLoopbackArtifact(url) { return true }
+        guard url.scheme == "https", url.user == nil, url.password == nil else { return false }
+        let host = (url.host ?? "").lowercased()
+        if documentationHosts.contains(host) { return true }
+        return host.hasSuffix(".gov") || host.hasSuffix(".edu") || host.hasSuffix(".mil") || host.hasSuffix(".int")
+    }
+}
+
+struct LoopAgentRoster: Codable, Sendable {
+    var schemaVersion: Int = 1
+    var agents: [String: LoopAgentAssignment] = [
+        LoopAgent.researcher.rawValue: LoopAgentAssignment(),
+        LoopAgent.engineer.rawValue: LoopAgentAssignment(),
+        LoopAgent.verifier.rawValue: LoopAgentAssignment(),
+    ]
+
+    static var fileURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("LightningLoop", isDirectory: true)
+            .appendingPathComponent("agents.json")
+    }
+
+    static func load() -> LoopAgentRoster {
+        guard let data = try? Data(contentsOf: fileURL) else { return LoopAgentRoster() }
+        return (try? JSONDecoder().decode(LoopAgentRoster.self, from: data)) ?? LoopAgentRoster()
+    }
+
+    func save() throws {
+        let directory = Self.fileURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(self).write(to: Self.fileURL, options: .atomic)
+    }
+
+    func modelID(for agent: LoopAgent) -> String {
+        agents[agent.rawValue]?.modelID ?? ""
+    }
+
+    mutating func setModelID(_ modelID: String, for agent: LoopAgent) {
+        agents[agent.rawValue] = LoopAgentAssignment(modelID: modelID)
+    }
+}
+
+struct LoopAgentAssignment: Codable, Sendable {
+    var modelID: String = ""
+}
+
 enum AgentRole: String, Codable, Sendable {
     case orchestrator
     case reviewer
     case implementer
+
+    var loopAgent: LoopAgent {
+        switch self {
+        case .orchestrator: .researcher
+        case .implementer: .engineer
+        case .reviewer: .verifier
+        }
+    }
 
     var displayName: String {
         switch self {

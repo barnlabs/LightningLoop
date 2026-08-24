@@ -238,22 +238,45 @@ test("search snippets remain unverified and cannot be promoted to passing eviden
       provider: "brave",
       search: async (query) => {
         queries.push(query);
-        return [{ provider: "brave", title: "Primary", url: "https://example.com/source", snippet: "Current fact" }];
+        return [{ provider: "brave", title: "Primary", url: "https://agency.gov/source", snippet: "Current fact" }];
       },
     },
   });
   const result = await engine.execute("Research then finish", { summary: "Finish", questions: [] }, {}, 1);
   assert.equal(result.completed, false);
   assert.deepEqual(queries, ["official source for current fact"]);
-  assert.doesNotMatch(agent.requests[0]?.user ?? "", /example\.com/);
+  assert.doesNotMatch(agent.requests[0]?.user ?? "", /agency\.gov/);
   assert.match(agent.requests[1]?.user ?? "", /UNTRUSTED RESEARCH EVIDENCE/);
-  assert.match(agent.requests[1]?.user ?? "", /https:\/\/example\.com\/source/);
+  assert.match(agent.requests[1]?.user ?? "", /https:\/\/agency\.gov\/source/);
+});
+
+test("research drops non-reputable search hits before they enter evidence", async () => {
+  const agent = new InspectingAgent([
+    reply({ queries: ["current official fact"] }),
+    reply(plan),
+    reply(passedReview),
+    reply({ deliverable: "Done", notes: [] }),
+    reply(passedReview),
+  ]);
+  const engine = new LoopEngine(agent, {
+    research: {
+      provider: "free",
+      search: async () => [
+        { provider: "free", title: "Blog", url: "https://example.com/post", snippet: "ignore me" },
+        { provider: "free", title: "Primary", url: "https://agency.gov/fact", snippet: "keep me" },
+      ],
+    },
+  });
+  await engine.execute("Research then finish", { summary: "Finish", questions: [] }, {}, 1);
+  const evidence = agent.requests.find((request) => request.user.includes("UNTRUSTED RESEARCH EVIDENCE"))?.user ?? "";
+  assert.match(evidence, /agency\.gov\/fact/);
+  assert.doesNotMatch(evidence, /example\.com\/post/);
 });
 
 test("reviewers can trigger deduplicated bounded research between repair rounds", async () => {
   const sourcePlan = {
     ...plan,
-    criteria: [{ id: "C1", title: "Current constraint", detail: "State the verified runtime constraint", claim: "Verified source content", evidence: "Verified source content", evidence_kind: "source", evidence_target: "https://example.com/2" }],
+    criteria: [{ id: "C1", title: "Current constraint", detail: "State the verified runtime constraint", claim: "Verified source content", evidence: "Verified source content", evidence_kind: "source", evidence_target: "https://agency.gov/2" }],
   };
   const agent = new InspectingAgent([
     reply({ queries: ["initial primary source"] }),
@@ -289,7 +312,7 @@ test("reviewers can trigger deduplicated bounded research between repair rounds"
         return [{
           provider: "brave",
           title: query,
-          url: `https://example.com/${queries.length}`,
+          url: `https://agency.gov/${queries.length}`,
           snippet: `Evidence for ${query}`,
         }];
       },
@@ -312,7 +335,7 @@ test("reviewers can trigger deduplicated bounded research between repair rounds"
 test("factual correctness cannot be proved by implementer prose", async () => {
   const factualPlan = {
     ...plan,
-    criteria: [{ id: "C1", title: "Capital named", detail: "State capital of France and reject Atlantis", claim: "The capital of France is Paris.", evidence: "Opened authoritative source proof", evidence_kind: "source", evidence_target: "https://example.com/france" }],
+    criteria: [{ id: "C1", title: "Capital named", detail: "State capital of France and reject Atlantis", claim: "The capital of France is Paris.", evidence: "Opened authoritative source proof", evidence_kind: "source", evidence_target: "https://agency.gov/france" }],
   };
   const engine = new LoopEngine(new FakeAgent([
     reply(factualPlan),
@@ -626,7 +649,7 @@ test("target code cannot forge a harness behavior marker or exit before invocati
 test("general-web opened pages cannot certify factual Gold alone", async () => {
   const factualPlan = {
     ...plan,
-    criteria: [{ id: "C1", title: "Current fact", detail: "State it", claim: "Exact factual support", evidence: "Exact factual support", evidence_kind: "source", evidence_target: "https://example.com/fact" }],
+    criteria: [{ id: "C1", title: "Current fact", detail: "State it", claim: "Exact factual support", evidence: "Exact factual support", evidence_kind: "source", evidence_target: "https://agency.gov/fact" }],
   };
   const agent = new FakeAgent([
     reply({ queries: ["current fact"] }), reply(factualPlan), reply(passedReview),
@@ -635,7 +658,7 @@ test("general-web opened pages cannot certify factual Gold alone", async () => {
   ]);
   const engine = new LoopEngine(agent, { research: {
     provider: "brave",
-    search: async () => [{ provider: "brave", title: "Page", url: "https://example.com/fact", snippet: "Exact factual support" }],
+    search: async () => [{ provider: "brave", title: "Page", url: "https://agency.gov/fact", snippet: "Exact factual support" }],
     openSource: async (url) => ({ url, retrievedAt: new Date().toISOString(), sha256: "a".repeat(64), text: "Exact factual support", contentType: "text/plain", sourceClass: "general-web" }),
   } });
   const result = await engine.execute("State a current fact", { summary: "Research", questions: [] }, {}, 1);
@@ -646,7 +669,7 @@ test("general-web opened pages cannot certify factual Gold alone", async () => {
 test("source evidence requires the exact declared source excerpt", async () => {
   const sourcePlan = {
     ...plan,
-    criteria: [{ id: "C1", title: "Current constraint", detail: "State the verified runtime constraint", claim: "Exact Case-Sensitive Support", evidence: "Exact Case-Sensitive Support", evidence_kind: "source", evidence_target: "https://docs.example.com/constraint" }],
+    criteria: [{ id: "C1", title: "Current constraint", detail: "State the verified runtime constraint", claim: "Exact Case-Sensitive Support", evidence: "Exact Case-Sensitive Support", evidence_kind: "source", evidence_target: "https://developer.mozilla.org/constraint" }],
   };
   const agent = new FakeAgent([
     reply({ queries: ["official current constraint"] }), reply(sourcePlan), reply(passedReview),
@@ -655,7 +678,7 @@ test("source evidence requires the exact declared source excerpt", async () => {
   ]);
   const result = await new LoopEngine(agent, { research: {
     provider: "brave",
-    search: async () => [{ provider: "brave", title: "Official docs", url: "https://docs.example.com/constraint", snippet: "support" }],
+    search: async () => [{ provider: "brave", title: "Official docs", url: "https://developer.mozilla.org/constraint", snippet: "support" }],
     openSource: async (url) => ({ url, retrievedAt: new Date().toISOString(), sha256: "a".repeat(64), text: "exact case-sensitive support", contentType: "text/plain", sourceClass: "official-or-primary-candidate" }),
   } }).execute("State the current constraint", { summary: "Research", questions: [] }, {}, 1);
   assert.equal(result.completed, false);
@@ -672,7 +695,7 @@ test("an authoritative but unrelated excerpt cannot certify an Atlantis delivera
       claim: "The capital of France is Paris.",
       evidence: "France is a member state of the European Union.",
       evidence_kind: "source",
-      evidence_target: "https://government.example/france",
+      evidence_target: "https://agency.gov/france",
     }],
   };
   const agent = new FakeAgent([
@@ -682,7 +705,7 @@ test("an authoritative but unrelated excerpt cannot certify an Atlantis delivera
   ]);
   const result = await new LoopEngine(agent, { research: {
     provider: "brave",
-    search: async () => [{ provider: "brave", title: "Government facts", url: "https://government.example/france", snippet: "France facts" }],
+    search: async () => [{ provider: "brave", title: "Government facts", url: "https://agency.gov/france", snippet: "France facts" }],
     openSource: async (url) => ({
       url,
       retrievedAt: "2026-07-20T12:00:00.000Z",
@@ -706,7 +729,7 @@ test("a literal authoritative source claim remains review context and cannot aut
       claim: "The capital of France is Paris.",
       evidence: "France is a member state of the European Union.",
       evidence_kind: "source",
-      evidence_target: "https://government.example/france",
+      evidence_target: "https://agency.gov/france",
     }],
   };
   const agent = new FakeAgent([
@@ -716,7 +739,7 @@ test("a literal authoritative source claim remains review context and cannot aut
   ]);
   const result = await new LoopEngine(agent, { research: {
     provider: "brave",
-    search: async () => [{ provider: "brave", title: "Government facts", url: "https://government.example/france", snippet: "France facts" }],
+    search: async () => [{ provider: "brave", title: "Government facts", url: "https://agency.gov/france", snippet: "France facts" }],
     openSource: async (url) => ({
       url,
       retrievedAt: "2026-07-20T12:00:00.000Z",
@@ -784,7 +807,7 @@ test("punctuation-shaped source claims remain non-certifying without a truth ora
         claim,
         evidence: claim,
         evidence_kind: "source",
-        evidence_target: "https://government.example/france",
+        evidence_target: "https://agency.gov/france",
       }],
     };
     const agent = new FakeAgent([
@@ -794,7 +817,7 @@ test("punctuation-shaped source claims remain non-certifying without a truth ora
     ]);
     const result = await new LoopEngine(agent, { research: {
       provider: "brave",
-      search: async () => [{ provider: "brave", title: "Government facts", url: "https://government.example/france", snippet: claim }],
+      search: async () => [{ provider: "brave", title: "Government facts", url: "https://agency.gov/france", snippet: claim }],
       openSource: async (url) => ({
         url,
         retrievedAt: "2026-07-20T12:00:00.000Z",
@@ -820,7 +843,7 @@ test("a source claim embedded only in Atlantis negation cannot certify Gold", as
       claim,
       evidence: claim,
       evidence_kind: "source",
-      evidence_target: "https://government.example/france",
+      evidence_target: "https://agency.gov/france",
     }],
   };
   const agent = new FakeAgent([
@@ -830,7 +853,7 @@ test("a source claim embedded only in Atlantis negation cannot certify Gold", as
   ]);
   const result = await new LoopEngine(agent, { research: {
     provider: "brave",
-    search: async () => [{ provider: "brave", title: "Government facts", url: "https://government.example/france", snippet: "France facts" }],
+    search: async () => [{ provider: "brave", title: "Government facts", url: "https://agency.gov/france", snippet: "France facts" }],
     openSource: async (url) => ({
       url,
       retrievedAt: "2026-07-20T12:00:00.000Z",
@@ -855,7 +878,7 @@ test("contradictory source lines cannot auto-certify factual Gold", async () => 
       claim,
       evidence: claim,
       evidence_kind: "source",
-      evidence_target: "https://government.example/france",
+      evidence_target: "https://agency.gov/france",
     }],
   };
   const agent = new FakeAgent([
@@ -865,7 +888,7 @@ test("contradictory source lines cannot auto-certify factual Gold", async () => 
   ]);
   const result = await new LoopEngine(agent, { research: {
     provider: "brave",
-    search: async () => [{ provider: "brave", title: "Government facts", url: "https://government.example/france", snippet: "France facts" }],
+    search: async () => [{ provider: "brave", title: "Government facts", url: "https://agency.gov/france", snippet: "France facts" }],
     openSource: async (url) => ({
       url,
       retrievedAt: "2026-07-20T12:00:00.000Z",
@@ -889,7 +912,7 @@ test("noncanonical source prose and artifact bytes never auto-certify factual Go
       claim: "The capital of France is Paris.",
       evidence: "France is a member state of the European Union.",
       evidence_kind: "source",
-      evidence_target: "https://government.example/france",
+      evidence_target: "https://agency.gov/france",
     }],
   };
   const nonCanonicalAnswers = [
@@ -901,7 +924,7 @@ test("noncanonical source prose and artifact bytes never auto-certify factual Go
   ];
   const source = {
     provider: "brave" as const,
-    search: async () => [{ provider: "brave" as const, title: "Government facts", url: "https://government.example/france", snippet: "France facts" }],
+    search: async () => [{ provider: "brave" as const, title: "Government facts", url: "https://agency.gov/france", snippet: "France facts" }],
     openSource: async (url: string) => ({
       url,
       retrievedAt: "2026-07-20T12:00:00.000Z",
@@ -942,7 +965,7 @@ test("a canonical source answer plus contradictory artifact evidence cannot reac
         claim: "The capital of France is Paris.",
         evidence: "France is a member state of the European Union.",
         evidence_kind: "source",
-        evidence_target: "https://government.example/france",
+        evidence_target: "https://agency.gov/france",
       },
       { ...syntaxCriterion("syntax:answer.js"), id: "C2" },
     ],
@@ -966,7 +989,7 @@ test("a canonical source answer plus contradictory artifact evidence cannot reac
       artifactExecutor: await WorkspaceArtifactExecutor.create(workspace, true),
       research: {
         provider: "brave",
-        search: async () => [{ provider: "brave", title: "Government facts", url: "https://government.example/france", snippet: "France facts" }],
+        search: async () => [{ provider: "brave", title: "Government facts", url: "https://agency.gov/france", snippet: "France facts" }],
         openSource: async (url) => ({
           url,
           retrievedAt: "2026-07-20T12:00:00.000Z",
@@ -989,8 +1012,8 @@ test("multiple planner-selected source facts never auto-certify factual Gold", a
   const sourcePlan = {
     ...plan,
     criteria: [
-      { id: "C1", title: "Capital", detail: "State capital", claim: "The capital of France is Paris.", evidence: "France is a member state of the European Union.", evidence_kind: "source", evidence_target: "https://government.example/france" },
-      { id: "C2", title: "Currency", detail: "State currency", claim: "France uses the euro.", evidence: "France uses the euro.", evidence_kind: "source", evidence_target: "https://government.example/france" },
+      { id: "C1", title: "Capital", detail: "State capital", claim: "The capital of France is Paris.", evidence: "France is a member state of the European Union.", evidence_kind: "source", evidence_target: "https://agency.gov/france" },
+      { id: "C2", title: "Currency", detail: "State currency", claim: "France uses the euro.", evidence: "France uses the euro.", evidence_kind: "source", evidence_target: "https://agency.gov/france" },
     ],
   };
   const makeEngine = (deliverable: string) => new LoopEngine(new FakeAgent([
@@ -1002,7 +1025,7 @@ test("multiple planner-selected source facts never auto-certify factual Gold", a
     ] }),
   ]), { research: {
     provider: "brave",
-    search: async () => [{ provider: "brave", title: "Government facts", url: "https://government.example/france", snippet: "France facts" }],
+    search: async () => [{ provider: "brave", title: "Government facts", url: "https://agency.gov/france", snippet: "France facts" }],
     openSource: async (url) => ({ url, retrievedAt: "2026-07-20T12:00:00.000Z", sha256: "d".repeat(64), text: "France is a member state of the European Union.\nThe capital of France is Paris.\nFrance uses the euro.", contentType: "text/plain", sourceClass: "official-or-primary-candidate" }),
   } });
   const canonical = "The capital of France is Paris.\nFrance uses the euro.";
