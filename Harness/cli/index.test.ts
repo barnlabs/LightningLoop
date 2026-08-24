@@ -180,6 +180,8 @@ test("clean cross-platform data flow requires selection, lists presets, and stor
     assert.equal(firstRun.status, 2);
     assert.match(firstRun.stdout, /first run: choose a provider/u);
     assert.match(firstRun.stdout, /provider select PRESET/u);
+    assert.match(firstRun.stdout, /agents select researcher\|engineer\|verifier/u);
+    assert.match(firstRun.stdout, /browse URL/u);
     assert.doesNotMatch(`${firstRun.stdout}${firstRun.stderr}`, /--provider\s+selection-required|--model\s*(?:\r?\n|$)/u);
 
     const list = spawnSync(process.execPath, [cli, "provider", "list"], { cwd: repositoryRoot, env, encoding: "utf8" });

@@ -722,6 +722,10 @@ async function runTUI(options: CliOptions): Promise<void> {
     process.stdout.write("LightningLoop first run: choose a provider before opening the TUI.\n");
     process.stdout.write("  lightningloop provider list\n");
     process.stdout.write("  lightningloop provider select PRESET\n");
+    process.stdout.write("Without a provider you can still pin the three agents and browse a reputable source:\n");
+    process.stdout.write("  lightningloop agents list\n");
+    process.stdout.write("  lightningloop agents select researcher|engineer|verifier --model ID\n");
+    process.stdout.write("  lightningloop browse URL\n");
     process.stdout.write("No credential has been read or stored. After selection, run llp again.\n");
     process.exitCode = 2;
     return;

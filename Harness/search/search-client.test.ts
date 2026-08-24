@@ -19,8 +19,9 @@ test("Brave adapter uses the fixed endpoint and normalizes only web URLs", async
     requestedURL = String(input);
     token = new Headers(init?.headers).get("X-Subscription-Token") ?? "";
     return new Response(JSON.stringify({ web: { results: [
-      { title: "Safe", url: "https://example.com/page", description: "Result" },
+      { title: "Safe", url: "https://agency.gov/page", description: "Result" },
       { title: "Unsafe", url: "file:///etc/passwd", description: "Blocked" },
+      { title: "Blog", url: "https://example.com/post", description: "Rejected" },
     ] } }), { status: 200, headers: { "Content-Type": "application/json" } });
   };
   const client = new SearchClient(fetcher, () => "test-credential");
@@ -28,7 +29,7 @@ test("Brave adapter uses the fixed endpoint and normalizes only web URLs", async
   assert.equal(new URL(requestedURL).origin, "https://api.search.brave.com");
   assert.equal(token, "test-credential");
   assert.equal(response.results.length, 1);
-  assert.equal(response.results[0]?.url, "https://example.com/page");
+  assert.equal(response.results[0]?.url, "https://agency.gov/page");
 });
 
 test("search input is bounded before credentials or network are touched", async () => {
@@ -72,7 +73,7 @@ test("cross-provider runtime credentials are filtered from provider fields, open
       providerRequests += 1;
       return new Response(JSON.stringify({ results: [{
         title: `unsafe ${unselected}`,
-        url: "https://docs.example.com/evidence",
+        url: "https://agency.gov/evidence",
         highlights: [`unsafe ${unselected}`],
         publishedDate: unselected,
       }] }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -118,7 +119,7 @@ test("historical custom credentials are filtered and an unreadable catalog fails
         networkRequests += 1;
         return new Response(JSON.stringify({ id: historical, data: { web: [{
           title: historical,
-          url: "https://docs.example.com/evidence",
+          url: "https://agency.gov/evidence",
           description: historical,
         }] } }), { status: 200, headers: { "Content-Type": "application/json" } });
       },
@@ -191,7 +192,7 @@ test("provider errors and results cannot reflect the configured credential", asy
   });
 
   const resultClient = new SearchClient(
-    async () => new Response(JSON.stringify({ web: { results: [{ title: reflected, url: "https://example.com", description: reflected }] } }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    async () => new Response(JSON.stringify({ web: { results: [{ title: reflected, url: "https://agency.gov", description: reflected }] } }), { status: 200, headers: { "Content-Type": "application/json" } }),
     () => reflected,
   );
   const response = await resultClient.search("brave", "test");
@@ -258,14 +259,14 @@ test("all search adapters reject raw and repeatedly encoded credential URLs and 
         { title: credential, url: `https://example.com/path/${credential}`, highlights: [`evidence ${credential}`], publishedDate: credential },
         { title: credential, url: `https://example.com/search?key=${encoded}`, highlights: [encoded], publishedDate: encoded },
         { title: deeplyEncoded, url: `https://example.com/path/${deeplyEncoded}`, highlights: [deeplyEncoded], publishedDate: deeplyEncoded },
-        { title: encoded, url: "https://example.com/safe?tracking=1#section", highlights: [encoded], publishedDate: encoded },
+        { title: encoded, url: "https://agency.gov/safe?tracking=1#section", highlights: [encoded], publishedDate: encoded },
       ],
     },
     brave: {
       web: { results: [
         { title: credential, url: `https://example.com/search?token=${credential}`, description: encoded },
         { title: credential, url: `https://example.com/path/${encoded}`, description: credential },
-        { title: encoded, url: "https://example.com/safe?tracking=1#section", description: credential },
+        { title: encoded, url: "https://agency.gov/safe?tracking=1#section", description: credential },
       ] },
     },
     firecrawl: {
@@ -273,7 +274,7 @@ test("all search adapters reject raw and repeatedly encoded credential URLs and 
       data: { web: [
         { title: credential, url: `https://example.com/path/${credential}`, description: encoded },
         { title: credential, url: `https://example.com/search?key=${encoded}`, description: credential },
-        { title: encoded, url: "https://example.com/safe?tracking=1#section", description: credential },
+        { title: encoded, url: "https://agency.gov/safe?tracking=1#section", description: credential },
       ] },
     },
   };
@@ -291,7 +292,7 @@ test("all search adapters reject raw and repeatedly encoded credential URLs and 
     // The reflected URL is dropped; the surviving URL has neither query nor
     // fragment, and every returned provider field is safe for model context.
     assert.equal(response.results.length, 1, provider);
-    assert.equal(response.results[0]?.url, "https://example.com/safe", provider);
+    assert.equal(response.results[0]?.url, "https://agency.gov/safe", provider);
     assert.equal(response.results[0]?.title, "[REDACTED]", provider);
     assert.equal(response.results[0]?.snippet, "[REDACTED]", provider);
     if (provider === "exa") assert.equal(response.results[0]?.publishedAt, "[REDACTED]");
@@ -311,17 +312,17 @@ test("all search adapters reject raw and repeatedly encoded credential URLs and 
 test("llms.txt retrieval is disabled by default and exact-host allowlisted", async () => {
   const prior = process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST;
   let requests = 0;
-  const client = new SearchClient(fetch, () => "unused", ["docs.example.com"], publicResolver, async (...args) => {
+  const client = new SearchClient(fetch, () => "unused", ["developer.mozilla.org"], publicResolver, async (...args) => {
     requests += 1;
     return source("# Documentation\nSafe bounded context", "text/plain")(...args);
   });
   try {
     delete process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST;
-    assert.equal(await client.documentationContext("https://docs.example.com/reference"), undefined);
+    assert.equal(await client.documentationContext("https://developer.mozilla.org/reference"), undefined);
     assert.equal(requests, 0);
-    process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST = "docs.example.com";
-    const context = await client.documentationContext("https://docs.example.com/reference");
-    assert.equal(context?.url, "https://docs.example.com/llms.txt");
+    process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST = "developer.mozilla.org";
+    const context = await client.documentationContext("https://developer.mozilla.org/reference");
+    assert.equal(context?.url, "https://developer.mozilla.org/llms.txt");
     assert.match(context?.text ?? "", /Documentation/);
     assert.equal(requests, 1);
     assert.equal(await client.documentationContext("https://attacker.example/"), undefined);
@@ -335,23 +336,24 @@ test("llms.txt retrieval is disabled by default and exact-host allowlisted", asy
 test("opened sources are hash-preserved, classified, bounded, and use a pinned address", async () => {
   let pinnedAddress = "";
   const body = "# Official API\nCurrent bounded documentation.";
-  const client = new SearchClient(fetch, () => "unused", ["docs.example.com"], publicResolver, async (_url, pinned, ...args) => {
+  const client = new SearchClient(fetch, () => "unused", ["developer.mozilla.org"], publicResolver, async (_url, pinned, ...args) => {
     pinnedAddress = pinned.address;
     return source(body, "text/markdown; charset=utf-8")(_url, pinned, ...args);
   });
-  const opened = await client.openSource("https://docs.example.com/reference");
+  const opened = await client.openSource("https://developer.mozilla.org/reference");
   assert.equal(pinnedAddress, "93.184.216.34");
-  assert.equal(opened?.url, "https://docs.example.com/reference");
+  assert.equal(opened?.url, "https://developer.mozilla.org/reference");
   assert.equal(opened?.sourceClass, "official-or-primary-candidate");
   assert.match(opened?.sha256 ?? "", /^[a-f0-9]{64}$/u);
   assert.match(opened?.retrievedAt ?? "", /^\d{4}-\d{2}-\d{2}T/u);
-  assert.equal(await client.openSource("http://docs.example.com/reference"), undefined);
+  assert.equal(await client.openSource("http://developer.mozilla.org/reference"), undefined);
   assert.equal(await client.openSource("https://127.0.0.1/reference"), undefined);
+  assert.equal(await client.openSource("https://example.com/blog"), undefined);
 
   const oversized = new SearchClient(fetch, () => "unused", [], publicResolver, async () => ({
     status: 200, headers: { "content-type": "text/plain", "content-length": "524289" }, bytes: new TextEncoder().encode("ignored"),
   }));
-  assert.equal(await oversized.openSource("https://example.com/large"), undefined);
+  assert.equal(await oversized.openSource("https://agency.gov/large"), undefined);
 });
 
 test("opened-source DNS resolution rejects loopback, RFC1918, link-local, special IPv6, mapped, and mixed answers before transport", async () => {
@@ -391,7 +393,7 @@ test("opened-source DNS resolution permits public IPv4 plus ordinary global IPv6
     received = pinned.address;
     return { status: 200, headers: { "content-type": "text/plain" }, bytes: new TextEncoder().encode("verified public evidence") };
   });
-  assert.equal((await client.openSource("https://public.example.test/evidence"))?.text, "verified public evidence");
+  assert.equal((await client.openSource("https://agency.gov/evidence"))?.text, "verified public evidence");
   assert.equal(received, "93.184.216.34");
 });
 
@@ -430,7 +432,7 @@ test("safe source URLs cannot return credential-bearing or malformed evidence bo
   const deeplyEncoded = Array.from({ length: 17 }).reduce<string>((value) => encodeURIComponent(value), credential);
   let openedBody = credential;
   const client = new SearchClient(
-    async () => new Response(JSON.stringify({ web: { results: [{ title: "Safe", url: "https://docs.example.com/evidence", description: "Safe" }] } }), {
+    async () => new Response(JSON.stringify({ web: { results: [{ title: "Safe", url: "https://agency.gov/evidence", description: "Safe" }] } }), {
       status: 200, headers: { "Content-Type": "application/json" },
     }),
     () => credential,
@@ -440,17 +442,17 @@ test("safe source URLs cannot return credential-bearing or malformed evidence bo
   );
   try {
     await client.search("brave", "activate credential filter");
-    assert.equal(await client.openSource("https://docs.example.com/evidence"), undefined);
+    assert.equal(await client.openSource("https://agency.gov/evidence"), undefined);
     openedBody = deeplyEncoded;
-    assert.equal(await client.openSource("https://docs.example.com/evidence"), undefined);
+    assert.equal(await client.openSource("https://agency.gov/evidence"), undefined);
     openedBody = "malformed percent escape %ZZ";
-    assert.equal(await client.openSource("https://docs.example.com/evidence"), undefined);
+    assert.equal(await client.openSource("https://agency.gov/evidence"), undefined);
 
-    process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST = "docs.example.com";
+    process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST = "developer.mozilla.org";
     openedBody = encodeURIComponent(encodeURIComponent(credential));
-    assert.equal(await client.documentationContext("https://docs.example.com/reference"), undefined);
+    assert.equal(await client.documentationContext("https://developer.mozilla.org/reference"), undefined);
     openedBody = deeplyEncoded;
-    assert.equal(await client.documentationContext("https://docs.example.com/reference"), undefined);
+    assert.equal(await client.documentationContext("https://developer.mozilla.org/reference"), undefined);
   } finally {
     if (prior === undefined) delete process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST;
     else process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST = prior;
@@ -466,12 +468,12 @@ test("opened source and llms.txt transports cannot exceed their absolute deadlin
   });
   try {
     const sourceStarted = Date.now();
-    assert.equal(await client.openSource("https://docs.example.com/evidence"), undefined);
+    assert.equal(await client.openSource("https://agency.gov/evidence"), undefined);
     assert.ok(Date.now() - sourceStarted < 1_000);
 
-    process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST = "docs.example.com";
+    process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST = "developer.mozilla.org";
     const docsStarted = Date.now();
-    assert.equal(await client.documentationContext("https://docs.example.com/reference"), undefined);
+    assert.equal(await client.documentationContext("https://developer.mozilla.org/reference"), undefined);
     assert.ok(Date.now() - docsStarted < 1_000);
   } finally {
     if (prior === undefined) delete process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST;
@@ -486,8 +488,8 @@ test("opened source and llms.txt transports cannot exceed their absolute deadlin
 const DUCKDUCKGO_FIXTURE = `
 <div class="result results_links results_links_deep web-result">
   <div class="links_main">
-    <a rel="nofollow" class="result__a" href="https://rust-lang.org/">Rust Programming Language</a>
-    <a class="result__snippet" href="https://rust-lang.org/"><b>Rust</b> is a fast, reliable <b>language</b>.</a>
+    <a rel="nofollow" class="result__a" href="https://www.rust-lang.org/">Rust Programming Language</a>
+    <a class="result__snippet" href="https://www.rust-lang.org/"><b>Rust</b> is a fast, reliable <b>language</b>.</a>
   </div>
 </div>
 <div class="result results_links results_links_deep web-result">
@@ -513,7 +515,7 @@ function htmlResponse(body: string, contentType = "text/html; charset=UTF-8", st
 test("parseDuckDuckGoHtml extracts direct + redirector URLs, decodes entities, and drops internal links", () => {
   const parsed = parseDuckDuckGoHtml(DUCKDUCKGO_FIXTURE);
   assert.equal(parsed.length, 3);
-  assert.deepEqual(parsed[0], { title: "Rust Programming Language", url: "https://rust-lang.org/", snippet: "Rust is a fast, reliable language." });
+  assert.deepEqual(parsed[0], { title: "Rust Programming Language", url: "https://www.rust-lang.org/", snippet: "Rust is a fast, reliable language." });
   assert.deepEqual(parsed[1], { title: "Rust & Wikipedia", url: "https://en.wikipedia.org/wiki/Rust", snippet: "Encyclopedia entry about Rust." });
   // Tracking query is preserved by the raw parser; the search gate strips it.
   assert.equal(parsed[2]?.url, "https://example.com/page?utm=track&ref=ddg");
@@ -539,11 +541,9 @@ test("free research needs no credential and normalizes every DuckDuckGo result",
   assert.equal(new URL(requestedURL).origin, "https://html.duckduckgo.com");
   assert.match(body, /(?:^|&)q=rust\+programming\+language(?:&|$)/u);
   assert.equal(response.provider, "free");
-  assert.equal(response.results.length, 3);
+  assert.equal(response.results.length, 1);
   assert.deepEqual(response.results.map((result) => result.url), [
-    "https://rust-lang.org/",
-    "https://en.wikipedia.org/wiki/Rust",
-    "https://example.com/page", // query stripped by the URL safety gate
+    "https://www.rust-lang.org/",
   ]);
   assert.equal(response.results[0]?.snippet, "Rust is a fast, reliable language.");
   assert.equal(response.results.every((result) => result.provider === "free"), true);
@@ -557,7 +557,7 @@ test("free research redacts an ambient captured credential reflected in a result
   const client = new SearchClient(
     async () => htmlResponse(`
       <div class="result">
-        <a rel="nofollow" class="result__a" href="https://example.org/leak">Leaky Result</a>
+        <a rel="nofollow" class="result__a" href="https://agency.gov/leak">Leaky Result</a>
         <a class="result__snippet">Reflected ${leaked} inside the snippet.</a>
       </div>
     `),

@@ -7,6 +7,7 @@ import { request as httpsRequest } from "node:https";
 import type { IncomingHttpHeaders } from "node:http";
 import { registerRuntimeCredential, runtimeCredentialValuesForFiltering } from "../core/credential-safety.js";
 import { lightningLoopCredentialServices, loadProviderProfile } from "../core/provider-profile.js";
+import { isReputableSourceUrl } from "../core/source-policy.js";
 
 export type SearchProvider = "exa" | "brave" | "firecrawl" | "free";
 
@@ -632,7 +633,10 @@ export class SearchClient {
     }
     const safeText = (value: unknown, fallback = ""): string => normalizeProviderText(value, redactor, credentials, fallback);
     const safeClip = (value: unknown): string => normalizeProviderText(value, redactor, credentials, "", 4_000);
-    const safeURL = (value: unknown): string | undefined => normalizeProviderURL(value, credentials);
+    const safeURL = (value: unknown): string | undefined => {
+      const url = normalizeProviderURL(value, credentials);
+      return url && isReputableSourceUrl(url) ? url : undefined;
+    };
     const safeMetadata = (value: unknown): string | undefined => {
       const normalized = normalizeProviderText(value, redactor, credentials, "", 512);
       return normalized ? normalized : undefined;
@@ -733,7 +737,7 @@ export class SearchClient {
     try { credentials = this.credentialFilterSet(); }
     catch { return undefined; }
     const safe = normalizeProviderURL(resultURL, credentials);
-    if (!safe) return undefined;
+    if (!safe || !isReputableSourceUrl(safe)) return undefined;
     const url = new URL(safe);
     // Opened-source evidence is intentionally narrower than search result URLs.
     // Plain HTTP, credentials, redirects, local names, and IP literals fail closed.
@@ -772,7 +776,7 @@ export class SearchClient {
     try { credentials = this.credentialFilterSet(); }
     catch { return undefined; }
     const safe = normalizeProviderURL(resultURL, credentials);
-    if (!safe) return undefined;
+    if (!safe || !isReputableSourceUrl(safe)) return undefined;
     const result = new URL(safe);
     if (result.protocol !== "https:" || (result.port && result.port !== "443")) return undefined;
     const allowedHosts = (process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST ?? "")
