@@ -809,7 +809,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
     description: "Show the LightningLoop quick start",
     handler: async (_args, ctx) => {
       ctx.ui.notify(
-        "Queue images with /image, choose /research, and use /artifacts /empty/output [--verify] for real run-owned files. Run /loop <goal>. Govern durable context with /memory and /memory-add; govern reviewed changes with /evolution and /evolution-propose. Use /loop-cancel to stop safely and /quit or /exit to close.",
+        "Queue images with /image, choose /research, and use /artifacts /empty/output [--verify] for real run-owned files. Run /loop <goal>. Capture preferences with /desire and /desire-add global|project. Govern durable context with /memory and /memory-add; govern reviewed changes with /evolution and /evolution-propose. Use /loop-cancel to stop safely and /quit or /exit to close.",
         "info",
       );
     },

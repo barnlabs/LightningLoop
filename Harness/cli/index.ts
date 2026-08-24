@@ -97,7 +97,7 @@ interface CliOptions {
 }
 
 export function usage(): string {
-  return `LightningLoop — Fast models. Ruthless review.
+  return `LightningLoop — Fast models. Strict evidence.
 
 An independent BarnLabs open-source project.
 
@@ -878,7 +878,7 @@ async function runLoop(options: CliOptions): Promise<void> {
           await artifactSeedsForGoal(goal, images),
         )
       : undefined;
-    process.stdout.write("\nϟ LightningLoop · Fast models. Ruthless review.\n");
+    process.stdout.write("\nϟ LightningLoop · Fast models. Strict evidence.\n");
     process.stdout.write(`BarnLabs · ${terminalSafe(profile.displayName)} / ${terminalSafe(profile.modelName)}\n`);
     process.stdout.write(artifactExecutor
       ? `Mode: reviewed workspace artifacts · ${artifactExecutor.allowVerificationCommands ? "sandboxed verification approved" : "commands disabled"}\nOutput: ${terminalSafe(realpathSync(options.workspace))}\n`

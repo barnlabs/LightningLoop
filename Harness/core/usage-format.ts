@@ -23,6 +23,12 @@ export function formatUSD(value: number): string {
   return `$${safe.toFixed(4)}`;
 }
 
+/** Format a wallet-style USD balance at 2 decimals (for credit/account figures). */
+export function formatUSDWallet(value: number): string {
+  const safe = Number.isFinite(value) && value > 0 ? value : 0;
+  return `$${safe.toFixed(2)}`;
+}
+
 /** True only when the provider reported a positive cost we can trust. */
 export function hasReportedCost(usage: Pick<AgentUsage, "cost">): boolean {
   return Number.isFinite(usage.cost) && usage.cost > 0;
@@ -57,7 +63,7 @@ export function formatRunSummaryLine(input: { reviews: number; usage: AgentUsage
  */
 export function formatCreditLine(credits: OpenRouterKeyCredits): string {
   if (credits.remaining !== null) {
-    return `OpenRouter credit remaining: ${formatUSD(credits.remaining)} · used ${formatUSD(credits.usage)}`;
+    return `OpenRouter credit remaining: ${formatUSDWallet(credits.remaining)} · used ${formatUSDWallet(credits.usage)}`;
   }
-  return `OpenRouter credit: unlimited · used ${formatUSD(credits.usage)}`;
+  return `OpenRouter credit: unlimited · used ${formatUSDWallet(credits.usage)}`;
 }

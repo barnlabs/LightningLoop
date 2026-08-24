@@ -68,6 +68,6 @@ test("final run-summary formatter snapshots the token split and provider cost (C
 test("credit line snapshots remaining/uncapped balances from a resolved key", () => {
   const capped: OpenRouterKeyCredits = { usage: 3.5, limit: 10, remaining: 6.5, isFreeTier: false };
   const uncapped: OpenRouterKeyCredits = { usage: 2.25, limit: null, remaining: null, isFreeTier: true };
-  assert.equal(snapshot(formatCreditLine(capped)), "OpenRouter credit remaining: $6.5000 · used $3.5000");
-  assert.equal(snapshot(formatCreditLine(uncapped)), "OpenRouter credit: unlimited · used $2.2500");
+  assert.equal(snapshot(formatCreditLine(capped)), "OpenRouter credit remaining: $6.50 · used $3.50");
+  assert.equal(snapshot(formatCreditLine(uncapped)), "OpenRouter credit: unlimited · used $2.25");
 });
