@@ -426,7 +426,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
   });
 
   pi.registerCommand("research", {
-    description: "Choose Exa, Brave, Firecrawl, or off for the next runs",
+    description: "Choose free (keyless), Exa, Brave, Firecrawl, or off for the next runs",
     handler: async (args, ctx) => {
       const value = args.trim().toLowerCase();
       if (value === "off" || value === "none") {
@@ -434,12 +434,13 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
         ctx.ui.notify("Automatic research is off.", "info");
         return;
       }
-      if (value !== "exa" && value !== "brave" && value !== "firecrawl") {
-        ctx.ui.notify("Usage: /research exa|brave|firecrawl|off", "warning");
+      if (value !== "exa" && value !== "brave" && value !== "firecrawl" && value !== "free") {
+        ctx.ui.notify("Usage: /research free|exa|brave|firecrawl|off", "warning");
         return;
       }
       activeResearchProvider = value;
-        ctx.ui.notify(`Automatic research will use ${value}. Its credential is checked only when /loop starts.`, "info");
+      const detail = value === "free" ? "No key required (DuckDuckGo HTML)." : "Its credential is checked only when /loop starts.";
+      ctx.ui.notify(`Automatic research will use ${value}. ${detail}`, "info");
     },
   });
 

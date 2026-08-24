@@ -36,6 +36,15 @@ test("provider and install-doctor commands parse as bounded first-run operations
   assert.equal(parse(["provider", "select", "openrouter", "--model", "vendor/model-1:free"]).providerModel, "vendor/model-1:free");
   assert.equal(parse(["free"]).command, "free");
   assert.equal(parse(["free", "--model", "openrouter/free"]).providerModel, "openrouter/free");
+  // "free" as the keyless search provider must not be swallowed by the `free` command.
+  assert.equal(parse(["search", "free", "open source"]).command, "search");
+  assert.equal(parse(["search", "free", "open source"]).searchProvider, "free");
+  assert.equal(parse(["search", "free", "open source"]).searchQuery, "open source");
+  assert.equal(parse(["loop", "hi", "--research", "free"]).researchProvider, "free");
+  assert.throws(() => parse(["search", "bogus", "q"]), /exa, brave, firecrawl, or free/);
+  // Model fusion opt-in list is captured and bounded.
+  assert.equal(parse(["loop", "goal", "--fusion", "a/x,b/y"]).fusionModels, "a/x,b/y");
+  assert.throws(() => parse(["loop", "goal", "--fusion", "bad\nlist"]), /bounded comma-separated model list/);
   assert.equal(parse(["key", "set", "openrouter"]).keyAction, "set");
   assert.equal(parse(["key", "status", "openrouter"]).keyProvider, "openrouter");
   assert.throws(() => parse(["key", "bogus", "openrouter"]), /set, status, or clear/);

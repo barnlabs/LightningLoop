@@ -103,10 +103,10 @@ Usage:
   lightningloop provider models [--free]
   lightningloop free [--model ID]
   lightningloop key set|status|clear <openrouter|generalcompute|cerebras>
-  lightningloop loop [GOAL] [--cycles 1-8] [--image PATH] [--research exa|brave|firecrawl]
+  lightningloop loop [GOAL] [--cycles 1-8] [--image PATH] [--research exa|brave|firecrawl|free]
     [--fusion "openrouter/id1,openrouter/id2"] (openrouter, non-free; runs 2-4 models per turn, longest reply wins)
     [--workspace EMPTY_DIR --approve-artifact-writes [--approve-verification-commands]]
-  lightningloop search <exa|brave|firecrawl> QUERY [--limit 1-20]
+  lightningloop search <exa|brave|firecrawl|free> QUERY [--limit 1-20]  (free = keyless DuckDuckGo HTML)
   lightningloop mcp verify MANIFEST.json --workspace PATH --approve-manifest
   lightningloop mcp call MANIFEST.json TOOL --input PARAMS.json --workspace PATH --approve-manifest
   lightningloop harness status|backup|restore|reset [--slot 0-2] [--approve-restore|--approve-reset]
@@ -173,7 +173,9 @@ export function parse(args: string[]): CliOptions {
     if (arg === "tui") command = "tui";
     else if (arg === "auth") command = "auth";
     else if (arg === "provider") command = "provider";
-    else if (arg === "free") command = "free";
+    // Only the leading token selects the `free` command; a later bare `free`
+    // (e.g. the `search free` provider) must fall through to positional parsing.
+    else if (arg === "free" && index === 0) command = "free";
     else if (arg === "key") command = "key";
     else if (arg === "loop") command = "loop";
     else if (arg === "search") command = "search";
@@ -226,7 +228,7 @@ export function parse(args: string[]): CliOptions {
     }
     else if (arg === "--research") {
       const value = args[index + 1];
-      if (value !== "exa" && value !== "brave" && value !== "firecrawl") throw new Error("--research must be exa, brave, or firecrawl.");
+      if (value !== "exa" && value !== "brave" && value !== "firecrawl" && value !== "free") throw new Error("--research must be exa, brave, firecrawl, or free.");
       researchProvider = value;
       index += 1;
     }
@@ -274,7 +276,7 @@ export function parse(args: string[]): CliOptions {
       goalParts.push(arg);
     } else if (command === "search" && !arg.startsWith("--")) {
       if (!searchProvider) {
-        if (arg !== "exa" && arg !== "brave" && arg !== "firecrawl") throw new Error("Search provider must be exa, brave, or firecrawl.");
+        if (arg !== "exa" && arg !== "brave" && arg !== "firecrawl" && arg !== "free") throw new Error("Search provider must be exa, brave, firecrawl, or free.");
         searchProvider = arg;
       } else {
         searchQueryParts.push(arg);
