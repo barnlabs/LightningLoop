@@ -70,7 +70,7 @@ Each `CC-*` criterion requires the tests below before it can be `DONE`.
 - **CC-H2 Source policy** — unit: TLD + host allowlist; negative: blog/local/credentialed URL rejected; loop research drops non-reputable hits.
 - **CC-H3 Terminal browser** — unit: injected fetch (no-redirect, type/size); integration: `llp browse https://example.com/` fails closed.
 - **CC-H4 GUI browser** — XCTest for `SourceTrust`; XCUITest/manual-macos for the Browser pane.
-- **CC-H5 Skills** — unit: progressive disclosure loads only the current role's full skill bodies.
+- **CC-H5 Skills** — unit: progressive disclosure loads only the current role's full skill bodies; approved skill addenda stay role-scoped; self-improvement still records inert drafts only.
 
 ### Research
 

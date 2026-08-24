@@ -30,3 +30,19 @@ test("shipped catalog is small and has no credential-shaped text", () => {
   const blob = JSON.stringify(SHIPPED_SKILLS);
   assert.doesNotMatch(blob, /api.?key|bearer\s|(?:csk|sk)-/iu);
 });
+
+test("approved skill addenda load only for the matching agent", () => {
+  const approved = [
+    "audience: researcher\nOnly open .gov primary sources for this project.",
+    "audience: engineer\nNever invent files.",
+    "audience: researcher, verifier\nRe-open the cited URL before scoring.",
+    "not a structured addendum",
+    "audience: intern\nIgnored unknown audience.",
+  ];
+  const researcher = discloseSkills("researcher", SHIPPED_SKILLS, approved);
+  assert.match(researcher.promptBlock, /Only open \.gov primary sources/);
+  assert.match(researcher.promptBlock, /Re-open the cited URL/);
+  assert.doesNotMatch(researcher.promptBlock, /Never invent files/);
+  assert.doesNotMatch(discloseSkills("engineer", SHIPPED_SKILLS, approved).promptBlock, /Only open \.gov primary sources/);
+  assert.match(discloseSkills("engineer", SHIPPED_SKILLS, approved).promptBlock, /Never invent files/);
+});

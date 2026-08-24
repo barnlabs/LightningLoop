@@ -117,11 +117,11 @@ then runs against it.
 
 | ID | Requirement | Proof predicate | Surface | Test | Status |
 |----|-------------|-----------------|---------|------|--------|
-| CC-H1 | **Three selectable agents** (Researcher, Engineer, Verifier) | `agents list` shows all three; `agents select ROLE --model ID` persists credential-free `agents.json`; `RosterAdapter` routes orchestrator→researcher, implementer→engineer, reviewer→verifier; invalid role/id fail closed | HARNESS | unit + integration | WIP |
-| CC-H2 | **Strict reputable-source rule for every agent** | `classifySourceUrl` allows only `.gov/.edu/.mil/.int` and the committed documentation-host allowlist; search/open/browse drop everything else; loop research ignores non-reputable hits | HARNESS | unit | WIP |
-| CC-H3 | **Terminal browser** | `llp browse URL` and `/browse URL` render a bounded text snapshot of one reputable HTTPS page (no-redirect, size/time/type gated); non-reputable URL fails closed | HARNESS | unit + integration | WIP |
+| CC-H1 | **Three selectable agents** (Researcher, Engineer, Verifier) | `agents list` shows all three; `agents select ROLE --model ID` persists credential-free `agents.json`; `RosterAdapter` routes orchestrator→researcher, implementer→engineer, reviewer→verifier; invalid role/id fail closed | HARNESS | unit + integration | DONE (harness; critic pending) |
+| CC-H2 | **Strict reputable-source rule for every agent** | `classifySourceUrl` allows only `.gov/.edu/.mil/.int` and the committed documentation-host allowlist; search/open/browse drop everything else; loop research ignores non-reputable hits | HARNESS | unit | DONE (harness; critic pending) |
+| CC-H3 | **Terminal browser** | `llp browse URL` and `/browse URL` render a bounded text snapshot of one reputable HTTPS page (no-redirect, size/time/type gated); non-reputable URL fails closed | HARNESS | unit + integration | DONE (harness; critic pending) |
 | CC-H4 | **GUI browser** | Workspace Browser pane uses WKWebView; navigation allowlist is loopback artifacts + reputable HTTPS; Settings expose the three agent model fields | GUI | manual-macos | WIP (source present; macOS proof pending) |
-| CC-H5 | **Shipped skills + tools with progressive disclosure** | five shipped skills exist; `discloseSkills(role)` returns the full catalog as one-liners and loads only matching bodies + that role's tools; recursive skill improvement remains inert drafts | HARNESS | unit | WIP |
+| CC-H5 | **Shipped skills + tools with progressive disclosure** | five shipped skills exist; `discloseSkills(role)` returns the full catalog as one-liners and loads only matching bodies + that role's tools; recursive skill improvement remains inert drafts | HARNESS | unit | DONE (harness; critic pending) |
 
 ## F. Governance (this request's explicit deliverables)
 

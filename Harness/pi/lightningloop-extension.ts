@@ -9,12 +9,12 @@ import { builtinWorkflowGuidance } from "../core/workflow-catalog.js";
 import { terminalSafe } from "../core/terminal-output.js";
 import { formatLiveUsageMeter } from "../core/usage-format.js";
 import { validateImagePaths } from "../core/image-input.js";
-import { loadProviderProfile, providerCredentialService, providerHeaders } from "../core/provider-profile.js";
+import { isProviderSelectionRequired, loadProviderProfile, providerCredentialService, providerHeaders } from "../core/provider-profile.js";
 import { LoopEngine } from "../core/loop-engine.js";
 import { PiProviderAdapter } from "./model-adapter.js";
 import { enforceFreeMode } from "../core/openrouter.js";
 import { SearchClient, type SearchProvider } from "../search/search-client.js";
-import { applyActiveSystemPromptAddenda } from "../core/evolution-store.js";
+import { applyActiveSystemPromptAddenda, loadActiveGuidance } from "../core/evolution-store.js";
 import { applyManagedMemoryContext, loadEligibleMemoryContext } from "../core/memory-store.js";
 import { deriveProjectIdentity } from "../core/project-identity.js";
 import { WorkspaceArtifactExecutor } from "../artifacts/workspace-artifact-executor.js";
@@ -124,7 +124,9 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
   });
 
   const cerebrasManualApiKey = profile.preset === "cerebras" ? options.cerebrasApiKey?.trim() : undefined;
-  if (!profile.piProviderID) {
+  if (isProviderSelectionRequired(profile)) {
+    // First-run TUI: register commands and the terminal browser without a provider.
+  } else if (!profile.piProviderID) {
     const envApiKey = profile.preset === "generalcompute"
       ? options.generalComputeApiKey?.trim()
       : profile.preset === "openrouter"
@@ -311,6 +313,10 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
         ctx.ui.notify("The goal was rejected by the credential-safety boundary.", "error");
         return;
       }
+      if (isProviderSelectionRequired(profile)) {
+        ctx.ui.notify("Select a provider first with `lightningloop provider select PRESET`.", "warning");
+        return;
+      }
       if (!ctx.isIdle() || activeLoopController) {
         ctx.ui.notify("A model turn or LightningLoop run is already active.", "warning");
         return;
@@ -339,6 +345,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
         const engine = new LoopEngine(await createRosterAdapter(profile), {
           images,
           memories,
+          approvedSkills: loadActiveGuidance().filter((item) => item.kind === "skill").map((item) => item.content),
           ...(artifactExecutor ? { artifactExecutor } : {}),
           ...(activeResearchProvider && search ? {
             research: {

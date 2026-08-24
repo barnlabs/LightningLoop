@@ -4,7 +4,7 @@
  * the skill that matches the current role. Recursive improvement still
  * writes inert drafts; it never silently activates a skill.
  */
-import type { LoopAgent } from "./loop-roster.js";
+import { LOOP_AGENTS, type LoopAgent } from "./loop-roster.js";
 import { SOURCE_POLICY_PROMPT } from "./source-policy.js";
 
 export interface ShippedSkill {
@@ -72,12 +72,40 @@ export interface DisclosedSkills {
   promptBlock: string;
 }
 
-export function discloseSkills(role: LoopAgent, skills: readonly ShippedSkill[] = SHIPPED_SKILLS): DisclosedSkills {
+export interface ApprovedSkillAddendum {
+  audience: readonly LoopAgent[];
+  body: string;
+}
+
+/** Parse an approved skill draft. Missing or unknown audience fails closed (not loaded). */
+export function parseApprovedSkillAddendum(content: string): ApprovedSkillAddendum | undefined {
+  const trimmed = content.trim();
+  const match = /^audience:\s*([a-z,\s]+)\n([\s\S]+)$/iu.exec(trimmed);
+  const listed = match?.[1];
+  if (!listed) return undefined;
+  const audience = listed
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter((item): item is LoopAgent => (LOOP_AGENTS as readonly string[]).includes(item));
+  const body = match[2]?.trim() ?? "";
+  if (audience.length === 0 || !body) return undefined;
+  return { audience, body };
+}
+
+export function discloseSkills(
+  role: LoopAgent,
+  skills: readonly ShippedSkill[] = SHIPPED_SKILLS,
+  approved: readonly string[] = [],
+): DisclosedSkills {
   const catalog = skills.map((skill) => ({ id: skill.id, summary: skill.summary }));
   const loaded = skills.filter((skill) => skill.audience.includes(role));
   const tools = LOOP_TOOL_CATALOG[role];
   const catalogLines = catalog.map((item) => `- ${item.id}: ${item.summary}`).join("\n");
   const loadedBlocks = loaded.map((skill) => `### ${skill.title} (${skill.id})\nTools: ${skill.tools.join(", ")}\n${skill.body}`).join("\n\n");
+  const approvedBlocks = approved
+    .map(parseApprovedSkillAddendum)
+    .filter((item): item is ApprovedSkillAddendum => Boolean(item && item.audience.includes(role)))
+    .map((item) => `### Approved skill addendum\n${item.body}`);
   const promptBlock = [
     `LOOP AGENT: ${role}`,
     `AVAILABLE TOOLS (this role): ${tools.join(", ")}`,
@@ -85,10 +113,18 @@ export function discloseSkills(role: LoopAgent, skills: readonly ShippedSkill[] 
     catalogLines,
     "LOADED SKILLS FOR THIS ROLE:",
     loadedBlocks,
+    ...(approvedBlocks.length > 0 ? ["APPROVED SKILL ADDENDA (this role only):", ...approvedBlocks] : []),
   ].join("\n");
   return { catalog, loaded, tools, promptBlock };
 }
 
 export function skillIdsForRole(role: LoopAgent, skills: readonly ShippedSkill[] = SHIPPED_SKILLS): string[] {
   return discloseSkills(role, skills).loaded.map((skill) => skill.id);
+}
+
+export function approvedSkillBodiesForRole(role: LoopAgent, approved: readonly string[]): string[] {
+  return approved
+    .map(parseApprovedSkillAddendum)
+    .filter((item): item is ApprovedSkillAddendum => Boolean(item && item.audience.includes(role)))
+    .map((item) => item.body);
 }

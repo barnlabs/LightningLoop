@@ -16,7 +16,56 @@ import { resolveConfigValueUncached } from "../../node_modules/@earendil-works/p
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const extensionModuleUrl = pathToFileURL(join(repositoryRoot, "dist/pi/lightningloop-extension.js")).href;
 
+test("first-run TUI registers agents and browse without a selected provider", async () => {
+  const previousConfig = process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+  const previousData = process.env.LIGHTNINGLOOP_DATA_DIR;
+  const directory = mkdtempSync(join(tmpdir(), "lightningloop-extension-firstrun-"));
+  process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH = join(directory, "missing-provider.json");
+  process.env.LIGHTNINGLOOP_DATA_DIR = directory;
+  const commands = new Map<string, { handler: (args: string, context: unknown) => Promise<void> | void }>();
+  const notifications: string[] = [];
+  try {
+    lightningLoopExtension({
+      registerTool: () => undefined,
+      registerFlag: () => undefined,
+      registerProvider: () => {
+        throw new Error("first-run TUI must not register a provider");
+      },
+      on: () => undefined,
+      getFlag: () => false,
+      registerCommand: (name: string, command: { handler: (args: string, context: unknown) => Promise<void> | void }) => commands.set(name, command),
+      setSessionName: () => undefined,
+      sendMessage: () => undefined,
+      appendEntry: () => undefined,
+    } as unknown as ExtensionAPI);
+    assert.ok(commands.get("loop"));
+    assert.ok(commands.get("agents"));
+    assert.ok(commands.get("browse"));
+    await commands.get("agents")!.handler("", {
+      ui: { notify: (message: string) => notifications.push(message) },
+    });
+    await commands.get("browse")!.handler("https://example.com/", {
+      ui: { notify: (message: string) => notifications.push(message) },
+    });
+    assert.equal(notifications.some((message) => /researcher/u.test(message)), true);
+    assert.equal(notifications.some((message) => /engineer/u.test(message)), true);
+    assert.equal(notifications.some((message) => /verifier/u.test(message)), true);
+    assert.equal(notifications.some((message) => /not a reputable primary source/u.test(message)), true);
+  } finally {
+    if (previousConfig === undefined) delete process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+    else process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH = previousConfig;
+    if (previousData === undefined) delete process.env.LIGHTNINGLOOP_DATA_DIR;
+    else process.env.LIGHTNINGLOOP_DATA_DIR = previousData;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("extension rejects a credential-bearing goal before session naming, UI result, or persistence", async () => {
+  const previousConfig = process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+  const previousData = process.env.LIGHTNINGLOOP_DATA_DIR;
+  const directory = mkdtempSync(join(tmpdir(), "lightningloop-extension-cred-"));
+  process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH = join(directory, "missing-provider.json");
+  process.env.LIGHTNINGLOOP_DATA_DIR = directory;
   const credential = "csk-syntheticextension123456789";
   const encodedCredential = credential.replace("-", "%2D");
   registerRuntimeCredential(credential);
@@ -36,23 +85,31 @@ test("extension rejects a credential-bearing goal before session naming, UI resu
     sendMessage: (message: unknown) => messages.push(message),
     appendEntry: (_type: string, entry: unknown) => entries.push(entry),
   };
-  lightningLoopExtension(fakePi as unknown as ExtensionAPI);
-  const loop = commands.get("loop");
-  assert.ok(loop);
-  await loop.handler(`Explain ${encodedCredential}`, {
-    isIdle: () => true,
-    ui: {
-      editor: async () => undefined,
-      notify: (message: string) => notifications.push(message),
-      setStatus: () => undefined,
-    },
-  });
-  assert.deepEqual(sessionNames, []);
-  assert.deepEqual(messages, []);
-  assert.deepEqual(entries, []);
-  assert.equal(notifications.some((message) => /credential-safety boundary/u.test(message)), true);
-  assert.equal(notifications.some((message) => message.includes(credential)), false);
-  assert.equal(notifications.some((message) => message.includes(encodedCredential)), false);
+  try {
+    lightningLoopExtension(fakePi as unknown as ExtensionAPI);
+    const loop = commands.get("loop");
+    assert.ok(loop);
+    await loop.handler(`Explain ${encodedCredential}`, {
+      isIdle: () => true,
+      ui: {
+        editor: async () => undefined,
+        notify: (message: string) => notifications.push(message),
+        setStatus: () => undefined,
+      },
+    });
+    assert.deepEqual(sessionNames, []);
+    assert.deepEqual(messages, []);
+    assert.deepEqual(entries, []);
+    assert.equal(notifications.some((message) => /credential-safety boundary/u.test(message)), true);
+    assert.equal(notifications.some((message) => message.includes(credential)), false);
+    assert.equal(notifications.some((message) => message.includes(encodedCredential)), false);
+  } finally {
+    if (previousConfig === undefined) delete process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+    else process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH = previousConfig;
+    if (previousData === undefined) delete process.env.LIGHTNINGLOOP_DATA_DIR;
+    else process.env.LIGHTNINGLOOP_DATA_DIR = previousData;
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("TUI preparation scrubs the OPENROUTER_KEY alias from the child tool environment", () => {

@@ -20,7 +20,7 @@ import { applyManagedMemoryContext } from "./memory-store.js";
 import { evaluateObjectiveContract } from "./objective-oracle.js";
 import { PromiseGraph, type PromiseGraphTraceEntry } from "../graph/promise-graph.js";
 import { loopAgentForRequestRole } from "./loop-roster.js";
-import { discloseSkills } from "./skill-disclosure.js";
+import { SHIPPED_SKILLS, discloseSkills } from "./skill-disclosure.js";
 import { filterReputableSearchResults, isReputableSourceUrl } from "./source-policy.js";
 
 interface CriterionAssessment {
@@ -422,7 +422,11 @@ export class LoopEngine {
     const images = [...(request.images ?? []), ...(this.context.images ?? [])]
       .filter((image, index, all) => all.findIndex((candidate) => candidate.path === image.path) === index)
       .slice(0, 4);
-    const disclosure = discloseSkills(loopAgentForRequestRole(request.role));
+    const disclosure = discloseSkills(
+      loopAgentForRequestRole(request.role),
+      SHIPPED_SKILLS,
+      this.context.approvedSkills ?? [],
+    );
     return {
       ...request,
       system: applyManagedMemoryContext(`${request.system}\n\n${disclosure.promptBlock}`, this.context.memories ?? []),

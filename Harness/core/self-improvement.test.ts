@@ -41,7 +41,7 @@ function withLedger(run: (path: string) => void): void {
   }
 }
 
-test("deriveSelfImprovementProposals is deterministic and yields one system_prompt + one skill proposal", () => {
+test("deriveSelfImprovementProposals is deterministic and yields one system_prompt + three agent skill drafts", () => {
   const result = makeResult([
     review(
       [finding("high", "Missing verification command", "Add a build verification command"), finding("low", "Nit: wording", "Reword the note")],
@@ -51,17 +51,25 @@ test("deriveSelfImprovementProposals is deterministic and yields one system_prom
   const first = deriveSelfImprovementProposals(result);
   const second = deriveSelfImprovementProposals(result);
   assert.deepEqual(first, second, "identical input must yield identical proposals");
-  assert.deepEqual(first.map((p) => p.kind), ["system_prompt", "skill"]);
+  assert.deepEqual(first.map((p) => p.kind), ["system_prompt", "skill", "skill", "skill"]);
+  assert.deepEqual(first.slice(1).map((p) => p.name), [
+    "lloop-research improvement from paused run",
+    "lloop-engineer improvement from paused run",
+    "lloop-verify improvement from paused run",
+  ]);
   // The paused outcome and the high-severity theme surface; the low finding is not "material".
   assert.match(first[0]!.exactDiff, /paused LightningLoop run/);
   assert.match(first[0]!.exactDiff, /Missing verification command/);
   assert.doesNotMatch(first[0]!.exactDiff, /Nit: wording/);
+  assert.match(first[1]!.exactDiff, /^audience: researcher/u);
+  assert.match(first[2]!.exactDiff, /^audience: engineer/u);
+  assert.match(first[3]!.exactDiff, /^audience: verifier/u);
   assert.match(first[1]!.exactDiff, /Advisory only/);
 });
 
-test("a completed run with no findings still produces a coherent, positive proposal pair", () => {
+test("a completed run with no findings still produces a coherent, positive proposal set", () => {
   const proposals = deriveSelfImprovementProposals(makeResult([review([], [], "pass")], true));
-  assert.deepEqual(proposals.map((p) => p.kind), ["system_prompt", "skill"]);
+  assert.deepEqual(proposals.map((p) => p.kind), ["system_prompt", "skill", "skill", "skill"]);
   assert.match(proposals[0]!.exactDiff, /gold LightningLoop run/);
   assert.match(proposals[0]!.exactDiff, /no material finding/);
   assert.match(proposals[1]!.exactDiff, /Reproduce the deliverable end-to-end/);
@@ -73,7 +81,7 @@ test("SECURITY: recorded proposals are INERT drafts — never active, never inje
     const records = recordSelfImprovementProposals(result, path);
 
     // Every recorded proposal is a draft with the reviewed-lifecycle defaults.
-    assert.equal(records.length, 2);
+    assert.equal(records.length, 4);
     for (const record of records) {
       assert.equal(record.state, "draft");
       assert.equal(record.version, "0.1.0-draft");
@@ -83,11 +91,11 @@ test("SECURITY: recorded proposals are INERT drafts — never active, never inje
       assert.equal(record.rollbackTarget, undefined);
       assert.equal(record.reviewerHasMaterialFinding, false);
     }
-    assert.deepEqual(records.map((r) => r.kind).sort(), ["skill", "system_prompt"]);
+    assert.deepEqual(records.map((r) => r.kind).sort(), ["skill", "skill", "skill", "system_prompt"]);
 
-    // The ledger holds exactly the two drafts, and NONE are active.
+    // The ledger holds exactly the four drafts, and NONE are active.
     const stored = listManagedEvolutions(path);
-    assert.equal(stored.length, 2);
+    assert.equal(stored.length, 4);
     assert.equal(stored.filter((r) => r.state === "active").length, 0);
 
     // The active-guidance loader (the only path that injects into a run) sees nothing,

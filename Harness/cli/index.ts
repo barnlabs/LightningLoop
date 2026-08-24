@@ -59,6 +59,7 @@ import {
 } from "../core/loop-roster.js";
 import { SHIPPED_SKILLS } from "../core/skill-disclosure.js";
 import { browseReputablePage, renderBrowsePage } from "../core/terminal-browser.js";
+import { loadActiveGuidance } from "../core/evolution-store.js";
 
 const SESSION_DIR = lightningLoopDataPath("harness-sessions");
 const SHIPPED_SKILLS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../skills");
@@ -966,9 +967,11 @@ async function runLoop(options: CliOptions): Promise<void> {
     if (objective) {
       process.stdout.write(`Objective oracle: ${objective.checks.length} harness-evidence check(s) required for Gold.\n`);
     }
+    const approvedSkills = loadActiveGuidance().filter((item) => item.kind === "skill").map((item) => item.content);
     const engine = new LoopEngine(await buildLoopAdapter(profile, options), {
       images,
       memories,
+      approvedSkills,
       ...(artifactExecutor ? { artifactExecutor } : {}),
       ...(objective ? { objective } : {}),
       ...(options.researchProvider && search ? {

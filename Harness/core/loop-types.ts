@@ -46,6 +46,11 @@ export interface LoopContext {
    * stays paused (fail-closed).
    */
   objective?: ObjectiveContract;
+  /**
+   * Approved skill-evolution bodies. Drafts never appear here. Each entry is
+   * progressively disclosed only to the matching Researcher / Engineer / Verifier.
+   */
+  approvedSkills?: readonly string[];
 }
 
 export interface ArtifactFileDraft {

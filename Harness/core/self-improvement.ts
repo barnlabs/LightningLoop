@@ -97,6 +97,8 @@ function buildSystemPromptProposal(
 }
 
 function buildSkillProposal(
+  agent: "researcher" | "engineer" | "verifier",
+  skillId: string,
   outcome: "gold" | "paused",
   material: readonly ReviewFinding[],
   requiredChanges: readonly string[],
@@ -105,9 +107,16 @@ function buildSkillProposal(
     ...material.map((finding) => line(finding.requiredChange || finding.title, 160)),
     ...requiredChanges,
   ]).slice(0, 10);
+  const focus = {
+    researcher: "Open only reputable primary sources and label every excerpt untrusted.",
+    engineer: "Implement the smallest honest change and cite only opened reputable sources.",
+    verifier: "Falsify against harness-observed evidence. Default to revise.",
+  }[agent];
   const lines = [
-    `Reusable verification checklist derived from a ${outcome} run.`,
-    "Advisory only — grants no tools or permissions.",
+    `audience: ${agent}`,
+    `Recursive improvement for ${skillId} from a ${outcome} run.`,
+    "Advisory only — grants no tools or permissions. Progressive disclosure loads this body only for the matching agent.",
+    focus,
   ];
   if (checks.length > 0) {
     lines.push("Before declaring Gold, confirm each item:");
@@ -119,17 +128,18 @@ function buildSkillProposal(
   }
   return {
     kind: "skill",
-    name: `Skill checklist from ${outcome} run`,
+    name: `${skillId} improvement from ${outcome} run`,
     source: "Automated self-improvement (deterministic)",
-    reason: `Captured ${checks.length} reusable check(s) from the reviewer's required changes.`,
+    reason: `Captured ${checks.length} reusable check(s) for the ${agent} agent from the reviewer's required changes.`,
     exactDiff: redactAndCap(lines.join("\n"), 8_000),
   };
 }
 
 /**
- * Deterministically derive one system_prompt and one skill proposal from a run
- * result. Pure: identical input yields identical proposals (the only nondeterminism
- * — id and timestamp — is added later by the ledger when a proposal is recorded).
+ * Deterministically derive one system_prompt and one skill draft per loop agent
+ * (Researcher, Engineer, Verifier) from a run result. Pure: identical input
+ * yields identical proposals (the only nondeterminism — id and timestamp — is
+ * added later by the ledger when a proposal is recorded).
  */
 export function deriveSelfImprovementProposals(result: LoopRunResult): SelfImprovementProposal[] {
   const outcome: "gold" | "paused" = result.completed ? "gold" : "paused";
@@ -139,7 +149,9 @@ export function deriveSelfImprovementProposals(result: LoopRunResult): SelfImpro
   const requiredChanges = dedupe(result.reviews.flatMap((review) => review.requiredChanges).map((change) => line(change, 200))).slice(0, 8);
   return [
     buildSystemPromptProposal(outcome, themes, requiredChanges, result.reviews.length),
-    buildSkillProposal(outcome, material, requiredChanges),
+    buildSkillProposal("researcher", "lloop-research", outcome, material, requiredChanges),
+    buildSkillProposal("engineer", "lloop-engineer", outcome, material, requiredChanges),
+    buildSkillProposal("verifier", "lloop-verify", outcome, material, requiredChanges),
   ];
 }
 
