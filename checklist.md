@@ -216,7 +216,7 @@ Canonical: [`docs/BRAND.md`](docs/BRAND.md), [`docs/PRODUCT_SURFACE_BRANDING.md`
 |------|--------|----------------|
 | Product / steward names | LOCAL assets | Keep LightningLoop first, BarnLabs second |
 | Icons / colors | Present under `LightningLoop/Resources/` | **Do not** regenerate/raster-edit without art approval |
-| Tagline inconsistency | **GAP** | Approved: “Fast models. Strict evidence.” CLI/TUI may still say “Ruthless review” (`Harness/cli/index.ts`) — fix **only** product-surface strings; re-run product-surface scan |
+| Tagline inconsistency | **Resolved** | Canonical “Fast models. Strict evidence.” now used on all product surfaces (CLI `usage()` + loop banner, `Harness/cli/index.ts`) and the GoldLanding example; verified by `rg "Ruthless review" Harness/` returning nothing |
 | Goal composer secondary copy | **GAP** | Align with brand or document exception in PR |
 | GitHub description/topics | Proposed only | Needs **owner** `gh` authorization — not a drive-by agent edit |
 | Signed-release claims | Must stay fail-closed | Never claim public binary is ready |
