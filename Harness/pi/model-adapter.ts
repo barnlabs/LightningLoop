@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AgentAdapter, AgentReply, AgentRequest } from "../core/loop-types.js";
 import { encodeAgentImages } from "../core/image-input.js";
@@ -6,7 +5,6 @@ import {
   defaultProviderProfile,
   loadProviderProfile,
   isProviderSelectionRequired,
-  providerCredentialService,
   providerHeaders,
   type ProviderProfile,
 } from "../core/provider-profile.js";
@@ -14,20 +12,10 @@ import { SecretRedactor } from "../core/redaction.js";
 import { applyActiveSystemPromptAddenda } from "../core/evolution-store.js";
 import { assertCredentialSafeInput, registerRuntimeCredential } from "../core/credential-safety.js";
 import { encodePiApiKey } from "../core/pi-options.js";
+import { readStoredProviderCredential } from "../core/key-store.js";
 
 type PiRuntime = Pick<ModelRuntime, "completeSimple" | "getModel" | "registerProvider">;
 type ProfileCredentialReader = (profile: ProviderProfile) => string | undefined;
-
-function readMacCredential(profile: ProviderProfile): string | undefined {
-  if (process.platform !== "darwin") return undefined;
-  const result = spawnSync("/usr/bin/security", ["find-generic-password", "-s", providerCredentialService(profile), "-w"], {
-    encoding: "utf8",
-    timeout: 5_000,
-    maxBuffer: 16_384,
-  });
-  const credential = result.status === 0 ? result.stdout.trim() : "";
-  return credential || undefined;
-}
 
 /**
  * Environment API key for a LightningLoop-managed API-key preset. GeneralCompute
@@ -44,9 +32,9 @@ export function providerEnvApiKey(profile: ProviderProfile): string | undefined 
   return undefined;
 }
 
-/** LightningLoop-managed API-key credentials (never Pi /login). Env is checked for GeneralCompute and OpenRouter. */
+/** LightningLoop-managed API-key credentials (never Pi /login). Env first, then the OS secret store. */
 export function readLightningLoopManagedCredential(profile: ProviderProfile): string | undefined {
-  return providerEnvApiKey(profile) ?? readMacCredential(profile);
+  return providerEnvApiKey(profile) ?? readStoredProviderCredential(profile);
 }
 
 function missingManagedCredentialMessage(profile: ProviderProfile): string {

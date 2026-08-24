@@ -34,6 +34,11 @@ test("provider and install-doctor commands parse as bounded first-run operations
   assert.equal(parse(["provider", "models", "--free"]).providerFreeOnly, true);
   assert.equal(parse(["provider", "models"]).providerFreeOnly, false);
   assert.equal(parse(["provider", "select", "openrouter", "--model", "vendor/model-1:free"]).providerModel, "vendor/model-1:free");
+  assert.equal(parse(["free"]).command, "free");
+  assert.equal(parse(["free", "--model", "openrouter/free"]).providerModel, "openrouter/free");
+  assert.equal(parse(["key", "set", "openrouter"]).keyAction, "set");
+  assert.equal(parse(["key", "status", "openrouter"]).keyProvider, "openrouter");
+  assert.throws(() => parse(["key", "bogus", "openrouter"]), /set, status, or clear/);
   assert.equal(parse(["doctor", "--runtime-only"]).doctorRuntimeOnly, true);
   assert.throws(() => parse(["provider", "select", "custom"]), /must be one of/);
   assert.throws(() => parse(["provider", "list", "cerebras"]), /too many/);
@@ -226,6 +231,42 @@ test("OpenRouter --model select validates against the live catalog when egress i
     const unknown = spawnSync(process.execPath, [cli, "provider", "select", "openrouter", "--model", "totally/made-up-model-xyz:free"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.notEqual(unknown.status, 0);
     assert.match(`${unknown.stderr}${unknown.stdout}`, /not in the current OpenRouter catalog/u);
+  } finally {
+    await rm(dataDirectory, { recursive: true, force: true });
+  }
+});
+
+test("free mode pins a free OpenRouter model and doctor reflects it (egress-tolerant)", async () => {
+  const dataDirectory = await mkdtemp(join(tmpdir(), "lightningloop-cli-free-"));
+  const cli = resolve(repositoryRoot, "dist/cli/index.js");
+  const env: NodeJS.ProcessEnv = { ...process.env, LIGHTNINGLOOP_DATA_DIR: dataDirectory };
+  delete env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+  try {
+    const free = spawnSync(process.execPath, [cli, "free"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    if (free.status !== 0) return; // no egress here → free-mode logic is covered by unit tests
+    assert.match(free.stdout, /Free mode ON/u);
+    const parsed = JSON.parse(await readFile(join(dataDirectory, "provider.json"), "utf8")) as { preset: string; modelID: string; freeOnly?: boolean };
+    assert.equal(parsed.preset, "openrouter");
+    assert.equal(parsed.freeOnly, true);
+    assert.match(parsed.modelID, /free/u);
+
+    const doc = spawnSync(process.execPath, [cli, "doctor"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.match(doc.stdout, /Free mode: ON/u);
+  } finally {
+    await rm(dataDirectory, { recursive: true, force: true });
+  }
+});
+
+test("key status reports the secure store and never displays a value", async () => {
+  const dataDirectory = await mkdtemp(join(tmpdir(), "lightningloop-cli-key-"));
+  const cli = resolve(repositoryRoot, "dist/cli/index.js");
+  const env: NodeJS.ProcessEnv = { ...process.env, LIGHTNINGLOOP_DATA_DIR: dataDirectory };
+  delete env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+  try {
+    const status = spawnSync(process.execPath, [cli, "key", "status", "openrouter"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.equal(status.status, 0, status.stderr);
+    assert.match(status.stdout, /Secure store:/u);
+    assert.match(status.stdout, /Stored key: (?:PRESENT|none)/u);
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
   }

@@ -11,8 +11,12 @@
  * so the free-model policy can be unit-tested without egress.
  */
 
+import type { ProviderProfile } from "./provider-profile.js";
+
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 export const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
+/** OpenRouter's built-in router that auto-selects among currently free models. */
+export const OPENROUTER_FREE_ROUTER_ID = "openrouter/free";
 
 /** Maximum bytes we will read from the models endpoint (the live list is well under this). */
 const MAX_MODELS_RESPONSE_BYTES = 4_194_304; // 4 MiB
@@ -127,6 +131,55 @@ export function resolveSelectableModel(
     throw new Error(`Model '${match.id}' is not a free model. Remove --free or choose one from 'lightningloop provider models --free'.`);
   }
   return match;
+}
+
+/**
+ * Choose the model that backs "just free mode". Prefers OpenRouter's free router
+ * (`openrouter/free`) when it is present and free, otherwise the first free model
+ * (alphabetical for determinism). Throws when the catalog exposes no free model.
+ */
+export function pickFreeModeModel(models: readonly OpenRouterModel[]): OpenRouterModel {
+  const router = models.find((model) => model.id === OPENROUTER_FREE_ROUTER_ID && model.free);
+  if (router) return router;
+  const free = selectFreeModels(models);
+  if (free.length === 0) {
+    throw new Error("OpenRouter currently exposes no free models. Try again later or choose a specific model.");
+  }
+  return free[0]!;
+}
+
+/**
+ * Assert a model id is present in the catalog AND free. Used to re-verify a
+ * free-only profile at run time so a model that lost its free tier is refused.
+ */
+export function assertModelFreeInCatalog(models: readonly OpenRouterModel[], id: string): void {
+  const match = models.find((model) => model.id === id);
+  if (!match) {
+    throw new Error(`Free mode: model '${id}' is no longer in the OpenRouter catalog. Re-select a free model with 'lightningloop free'.`);
+  }
+  if (!match.free) {
+    throw new Error(`Free mode: model '${id}' is no longer free. Re-select a free model with 'lightningloop free'.`);
+  }
+}
+
+/**
+ * Enforce "just free mode" at run time for a free-only OpenRouter profile: refuse
+ * to run if the pinned model is no longer free. A network failure is tolerated
+ * (the model was validated free when it was selected), so free mode never becomes
+ * an offline outage — but a definitive "not free" verdict throws.
+ */
+export async function enforceFreeMode(
+  profile: Pick<ProviderProfile, "preset" | "freeOnly" | "modelID">,
+  options: FetchOpenRouterModelsOptions = {},
+): Promise<void> {
+  if (!profile.freeOnly || profile.preset !== "openrouter") return;
+  let catalog: OpenRouterModel[];
+  try {
+    catalog = await fetchOpenRouterModels(options);
+  } catch {
+    return;
+  }
+  assertModelFreeInCatalog(catalog, profile.modelID);
 }
 
 /** Read a response body with a hard byte cap enforced while streaming, not after. */

@@ -29,8 +29,9 @@ import {
   type SelectableProviderPreset,
   type ProviderProfile,
 } from "../core/provider-profile.js";
-import { fetchOpenRouterModels, resolveSelectableModel, selectFreeModels } from "../core/openrouter.js";
+import { enforceFreeMode, fetchOpenRouterModels, pickFreeModeModel, resolveSelectableModel, selectFreeModels } from "../core/openrouter.js";
 import type { ProviderModelOverride } from "../core/provider-profile.js";
+import { clearProviderCredential, defaultSecretBackend, readStoredProviderCredential, storeProviderCredential } from "../core/key-store.js";
 import { validateImagePaths } from "../core/image-input.js";
 import { loadEligibleMemoryContext } from "../core/memory-store.js";
 import { WorkspaceArtifactExecutor } from "../artifacts/workspace-artifact-executor.js";
@@ -47,7 +48,7 @@ const SHIPPED_SKILLS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../
 const MANAGED_SKILLS_DIR = lightningLoopDataPath("managed", "current", "enabled-skills");
 
 interface CliOptions {
-  command: "tui" | "auth" | "provider" | "loop" | "search" | "mcp" | "harness" | "skills" | "update" | "artifact" | "serve" | "doctor" | "help";
+  command: "tui" | "auth" | "provider" | "free" | "key" | "loop" | "search" | "mcp" | "harness" | "skills" | "update" | "artifact" | "serve" | "doctor" | "help";
   workspace: string;
   allowExecution: boolean;
   goal?: string;
@@ -81,6 +82,8 @@ interface CliOptions {
   providerArgument?: SelectableProviderPreset;
   providerModel?: string;
   providerFreeOnly: boolean;
+  keyAction?: "set" | "status" | "clear";
+  keyProvider?: string;
   doctorRuntimeOnly: boolean;
 }
 
@@ -93,8 +96,10 @@ Usage:
   llp | lloop | lightningloop [tui] [--workspace PATH] [--allow-execution] [-- RUNTIME_OPTIONS...]
   lightningloop auth
   lightningloop provider list
-  lightningloop provider select <cerebras|groq|fireworks|generalcompute|openrouter|xai|openai-codex|anthropic> [--model ID]
+  lightningloop provider select <cerebras|groq|fireworks|generalcompute|openrouter|xai|openai-codex|anthropic> [--model ID] [--free]
   lightningloop provider models [--free]
+  lightningloop free [--model ID]
+  lightningloop key set|status|clear <openrouter|generalcompute|cerebras>
   lightningloop loop [GOAL] [--cycles 1-8] [--image PATH] [--research exa|brave|firecrawl]
     [--workspace EMPTY_DIR --approve-artifact-writes [--approve-verification-commands]]
   lightningloop search <exa|brave|firecrawl> QUERY [--limit 1-20]
@@ -153,6 +158,8 @@ export function parse(args: string[]): CliOptions {
   let providerArgument: SelectableProviderPreset | undefined;
   let providerModel: string | undefined;
   let providerFreeOnly = false;
+  let keyAction: CliOptions["keyAction"];
+  let keyProvider: string | undefined;
   let doctorRuntimeOnly = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -161,6 +168,8 @@ export function parse(args: string[]): CliOptions {
     if (arg === "tui") command = "tui";
     else if (arg === "auth") command = "auth";
     else if (arg === "provider") command = "provider";
+    else if (arg === "free") command = "free";
+    else if (arg === "key") command = "key";
     else if (arg === "loop") command = "loop";
     else if (arg === "search") command = "search";
     else if (arg === "mcp") command = "mcp";
@@ -292,6 +301,15 @@ export function parse(args: string[]): CliOptions {
       } else {
         throw new Error("Provider command contains too many positional arguments.");
       }
+    } else if (command === "key" && !arg.startsWith("--")) {
+      if (!keyAction) {
+        if (arg !== "set" && arg !== "status" && arg !== "clear") throw new Error("Key action must be set, status, or clear.");
+        keyAction = arg;
+      } else if (!keyProvider) {
+        keyProvider = arg;
+      } else {
+        throw new Error("Key command contains too many positional arguments.");
+      }
     } else if (command === "update" && !arg.startsWith("--")) {
       if (arg !== "check") throw new Error("The only enabled update action is check; installation remains disabled until a signed release channel exists.");
     } else if (command === "artifact" && !arg.startsWith("--")) {
@@ -339,6 +357,8 @@ export function parse(args: string[]): CliOptions {
     ...(providerArgument ? { providerArgument } : {}),
     ...(providerModel ? { providerModel } : {}),
     providerFreeOnly,
+    ...(keyAction ? { keyAction } : {}),
+    ...(keyProvider ? { keyProvider } : {}),
     doctorRuntimeOnly,
   };
 }
@@ -474,6 +494,7 @@ export async function doctor(runtimeOnly = false): Promise<number> {
   process.stdout.write(selectionRequired
     ? "  Active provider: SELECTION REQUIRED · run 'lightningloop provider list' then 'lightningloop provider select PRESET'\n"
     : `  Active provider: ${terminalSafe(profile.displayName)} · ${terminalSafe(profile.modelID)}\n`);
+  if (!selectionRequired) process.stdout.write(`  Free mode: ${profile.freeOnly ? "ON · only zero-cost models" : "off"}\n`);
   process.stdout.write(`  Provider sign-in: ${piManaged ? "MANAGED BY RUNTIME/UNKNOWN" : "NOT APPLICABLE"}\n`);
   const researchStatus = (environmentName: string, service: string): string => process.env[environmentName]?.trim()
     || keychainConfigured(service) ? "CONFIGURED" : "MISSING";
@@ -497,27 +518,17 @@ async function runProviderCommand(options: CliOptions): Promise<void> {
   if (action === "select") {
     if (!options.providerArgument) throw new Error("Provider select requires a reviewed preset.");
     let override: ProviderModelOverride | undefined;
-    if (options.providerModel) {
-      if (options.providerArgument === "openrouter") {
-        // Validate the chosen model against the live OpenRouter catalog and, under
-        // --free, require it to be a free model. Fail closed on an unknown id.
-        const catalog = await fetchOpenRouterModels();
-        const match = resolveSelectableModel(catalog, options.providerModel, options.providerFreeOnly);
-        override = {
-          modelID: match.id,
-          modelName: match.name,
-          ...(match.contextWindow >= 1_024 && match.contextWindow <= 2_000_000 ? { contextWindow: match.contextWindow } : {}),
-        };
-      } else {
-        override = { modelID: options.providerModel };
-      }
+    if (options.providerArgument === "openrouter") {
+      override = await buildOpenRouterOverride(options.providerModel, options.providerFreeOnly);
+    } else if (options.providerModel) {
+      override = { modelID: options.providerModel };
     }
     const selected = saveProviderPreset(options.providerArgument, providerConfigPath(), override);
-    process.stdout.write(`Selected ${terminalSafe(selected.displayName)} · ${terminalSafe(selected.modelName)}\n`);
+    process.stdout.write(`Selected ${terminalSafe(selected.displayName)} · ${terminalSafe(selected.modelName)}${selected.freeOnly ? " · FREE MODE" : ""}\n`);
     if (selected.preset === "generalcompute") {
       process.stdout.write("Credential: LightningLoop-managed API key (Settings Keychain on macOS, or GENERALCOMPUTE_API_KEY). Not runtime /login.\n");
     } else if (selected.preset === "openrouter") {
-      process.stdout.write("Credential: LightningLoop-managed API key (Settings Keychain on macOS, or OPENROUTER_API_KEY / OPENROUTER_KEY). Not runtime /login.\n");
+      process.stdout.write("Credential: LightningLoop-managed API key. Store it easily with 'lightningloop key set openrouter', or set OPENROUTER_API_KEY / OPENROUTER_KEY. Not runtime /login.\n");
       process.stdout.write("Discover free models with: lightningloop provider models --free\n");
     } else {
       process.stdout.write("Credential stored by LightningLoop: NO. Use 'lightningloop auth' to start provider sign-in.\n");
@@ -530,6 +541,67 @@ async function runProviderCommand(options: CliOptions): Promise<void> {
     process.stdout.write(`  ${preset} · ${terminalSafe(profile.displayName)} · ${terminalSafe(profile.modelName)}\n`);
   }
   process.stdout.write("Select with: lightningloop provider select PRESET\n");
+}
+
+/**
+ * Resolve an OpenRouter model override from the live catalog. With an explicit
+ * model it is validated (and, under freeOnly, required to be free); with no model
+ * but freeOnly it auto-picks the free router / first free model. Returns undefined
+ * only when neither a model nor free mode is requested (use the preset default).
+ */
+async function buildOpenRouterOverride(model: string | undefined, freeOnly: boolean): Promise<ProviderModelOverride | undefined> {
+  if (!model && !freeOnly) return undefined;
+  const catalog = await fetchOpenRouterModels();
+  const match = model ? resolveSelectableModel(catalog, model, freeOnly) : pickFreeModeModel(catalog);
+  return {
+    modelID: match.id,
+    modelName: match.name,
+    ...(match.contextWindow >= 1_024 && match.contextWindow <= 2_000_000 ? { contextWindow: match.contextWindow } : {}),
+    ...(freeOnly ? { freeOnly: true } : {}),
+  };
+}
+
+const KEY_STORE_PROVIDERS = ["openrouter", "generalcompute", "cerebras"] as const;
+
+/** Easy, secure API-key storage in the OS secret store. Values are never echoed or filed. */
+async function runKeyCommand(options: CliOptions): Promise<void> {
+  const action = options.keyAction ?? "status";
+  const providerName = options.keyProvider;
+  if (!providerName || !(KEY_STORE_PROVIDERS as readonly string[]).includes(providerName)) {
+    throw new Error(`Key command requires a provider: ${KEY_STORE_PROVIDERS.join(", ")}.`);
+  }
+  const profile = profileForPreset(providerName as SelectableProviderPreset);
+  const backend = defaultSecretBackend();
+  if (action === "status") {
+    const present = readStoredProviderCredential(profile, backend) !== undefined;
+    process.stdout.write(`LightningLoop key · ${providerName}\n`);
+    process.stdout.write(`  Secure store: ${terminalSafe(backend.name)}\n`);
+    process.stdout.write(`  Stored key: ${present ? "PRESENT" : "none"} · value never displayed\n`);
+    return;
+  }
+  if (action === "clear") {
+    clearProviderCredential(profile, backend);
+    process.stdout.write(`Cleared any stored ${providerName} key from ${terminalSafe(backend.name)}.\n`);
+    return;
+  }
+  // set: read the secret from stdin so it never appears in argv or shell history.
+  if (process.stdin.isTTY) {
+    throw new Error(`Pipe the key on stdin, e.g.: printf %s "$OPENROUTER_KEY" | lightningloop key set ${providerName}`);
+  }
+  let input = "";
+  for await (const chunk of process.stdin) input += String(chunk);
+  const secret = input.trim();
+  storeProviderCredential(profile, secret, backend);
+  process.stdout.write(`Stored ${providerName} key in ${terminalSafe(backend.name)}. It is never written to provider.json or logs.\n`);
+}
+
+/** "Just free mode": pin OpenRouter to a zero-cost model (free router preferred). */
+async function runFreeMode(options: CliOptions): Promise<void> {
+  const override = await buildOpenRouterOverride(options.providerModel, true);
+  const selected = saveProviderPreset("openrouter", providerConfigPath(), override);
+  process.stdout.write(`Free mode ON · OpenRouter · ${terminalSafe(selected.modelName)} (${terminalSafe(selected.modelID)})\n`);
+  process.stdout.write("Only zero-cost models will run; runs re-verify the model is still free.\n");
+  process.stdout.write("Add your key with 'lightningloop key set openrouter' (or set OPENROUTER_API_KEY / OPENROUTER_KEY), then run llp.\n");
 }
 
 /** Credential-free live discovery of the OpenRouter catalog, optionally free models only. */
@@ -679,6 +751,8 @@ async function runLoop(options: CliOptions): Promise<void> {
     if (isProviderSelectionRequired(profile)) {
       throw new Error("Provider selection is required. Run 'lightningloop provider list' then 'lightningloop provider select PRESET'.");
     }
+    // Just-free-mode guarantee: refuse to run if the pinned model is no longer free.
+    await enforceFreeMode(profile);
     if (options.approveVerificationCommands && !options.approveArtifactWrites) {
       throw new Error("--approve-verification-commands requires --approve-artifact-writes.");
     }
@@ -754,6 +828,14 @@ async function entry(): Promise<void> {
   }
   if (options.command === "provider") {
     await runProviderCommand(options);
+    return;
+  }
+  if (options.command === "free") {
+    await runFreeMode(options);
+    return;
+  }
+  if (options.command === "key") {
+    await runKeyCommand(options);
     return;
   }
   if (options.command === "auth") {

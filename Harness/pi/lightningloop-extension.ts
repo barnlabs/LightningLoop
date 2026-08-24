@@ -11,6 +11,7 @@ import { validateImagePaths } from "../core/image-input.js";
 import { loadProviderProfile, providerCredentialService, providerHeaders } from "../core/provider-profile.js";
 import { LoopEngine } from "../core/loop-engine.js";
 import { PiProviderAdapter } from "./model-adapter.js";
+import { enforceFreeMode } from "../core/openrouter.js";
 import { SearchClient, type SearchProvider } from "../search/search-client.js";
 import { applyActiveSystemPromptAddenda } from "../core/evolution-store.js";
 import { applyManagedMemoryContext, loadEligibleMemoryContext } from "../core/memory-store.js";
@@ -310,6 +311,8 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
           : undefined;
         const memories = loadEligibleMemoryContext();
         assertNoConfiguredCredential(memories, profile);
+        // Just-free-mode guarantee: refuse to run a model that is no longer free.
+        await enforceFreeMode(profile);
         const engine = new LoopEngine(await PiProviderAdapter.create(profile), {
           images,
           memories,

@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertModelFreeInCatalog,
+  enforceFreeMode,
   fetchOpenRouterModels,
   isFreeModel,
+  OPENROUTER_FREE_ROUTER_ID,
   OPENROUTER_MODELS_URL,
   parseOpenRouterModels,
+  pickFreeModeModel,
   resolveSelectableModel,
   selectFreeModels,
 } from "./openrouter.js";
@@ -77,6 +81,34 @@ test("resolveSelectableModel validates against the catalog and enforces free-onl
   assert.throws(() => resolveSelectableModel(catalog, "vendor/does-not-exist", false), /not in the current OpenRouter catalog/);
   // Fail closed: a non-free model under --free is rejected.
   assert.throws(() => resolveSelectableModel(catalog, "vendor/paid", true), /is not a free model/);
+});
+
+test("pickFreeModeModel prefers the free router, then the first free model, else throws", () => {
+  const router = { id: OPENROUTER_FREE_ROUTER_ID, name: "Free Router", contextWindow: 200000, promptPrice: 0, completionPrice: 0, free: true };
+  assert.equal(pickFreeModeModel([paidModel, router, freeModel]).id, OPENROUTER_FREE_ROUTER_ID);
+  assert.equal(pickFreeModeModel([paidModel, freeModel]).id, freeModel.id);
+  assert.throws(() => pickFreeModeModel([paidModel]), /no free models/);
+});
+
+test("assertModelFreeInCatalog fails closed for unknown or newly-paid models", () => {
+  assert.doesNotThrow(() => assertModelFreeInCatalog([freeModel], freeModel.id));
+  assert.throws(() => assertModelFreeInCatalog([freeModel], "vendor/unknown"), /no longer in the OpenRouter catalog/);
+  assert.throws(() => assertModelFreeInCatalog([paidModel], paidModel.id), /no longer free/);
+});
+
+test("enforceFreeMode throws on a non-free pinned model but tolerates a network failure", async () => {
+  const freeResponse: typeof fetch = async () => new Response(JSON.stringify({ data: [{ id: "vendor/free:free", pricing: { prompt: "0", completion: "0" } }] }), { status: 200, headers: { "content-type": "application/json" } });
+  const paidResponse: typeof fetch = async () => new Response(JSON.stringify({ data: [{ id: "vendor/free:free", pricing: { prompt: "0.1", completion: "0.1" } }] }), { status: 200, headers: { "content-type": "application/json" } });
+  const networkError: typeof fetch = async () => { throw new Error("offline"); };
+
+  // Non-free-mode profile is a no-op (no fetch needed).
+  await assert.doesNotReject(() => enforceFreeMode({ preset: "openrouter", modelID: "x", freeOnly: false }, { fetchImpl: freeResponse }));
+  // Free-mode profile with a still-free model passes.
+  await assert.doesNotReject(() => enforceFreeMode({ preset: "openrouter", modelID: "vendor/free:free", freeOnly: true }, { fetchImpl: freeResponse }));
+  // Free-mode profile whose model turned paid is refused.
+  await assert.rejects(() => enforceFreeMode({ preset: "openrouter", modelID: "vendor/free:free", freeOnly: true }, { fetchImpl: paidResponse }), /no longer free/);
+  // Network failure is tolerated (validated at selection).
+  await assert.doesNotReject(() => enforceFreeMode({ preset: "openrouter", modelID: "vendor/free:free", freeOnly: true }, { fetchImpl: networkError }));
 });
 
 test("parseOpenRouterModels rejects a catalog that exceeds the entry bound", () => {

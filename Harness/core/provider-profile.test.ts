@@ -127,6 +127,25 @@ test("OpenRouter is a LightningLoop-managed OpenAI-compatible preset with a free
   assert.throws(() => parseProviderProfile({ ...profile, baseURL: "https://example.com/v1" }), /verified API base URL/);
 });
 
+test("free mode persists a freeOnly OpenRouter profile and rejects freeOnly on other presets", () => {
+  const directory = mkdtempSync(join(tmpdir(), "lightningloop-freeonly-"));
+  const config = join(directory, "provider.json");
+  try {
+    const selected = saveProviderPreset("openrouter", config, { modelID: "openrouter/free", modelName: "Free Router", freeOnly: true });
+    assert.equal(selected.freeOnly, true);
+    const reloaded = loadProviderProfile(config);
+    assert.equal(reloaded.freeOnly, true);
+    assert.equal(reloaded.preset, "openrouter");
+    // Round-trips through the parser.
+    assert.equal(parseProviderProfile(selected).freeOnly, true);
+    // freeOnly is OpenRouter-only.
+    assert.throws(() => saveProviderPreset("generalcompute", config, { modelID: "minimax-m2.7", freeOnly: true }), /only supported for the OpenRouter/);
+    assert.throws(() => parseProviderProfile({ ...profileForPreset("generalcompute"), freeOnly: true }), /only supported for the OpenRouter/);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
 test("provider select openrouter can persist a chosen model and rejects it for runtime-managed presets", () => {
   const directory = mkdtempSync(join(tmpdir(), "lightningloop-openrouter-select-"));
   const config = join(directory, "provider.json");

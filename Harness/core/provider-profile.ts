@@ -41,6 +41,12 @@ export interface ProviderProfile {
    * (GeneralCompute) and custom OpenAI-compatible endpoints.
    */
   piProviderID?: string;
+  /**
+   * "Just free mode": when true, the profile is pinned to a zero-priced model and
+   * runtime paths must refuse to run a non-free model. Only meaningful for
+   * OpenRouter today (its catalog exposes per-model pricing).
+   */
+  freeOnly?: boolean;
 }
 
 /** Presets whose authentication and model catalog are owned by the Pi runtime. */
@@ -200,6 +206,8 @@ export function parseProviderProfile(value: unknown): ProviderProfile {
   if (!modelID || modelID.length > 200 || /[\r\n\0]/.test(modelID)) throw new Error("Model ID must contain 1-200 safe characters.");
   if (!modelName || modelName.length > 120) throw new Error("Model name must contain 1-120 characters.");
   if (typeof root.supportsImages !== "boolean") throw new Error("supportsImages must be true or false.");
+  if (root.freeOnly !== undefined && typeof root.freeOnly !== "boolean") throw new Error("freeOnly must be true or false.");
+  if (root.freeOnly === true && preset !== "openrouter") throw new Error("Free mode is only supported for the OpenRouter provider.");
   return {
     schemaVersion: PROVIDER_CONFIG_VERSION,
     id,
@@ -212,6 +220,7 @@ export function parseProviderProfile(value: unknown): ProviderProfile {
     contextWindow: boundedInteger(root.contextWindow, "contextWindow", 1_024, 2_000_000),
     maxOutputTokens: boundedInteger(root.maxOutputTokens, "maxOutputTokens", 256, 131_072),
     ...(isPiManagedPreset(preset) ? { piProviderID: preset } : {}),
+    ...(root.freeOnly === true ? { freeOnly: true } : {}),
   };
 }
 
@@ -257,6 +266,8 @@ export interface ProviderModelOverride {
   supportsImages?: boolean;
   contextWindow?: number;
   maxOutputTokens?: number;
+  /** Pin the profile to free-only ("just free mode"). OpenRouter only. */
+  freeOnly?: boolean;
 }
 
 /**
@@ -273,6 +284,9 @@ export function applyModelOverride(profile: ProviderProfile, override: ProviderM
     throw new Error("Model ID must contain 1-200 safe characters.");
   }
   const modelName = (override.modelName ?? modelID).trim().slice(0, 120) || modelID;
+  if (override.freeOnly === true && profile.preset !== "openrouter") {
+    throw new Error("Free mode is only supported for the OpenRouter provider.");
+  }
   return {
     ...profile,
     modelID,
@@ -280,6 +294,7 @@ export function applyModelOverride(profile: ProviderProfile, override: ProviderM
     ...(override.supportsImages !== undefined ? { supportsImages: override.supportsImages } : {}),
     ...(override.contextWindow !== undefined ? { contextWindow: boundedInteger(override.contextWindow, "contextWindow", 1_024, 2_000_000) } : {}),
     ...(override.maxOutputTokens !== undefined ? { maxOutputTokens: boundedInteger(override.maxOutputTokens, "maxOutputTokens", 256, 131_072) } : {}),
+    ...(override.freeOnly === true ? { freeOnly: true } : {}),
   };
 }
 
