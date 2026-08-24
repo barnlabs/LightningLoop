@@ -49,6 +49,8 @@ This document is authoritative for scope. It is deliberately harsh: partial work
 | CC-A7 | **Easy secure key entry in the GUI** (masked field, Keychain-only, never echoed) | Settings accepts OpenRouter/Cerebras keys into Keychain; value never rendered or exported; unit test asserts redaction | GUI | manual-macos | TODO |
 | CC-A8 | **Login-provider onboarding** (Codex, Grok/xAI, others) is one-click from GUI/CLI | `auth` launches Pi `/login`; GUI surfaces sign-in state per provider without copying credentials | CROSS | manual-macos + integration | TODO |
 | CC-A9 | **Model fusion** (combine free + paid models in one run) | a run can route/aggregate ≥2 models with a defined strategy; result records which model produced which contribution; deterministic gates unchanged | HARNESS | unit + integration + live | TODO |
+| CC-A10 | **Just-free mode** | `lightningloop free` / `provider select openrouter --free` pins a zero-cost model (free router preferred), persists `freeOnly`, and runs re-verify the model is still free (fail-closed on paid); `doctor` shows Free mode | HARNESS | unit + integration | DONE (critic PASS pending) |
+| CC-A11 | **Easy + secure key storage** | `key set/status/clear` stores in the OS secret store (macOS Keychain / Linux libsecret), secret read from stdin (never argv), never written to a file; fails closed with env guidance when no store exists; runtime resolution reads env→store | CROSS | unit + integration | HARNESS-DONE (critic PASS pending; GUI pending) |
 
 Notes: CC-A1..A4 are the first implemented increment (harness). CC-A9 (fusion) is a
 real architecture change: today `LoopEngine` takes exactly one adapter — a fusion
@@ -104,6 +106,13 @@ Note: no "humanizer"/potetostack skill exists anywhere in the repo. CC-E4 is
 `BLOCKED` until the owner provides the skill or its source; the humanization pass
 then runs against it.
 
+## G. Install & distribution
+
+| ID | Requirement | Proof predicate | Surface | Test | Status |
+|----|-------------|-----------------|---------|------|--------|
+| CC-G1 | **Easy + secure install via bun**, then `llp` works | `script/install_bun.sh` runs `bun install --ignore-scripts` (locked from `package-lock.json`), builds the harness, and `bun link`s `llp`/`lloop`/`lightningloop`; `llp help` runs from PATH | HARNESS | integration | DONE (verified; critic PASS pending) |
+| CC-G2 | **Custom-themed `llp` experience** | the TUI shows the LightningLoop-branded header/footer/status; `llp free` + `llp key set` are discoverable | CROSS | manual-macos + integration | PARTIAL (TUI theme exists; deeper theming TODO) |
+
 ## F. Governance (this request's explicit deliverables)
 
 | ID | Requirement | Proof predicate | Surface | Test | Status |
@@ -120,6 +129,11 @@ then runs against it.
   returned **PASS for CC-A1, CC-A2, CC-A3, CC-A4** (harness surface). Open
   follow-ups: DNS-pinned `/models` fetch, a committed `test:integration` target,
   live inference test (needs `OPENROUTER_KEY` in env), and the GUI (macOS) surface.
+- **Increment 2/3/4 — Free mode (CC-A10), key storage (CC-A11), bun install
+  (CC-G1):** implemented and self-verified (Free mode pins `openrouter/free` with
+  fail-closed runtime re-check; libsecret key round-trip proven on Linux; bun
+  install → `bun link` → `llp help` proven in a temp checkout). Independent critic
+  review of these is pending.
 
 ---
 
