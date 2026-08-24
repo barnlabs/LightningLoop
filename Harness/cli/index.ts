@@ -14,6 +14,8 @@ import { validatePiPassthrough } from "../core/pi-options.js";
 import { terminalSafe } from "../core/terminal-output.js";
 import { createLightningLoopExtension } from "../pi/lightningloop-extension.js";
 import { PiProviderAdapter } from "../pi/model-adapter.js";
+import { FusionAdapter, buildOpenRouterFusionMembers, parseFusionModelIds, type FusionCallProvenance } from "../core/fusion-adapter.js";
+import type { AgentAdapter } from "../core/loop-types.js";
 import { captureSearchCredentials, SearchClient, type SearchProvider } from "../search/search-client.js";
 import { runJsonlServer } from "../rpc/server.js";
 import { callMcpServer, verifyMcpServer, type McpCallResult, type McpVerification } from "../mcp/client.js";
@@ -82,6 +84,7 @@ interface CliOptions {
   providerArgument?: SelectableProviderPreset;
   providerModel?: string;
   providerFreeOnly: boolean;
+  fusionModels?: string;
   keyAction?: "set" | "status" | "clear";
   keyProvider?: string;
   doctorRuntimeOnly: boolean;
@@ -101,6 +104,7 @@ Usage:
   lightningloop free [--model ID]
   lightningloop key set|status|clear <openrouter|generalcompute|cerebras>
   lightningloop loop [GOAL] [--cycles 1-8] [--image PATH] [--research exa|brave|firecrawl]
+    [--fusion "openrouter/id1,openrouter/id2"] (openrouter, non-free; runs 2-4 models per turn, longest reply wins)
     [--workspace EMPTY_DIR --approve-artifact-writes [--approve-verification-commands]]
   lightningloop search <exa|brave|firecrawl> QUERY [--limit 1-20]
   lightningloop mcp verify MANIFEST.json --workspace PATH --approve-manifest
@@ -158,6 +162,7 @@ export function parse(args: string[]): CliOptions {
   let providerArgument: SelectableProviderPreset | undefined;
   let providerModel: string | undefined;
   let providerFreeOnly = false;
+  let fusionModels: string | undefined;
   let keyAction: CliOptions["keyAction"];
   let keyProvider: string | undefined;
   let doctorRuntimeOnly = false;
@@ -193,6 +198,12 @@ export function parse(args: string[]): CliOptions {
       const value = args[index + 1];
       if (!value || value.length > 200 || /[\r\n\0]/u.test(value)) throw new Error("--model requires a bounded model ID.");
       providerModel = value;
+      index += 1;
+    }
+    else if (arg === "--fusion") {
+      const value = args[index + 1];
+      if (!value || value.length > 900 || /[\r\n\0]/u.test(value)) throw new Error("--fusion requires a bounded comma-separated model list.");
+      fusionModels = value;
       index += 1;
     }
     else if (arg === "--approve-skill-enable") {
@@ -357,6 +368,7 @@ export function parse(args: string[]): CliOptions {
     ...(providerArgument ? { providerArgument } : {}),
     ...(providerModel ? { providerModel } : {}),
     providerFreeOnly,
+    ...(fusionModels ? { fusionModels } : {}),
     ...(keyAction ? { keyAction } : {}),
     ...(keyProvider ? { keyProvider } : {}),
     doctorRuntimeOnly,
@@ -750,6 +762,40 @@ async function collectAnswers(clarification: Clarification, ask: Questioner): Pr
   return answers;
 }
 
+/** Bounded, credential-free one-line summary of a fusion call for the operator. */
+function renderFusionProvenance(provenance: FusionCallProvenance): string {
+  const members = provenance.members
+    .map((member) => {
+      const detail = member.status === "ok" ? ` ${member.contentChars ?? 0}c/${member.usage?.total ?? 0}t` : "";
+      return `${terminalSafe(member.model)} ${member.status}${detail}${member.selected ? "*" : ""}`;
+    })
+    .join(" · ");
+  const selected = provenance.selectedModel ? terminalSafe(provenance.selectedModel) : "none";
+  return `[fusion] ${provenance.role} · ${provenance.strategy} · selected=${selected} · ${members}`;
+}
+
+/**
+ * Build the adapter the loop engine drives. With --fusion this wraps two or more
+ * OpenRouter models in a {@link FusionAdapter}; the engine still sees one normal
+ * adapter, so every deterministic gate is unchanged. Otherwise the single
+ * configured provider adapter is returned.
+ */
+async function buildLoopAdapter(profile: ProviderProfile, options: CliOptions): Promise<AgentAdapter> {
+  if (!options.fusionModels) return PiProviderAdapter.create(profile);
+  if (profile.preset !== "openrouter") {
+    throw new Error("Model fusion is currently supported only for the OpenRouter provider. Run 'provider select openrouter' first, then pass --fusion \"id1,id2\".");
+  }
+  if (profile.freeOnly) {
+    throw new Error("Model fusion mixes free and paid models and cannot run while just-free-mode is pinned. Re-select openrouter without --free to use --fusion.");
+  }
+  const modelIDs = parseFusionModelIds(options.fusionModels);
+  const members = await buildOpenRouterFusionMembers(profile, modelIDs, (memberProfile) => PiProviderAdapter.create(memberProfile));
+  process.stdout.write(`Fusion: ${modelIDs.length} models · strategy longest · ${modelIDs.map((id) => terminalSafe(id)).join(", ")}\n`);
+  return new FusionAdapter(members, {
+    onProvenance: (provenance) => process.stdout.write(`${renderFusionProvenance(provenance)}\n`),
+  });
+}
+
 async function runLoop(options: CliOptions): Promise<void> {
   const pipedLines: string[] = [];
   if (!process.stdin.isTTY) {
@@ -794,7 +840,7 @@ async function runLoop(options: CliOptions): Promise<void> {
     const search = options.researchProvider ? new SearchClient() : undefined;
     const memories = loadEligibleMemoryContext();
     assertNoConfiguredCredential(memories, profile);
-    const engine = new LoopEngine(await PiProviderAdapter.create(profile), {
+    const engine = new LoopEngine(await buildLoopAdapter(profile, options), {
       images,
       memories,
       ...(artifactExecutor ? { artifactExecutor } : {}),
