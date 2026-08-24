@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { assertNoConfiguredCredential } from "../core/credential-safety.js";
 import { defaultProviderProfile, lightningLoopCredentialServices } from "../core/provider-profile.js";
-import { SearchClient, captureSearchCredentials, isPublicAddress, type SourceTransport } from "./search-client.js";
+import { SearchClient, captureSearchCredentials, isPublicAddress, parseDuckDuckGoHtml, type SourceTransport } from "./search-client.js";
 
 const publicResolver = async () => [{ address: "93.184.216.34", family: 4 as const }];
 function source(body: string, contentType = "text/plain", status = 200): SourceTransport {
@@ -476,5 +476,132 @@ test("opened source and llms.txt transports cannot exceed their absolute deadlin
   } finally {
     if (prior === undefined) delete process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST;
     else process.env.LIGHTNINGLOOP_LLMS_TXT_ALLOWLIST = prior;
+  }
+});
+
+// A compact but representative DuckDuckGo HTML result page: a direct-URL result,
+// a `/l/?uddg=` redirector result with an HTML entity in its title, a
+// DuckDuckGo-internal ad link that must be dropped, and a result whose URL
+// carries tracking query parameters.
+const DUCKDUCKGO_FIXTURE = `
+<div class="result results_links results_links_deep web-result">
+  <div class="links_main">
+    <a rel="nofollow" class="result__a" href="https://rust-lang.org/">Rust Programming Language</a>
+    <a class="result__snippet" href="https://rust-lang.org/"><b>Rust</b> is a fast, reliable <b>language</b>.</a>
+  </div>
+</div>
+<div class="result results_links results_links_deep web-result">
+  <div class="links_main">
+    <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FRust&amp;rut=abc123">Rust &amp; Wikipedia</a>
+    <a class="result__snippet" href="/l/?uddg=x">Encyclopedia entry about Rust.</a>
+  </div>
+</div>
+<div class="result result--ad">
+    <a rel="nofollow" class="result__a" href="https://duckduckgo.com/y.js?ad_provider=x">Sponsored</a>
+    <a class="result__snippet">Ad snippet</a>
+</div>
+<div class="result">
+    <a rel="nofollow" class="result__a" href="https://example.com/page?utm=track&amp;ref=ddg">Example Domain</a>
+    <a class="result__snippet">Example snippet without markup.</a>
+</div>
+`;
+
+function htmlResponse(body: string, contentType = "text/html; charset=UTF-8", status = 200): Response {
+  return new Response(body, { status, headers: { "Content-Type": contentType } });
+}
+
+test("parseDuckDuckGoHtml extracts direct + redirector URLs, decodes entities, and drops internal links", () => {
+  const parsed = parseDuckDuckGoHtml(DUCKDUCKGO_FIXTURE);
+  assert.equal(parsed.length, 3);
+  assert.deepEqual(parsed[0], { title: "Rust Programming Language", url: "https://rust-lang.org/", snippet: "Rust is a fast, reliable language." });
+  assert.deepEqual(parsed[1], { title: "Rust & Wikipedia", url: "https://en.wikipedia.org/wiki/Rust", snippet: "Encyclopedia entry about Rust." });
+  // Tracking query is preserved by the raw parser; the search gate strips it.
+  assert.equal(parsed[2]?.url, "https://example.com/page?utm=track&ref=ddg");
+  assert.equal(parseDuckDuckGoHtml("").length, 0);
+});
+
+test("free research needs no credential and normalizes every DuckDuckGo result", async () => {
+  let method = "";
+  let requestedURL = "";
+  let body = "";
+  let credentialReads = 0;
+  const client = new SearchClient(
+    async (input, init) => {
+      requestedURL = String(input);
+      method = init?.method ?? "GET";
+      body = typeof init?.body === "string" ? init.body : "";
+      return htmlResponse(DUCKDUCKGO_FIXTURE);
+    },
+    () => { credentialReads += 1; return undefined; },
+  );
+  const response = await client.search("free", "rust programming language", 5);
+  assert.equal(method, "POST");
+  assert.equal(new URL(requestedURL).origin, "https://html.duckduckgo.com");
+  assert.match(body, /(?:^|&)q=rust\+programming\+language(?:&|$)/u);
+  assert.equal(response.provider, "free");
+  assert.equal(response.results.length, 3);
+  assert.deepEqual(response.results.map((result) => result.url), [
+    "https://rust-lang.org/",
+    "https://en.wikipedia.org/wiki/Rust",
+    "https://example.com/page", // query stripped by the URL safety gate
+  ]);
+  assert.equal(response.results[0]?.snippet, "Rust is a fast, reliable language.");
+  assert.equal(response.results.every((result) => result.provider === "free"), true);
+  // The credential filter still runs (defense in depth) but no key is required.
+  assert.ok(credentialReads > 0);
+});
+
+test("free research redacts an ambient captured credential reflected in a result", async () => {
+  const leaked = "free-ambient-research-credential-90210";
+  captureSearchCredentials({ EXA_API_KEY: leaked });
+  const client = new SearchClient(
+    async () => htmlResponse(`
+      <div class="result">
+        <a rel="nofollow" class="result__a" href="https://example.org/leak">Leaky Result</a>
+        <a class="result__snippet">Reflected ${leaked} inside the snippet.</a>
+      </div>
+    `),
+    () => undefined,
+  );
+  const response = await client.search("free", "credential reflection", 3);
+  assert.equal(response.results.length, 1);
+  assert.equal(response.results[0]?.snippet, "[REDACTED]");
+  assert.doesNotMatch(JSON.stringify(response), new RegExp(leaked));
+});
+
+test("free research fails closed on non-HTML and on redirects", async () => {
+  const jsonClient = new SearchClient(
+    async () => new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }),
+    () => undefined,
+  );
+  await assert.rejects(jsonClient.search("free", "non-html"), /non-HTML response/u);
+
+  let redirectMode: RequestRedirect | undefined;
+  const redirectClient = new SearchClient(async (_input, init) => {
+    redirectMode = init?.redirect;
+    return new Response(null, { status: 302, headers: { Location: "https://html.duckduckgo.com/elsewhere" } });
+  }, () => undefined);
+  await assert.rejects(redirectClient.search("free", "redirect"), /rejected a redirect/u);
+  assert.equal(redirectMode, "error");
+});
+
+test("free research reaches DuckDuckGo live or skips cleanly without egress", async (t) => {
+  const client = new SearchClient();
+  let response;
+  try {
+    response = await client.search("free", "open source software foundation", 5);
+  } catch (error) {
+    t.skip(`DuckDuckGo egress unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  assert.equal(response.provider, "free");
+  if (response.results.length === 0) {
+    t.skip("DuckDuckGo returned no parseable results (anti-automation challenge)");
+    return;
+  }
+  for (const result of response.results) {
+    assert.match(result.url, /^https?:\/\/[^/]+\./u);
+    assert.equal(result.provider, "free");
+    assert.doesNotMatch(result.url, /duckduckgo\.com/u);
   }
 });

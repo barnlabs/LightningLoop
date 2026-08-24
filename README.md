@@ -6,7 +6,7 @@
 
 **Fast models. Strict evidence.**
 
-LightningLoop is BarnLabs’ open-source macOS app and cross-platform terminal interface for disciplined agent work. It turns a goal into a bounded loop: clarify, plan, challenge, implement, gather proof, and pause honestly when the available evidence cannot prove the outcome.
+LightningLoop is BarnLabs’ open-source macOS app and cross-platform terminal interface for disciplined agent work. It turns a goal into a bounded loop with three seats you can assign models to: **Researcher**, **Engineer**, and **Verifier**. All three cite only reputable primary sources. The GUI embeds a browser for reviewed artifacts and those sources; the terminal does the same with `llp browse`. A small shipped skill set is disclosed progressively by role.
 
 ![LightningLoop native macOS first-run interface](docs/screenshots/lightningloop-current-new-loop.png)
 
@@ -35,23 +35,23 @@ Fast models are often judged from one-shot prompts. LightningLoop tests a differ
 
 ```mermaid
 flowchart LR
-    G["Goal + images"] --> C["Clarify"]
+    G["Goal + images"] --> C["Researcher clarifies"]
     C --> P["Criteria + plan"]
-    P --> R1{"Plan review"}
+    P --> R1{"Verifier reviews plan"}
     R1 -->|Repair| P
-    R1 -->|Pass| I["Implement"]
-    I --> R2{"Deliverable review"}
+    R1 -->|Pass| I["Engineer implements"]
+    I --> R2{"Verifier reviews deliverable"}
     R2 -->|Repair| I
     R2 -->|Gold| D["Done"]
 ```
 
 ## What is included
 
-- A native SwiftUI macOS client with local history, source-image attachments, visible criteria, plan, reviews, trace, and run metrics.
+- A native SwiftUI macOS client with local history, source-image attachments, a reputable-source browser, visible criteria, plan, reviews, trace, and run metrics. Pick models for Researcher, Engineer, and Verifier in Settings.
 - A shared runtime integration for provider catalogs and official sign-in flows, while LightningLoop keeps its product, history, and evidence boundaries independent from providers.
 - Bounded promise/duty graphs with named requirements, outputs, routes, evidence traces, per-node visit caps, and total-step caps.
 - The shared runtime owns catalogs and model selection for every Pi-managed built-in provider. Custom and GeneralCompute profiles use LightningLoop's native `/models` discovery and connection test; that path cannot execute a loop without the shared harness.
-- Optional iterative research through Exa, Brave, or Firecrawl in the shared harness. The orchestrator researches before planning, and harsh reviewers may request narrow follow-up queries between repair rounds. Queries, URLs, and result counts are deduplicated and capped per run. Search snippets remain unverified; the harness can open the leading HTTPS sources with redirects disabled, preserve retrieval time/content hash/source class, and bind factual criteria to an exact opened URL. The parity-tested native research implementation is not reachable from production loop execution while no-harness execution is blocked.
+- Optional iterative research through keyless DuckDuckGo (`free`) plus Exa, Brave, or Firecrawl. The Researcher runs before planning. Only reputable primary hosts (`.gov`/`.edu`/`.mil`/`.int` and the committed documentation allowlist) are opened or cited. Search snippets stay unverified. Queries, URLs, and result counts are deduplicated and capped per run.
 - A shared TypeScript state machine used by the CLI and, when discoverable, the native app through a versioned JSONL subprocess protocol.
 - A policy-wrapped terminal interface that starts read-only. Optional execution uses a separate OS-sandboxed, per-call-confirmed path.
 - A platform-native managed overlay for skills, MCP manifests, tools, graphs, and prompts, with secret/tamper checks, three rotating backups, and explicit managed-skill install/enable/disable commands that never cross into runtime-owned state. Imported skills start disabled. Enable verifies a unique non-active staging tree before one atomic rename; disable atomically quarantines the active copy even when the inactive installation contains secret-shaped or symlink drift.

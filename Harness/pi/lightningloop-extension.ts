@@ -1,5 +1,5 @@
 import { createBashTool, type ExtensionAPI, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { renderBrandHeaderLines, renderStatusFooterLines } from "./lightningloop-theme.js";
 import { basename } from "node:path";
 import { resolve } from "node:path";
 import { WorkspaceBoundary, evaluateToolRequest } from "../core/capability-policy.js";
@@ -7,13 +7,16 @@ import { LIGHTNINGLOOP_SYSTEM_PROMPT } from "../core/system-prompt.js";
 import { SandboxedBashRuntime } from "../sandbox/sandboxed-bash.js";
 import { builtinWorkflowGuidance } from "../core/workflow-catalog.js";
 import { terminalSafe } from "../core/terminal-output.js";
+import { formatLiveUsageMeter } from "../core/usage-format.js";
 import { validateImagePaths } from "../core/image-input.js";
-import { loadProviderProfile, providerCredentialService, providerHeaders } from "../core/provider-profile.js";
+import { isProviderSelectionRequired, loadProviderProfile, providerCredentialService, providerHeaders } from "../core/provider-profile.js";
 import { LoopEngine } from "../core/loop-engine.js";
 import { PiProviderAdapter } from "./model-adapter.js";
+import { enforceFreeMode } from "../core/openrouter.js";
 import { SearchClient, type SearchProvider } from "../search/search-client.js";
-import { applyActiveSystemPromptAddenda } from "../core/evolution-store.js";
+import { applyActiveSystemPromptAddenda, loadActiveGuidance } from "../core/evolution-store.js";
 import { applyManagedMemoryContext, loadEligibleMemoryContext } from "../core/memory-store.js";
+import { deriveProjectIdentity } from "../core/project-identity.js";
 import { WorkspaceArtifactExecutor } from "../artifacts/workspace-artifact-executor.js";
 import { artifactSeedsForGoal } from "../artifacts/builtin-artifact-seeds.js";
 import {
@@ -31,6 +34,10 @@ import {
 import { assertCredentialSafeInput, assertNoConfiguredCredential } from "../core/credential-safety.js";
 import { dispatchNotification } from "../notifications/notification-dispatcher.js";
 import { encodePiApiKey } from "../core/pi-options.js";
+import { RosterAdapter, buildRosterMembers, formatRosterLines, isLoopAgent, loadLoopRoster, saveLoopAgentModel } from "../core/loop-roster.js";
+import { browseReputablePage, renderBrowsePage } from "../core/terminal-browser.js";
+import type { ProviderProfile } from "../core/provider-profile.js";
+import type { AgentAdapter } from "../core/loop-types.js";
 
 function keychainCommand(services: string[]): string {
   if (services.length < 1 || services.some((service) => !/^[A-Za-z0-9.-]+$/.test(service))) {
@@ -42,6 +49,50 @@ function keychainCommand(services: string[]): string {
 export interface LightningLoopExtensionOptions {
   /** Captured before TUI environment scrubbing; never read from ambient env here. */
   generalComputeApiKey?: string;
+  /** OpenRouter API key captured before TUI environment scrubbing. */
+  openRouterApiKey?: string;
+  /**
+   * Cerebras manual API key resolved by the CLI (env or OS secret store) before
+   * TUI environment scrubbing. When present, Cerebras runs as an OpenAI-compatible
+   * LightningLoop-managed provider instead of the Pi `/login` path.
+   */
+  cerebrasApiKey?: string;
+}
+
+type ManagedProviderRegistration = Parameters<ExtensionAPI["registerProvider"]>[1];
+
+async function createRosterAdapter(profile: ProviderProfile): Promise<AgentAdapter> {
+  const fallback = await PiProviderAdapter.create(profile);
+  const members = await buildRosterMembers(profile, loadLoopRoster(), async (memberProfile) => (
+    memberProfile.modelID === profile.modelID ? fallback : PiProviderAdapter.create(memberProfile)
+  ));
+  return new RosterAdapter(members, fallback);
+}
+
+/** OpenAI-compatible LightningLoop-managed provider registration for an API-key credential. */
+function managedOpenAiProviderRegistration(
+  profile: ReturnType<typeof loadProviderProfile>,
+  apiKey: string,
+): ManagedProviderRegistration {
+  return {
+    name: `LightningLoop / ${profile.displayName}`,
+    baseUrl: profile.baseURL,
+    apiKey,
+    api: "openai-completions",
+    authHeader: true,
+    headers: providerHeaders(profile),
+    models: [
+      {
+        id: profile.modelID,
+        name: profile.modelName,
+        reasoning: true,
+        input: profile.supportsImages ? ["text", "image"] : ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: profile.contextWindow,
+        maxTokens: profile.maxOutputTokens,
+      },
+    ],
+  };
 }
 
 export function createLightningLoopExtension(options: LightningLoopExtensionOptions = {}): ExtensionFactory {
@@ -72,41 +123,37 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
     description: "Allow individually confirmed workspace mutations and shell commands",
   });
 
-  if (!profile.piProviderID) {
-    const isGeneralCompute = profile.preset === "generalcompute";
-    const generalComputeEnv = isGeneralCompute ? options.generalComputeApiKey?.trim() : undefined;
+  const cerebrasManualApiKey = profile.preset === "cerebras" ? options.cerebrasApiKey?.trim() : undefined;
+  if (isProviderSelectionRequired(profile)) {
+    // First-run TUI: register commands and the terminal browser without a provider.
+  } else if (!profile.piProviderID) {
+    const envApiKey = profile.preset === "generalcompute"
+      ? options.generalComputeApiKey?.trim()
+      : profile.preset === "openrouter"
+        ? options.openRouterApiKey?.trim()
+        : undefined;
     if (process.platform !== "darwin") {
-      if (!isGeneralCompute || !generalComputeEnv) {
+      if (!envApiKey) {
         throw new Error(
-          isGeneralCompute
+          profile.preset === "generalcompute"
             ? "GeneralCompute on non-macOS requires GENERALCOMPUTE_API_KEY. It is not managed by runtime /login."
-            : "Custom provider Keychain profiles are macOS-only. Configure GeneralCompute with GENERALCOMPUTE_API_KEY or a runtime-managed built-in provider for cross-platform use.",
+            : profile.preset === "openrouter"
+              ? "OpenRouter on non-macOS requires OPENROUTER_API_KEY (or OPENROUTER_KEY). It is not managed by runtime /login."
+              : "Custom provider Keychain profiles are macOS-only. Configure GeneralCompute or OpenRouter with an API key environment variable, or a runtime-managed built-in provider for cross-platform use.",
         );
       }
     }
     // An explicitly captured TUI env key is process-local; otherwise macOS uses Keychain.
-    const apiKey = generalComputeEnv ?? (process.platform === "darwin"
-      ? keychainCommand([providerCredentialService(profile)])
-      : generalComputeEnv!);
-    pi.registerProvider(providerID, {
-      name: `LightningLoop / ${profile.displayName}`,
-      baseUrl: profile.baseURL,
-      apiKey: generalComputeEnv ? encodePiApiKey(generalComputeEnv) : apiKey,
-      api: "openai-completions",
-      authHeader: true,
-      headers: providerHeaders(profile),
-      models: [
-        {
-          id: profile.modelID,
-          name: profile.modelName,
-          reasoning: true,
-          input: profile.supportsImages ? ["text", "image"] : ["text"],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: profile.contextWindow,
-          maxTokens: profile.maxOutputTokens,
-        },
-      ],
-    });
+    const apiKey = envApiKey
+      ? encodePiApiKey(envApiKey)
+      : (process.platform === "darwin" ? keychainCommand([providerCredentialService(profile)]) : envApiKey!);
+    pi.registerProvider(providerID, managedOpenAiProviderRegistration(profile, apiKey));
+  } else if (cerebrasManualApiKey) {
+    // Cerebras manual-key override: run as a LightningLoop-managed OpenAI-compatible
+    // provider instead of the Pi /login path. The CLI already resolved the key from
+    // env or the OS secret store and registered it for redaction; it never touches
+    // provider.json. Without a manual key, Cerebras keeps the Pi-managed path.
+    pi.registerProvider(providerID, managedOpenAiProviderRegistration(profile, encodePiApiKey(cerebrasManualApiKey)));
   }
 
   let boundaryPromise: Promise<WorkspaceBoundary> | undefined;
@@ -126,38 +173,26 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
     if (ctx.mode === "tui") {
       ctx.ui.setHeader((_tui, theme) => ({
         render(width: number): string[] {
-          const rule = theme.fg("accent", "━".repeat(Math.max(1, width)));
-          const brand = `${theme.bold(theme.fg("accent", "ϟ  LIGHTNINGLOOP"))}${theme.fg("dim", "  /  BARNLABS")}`;
-          const loop = `${theme.fg("muted", `${profile.displayName} · ${profile.modelName}`)}  ${theme.fg("dim", "clarify → challenge → implement → verify")}`;
-          const identity = theme.fg("dim", profile.piProviderID
-            ? "Provider-neutral · authentication and model catalog managed by the LightningLoop runtime"
-            : profile.preset === "generalcompute"
-              ? "GeneralCompute · LightningLoop-managed fixed provider · Keychain or GENERALCOMPUTE_API_KEY"
-              : profile.preset === "selection-required"
-                ? "Provider selection required · run lightningloop provider select"
-                : "Custom provider · credential stays in macOS Keychain");
-          return [
-            truncateToWidth(rule, width),
-            truncateToWidth(brand, width),
-            truncateToWidth(loop, width),
-            truncateToWidth(identity, width),
-            "",
-          ];
+          return renderBrandHeaderLines(theme, {
+            displayName: profile.displayName,
+            modelName: profile.modelName,
+            runtimeManaged: Boolean(profile.piProviderID),
+            preset: profile.preset,
+          }, width);
         },
         invalidate() {},
       }));
       ctx.ui.setFooter((_tui, theme) => ({
         render(width: number): string[] {
-          const left = `${theme.fg(executionEnabled ? "warning" : "success", `● ${policyLabel}`)}${theme.fg("dim", `  ·  ${workspaceLabel}`)}`;
-          const research = activeResearchProvider ? `research:${activeResearchProvider}` : "research:off";
-          const artifacts = activeArtifactWorkspace ? (activeArtifactCommands ? "artifacts+verify" : "artifacts") : "text-only";
-          const right = theme.fg("muted", `${profile.displayName}  ·  ${research}  ·  ${artifacts}  ·  /loop`);
-          const help = theme.fg("dim", "Attach /image · set /research or /artifacts · run /loop <goal>");
-          if (width >= 68) {
-            const padding = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
-            return [truncateToWidth(left + padding + right, width), truncateToWidth(help, width)];
-          }
-          return [truncateToWidth(left, width), truncateToWidth(right, width), truncateToWidth(help, width)];
+          return renderStatusFooterLines(theme, {
+            displayName: profile.displayName,
+            executionEnabled,
+            policyLabel,
+            workspaceLabel,
+            researchProvider: activeResearchProvider,
+            artifactWorkspace: Boolean(activeArtifactWorkspace),
+            artifactCommands: activeArtifactCommands,
+          }, width);
         },
         invalidate() {},
       }));
@@ -192,7 +227,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
   });
 
   pi.on("before_agent_start", (event, ctx) => {
-    const memories = loadEligibleMemoryContext();
+    const memories = loadEligibleMemoryContext(undefined, undefined, undefined, deriveProjectIdentity(process.cwd()).id);
     const current = applyManagedMemoryContext(
       applyActiveSystemPromptAddenda(ctx.getSystemPrompt()),
       memories,
@@ -278,6 +313,10 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
         ctx.ui.notify("The goal was rejected by the credential-safety boundary.", "error");
         return;
       }
+      if (isProviderSelectionRequired(profile)) {
+        ctx.ui.notify("Select a provider first with `lightningloop provider select PRESET`.", "warning");
+        return;
+      }
       if (!ctx.isIdle() || activeLoopController) {
         ctx.ui.notify("A model turn or LightningLoop run is already active.", "warning");
         return;
@@ -299,11 +338,14 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
               await artifactSeedsForGoal(goal, images),
             )
           : undefined;
-        const memories = loadEligibleMemoryContext();
+        const memories = loadEligibleMemoryContext(undefined, undefined, undefined, deriveProjectIdentity(process.cwd()).id);
         assertNoConfiguredCredential(memories, profile);
-        const engine = new LoopEngine(await PiProviderAdapter.create(profile), {
+        // Just-free-mode guarantee: refuse to run a model that is no longer free.
+        await enforceFreeMode(profile);
+        const engine = new LoopEngine(await createRosterAdapter(profile), {
           images,
           memories,
+          approvedSkills: loadActiveGuidance().filter((item) => item.kind === "skill").map((item) => item.content),
           ...(artifactExecutor ? { artifactExecutor } : {}),
           ...(activeResearchProvider && search ? {
             research: {
@@ -336,6 +378,9 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
           4,
           async (event) => {
             ctx.ui.setStatus("lightningloop-run", event.message);
+            if (event.usage && event.usage.total > 0) {
+              ctx.ui.setStatus("lightningloop-usage", formatLiveUsageMeter(event.usage));
+            }
           },
           controller.signal,
         );
@@ -374,6 +419,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
       } finally {
         activeLoopController = undefined;
         ctx.ui.setStatus("lightningloop-run", undefined);
+        ctx.ui.setStatus("lightningloop-usage", undefined);
       }
     },
   });
@@ -390,8 +436,48 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
     },
   });
 
+  pi.registerCommand("agents", {
+    description: "List or pin models for Researcher, Engineer, and Verifier",
+    handler: async (args, ctx) => {
+      const tokens = args.trim().split(/\s+/u).filter(Boolean);
+      try {
+        if (tokens[0] === "select") {
+          const role = tokens[1] ?? "";
+          const model = tokens[2] ?? "";
+          if (!isLoopAgent(role) || !model) {
+            ctx.ui.notify("Usage: /agents select researcher|engineer|verifier MODEL_ID", "warning");
+            return;
+          }
+          const roster = saveLoopAgentModel(role, model);
+          ctx.ui.notify(`Pinned ${role} · ${model}\n${formatRosterLines(roster, profile.modelID).join("\n")}`, "info");
+          return;
+        }
+        ctx.ui.notify(`LightningLoop agents\n${formatRosterLines(loadLoopRoster(), profile.modelID).join("\n")}`, "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Agent roster failed closed.", "error");
+      }
+    },
+  });
+
+  pi.registerCommand("browse", {
+    description: "Open one reputable HTTPS page as a terminal snapshot",
+    handler: async (args, ctx) => {
+      const url = args.trim();
+      if (!url) {
+        ctx.ui.notify("Usage: /browse https://reputable.example/path", "warning");
+        return;
+      }
+      try {
+        const page = await browseReputablePage(url);
+        ctx.ui.notify(renderBrowsePage(page).join("\n"), "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Browse failed closed.", "error");
+      }
+    },
+  });
+
   pi.registerCommand("research", {
-    description: "Choose Exa, Brave, Firecrawl, or off for the next runs",
+    description: "Choose free (keyless), Exa, Brave, Firecrawl, or off for the next runs",
     handler: async (args, ctx) => {
       const value = args.trim().toLowerCase();
       if (value === "off" || value === "none") {
@@ -399,12 +485,13 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
         ctx.ui.notify("Automatic research is off.", "info");
         return;
       }
-      if (value !== "exa" && value !== "brave" && value !== "firecrawl") {
-        ctx.ui.notify("Usage: /research exa|brave|firecrawl|off", "warning");
+      if (value !== "exa" && value !== "brave" && value !== "firecrawl" && value !== "free") {
+        ctx.ui.notify("Usage: /research free|exa|brave|firecrawl|off", "warning");
         return;
       }
       activeResearchProvider = value;
-        ctx.ui.notify(`Automatic research will use ${value}. Its credential is checked only when /loop starts.`, "info");
+      const detail = value === "free" ? "No key required (DuckDuckGo HTML)." : "Its credential is checked only when /loop starts.";
+      ctx.ui.notify(`Automatic research will use ${value}. ${detail}`, "info");
     },
   });
 
@@ -586,6 +673,56 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
     },
   });
 
+  pi.registerCommand("desire", {
+    description: "List global (user) and current-project desires/preferences",
+    handler: async (_args, ctx) => {
+      try {
+        const projectID = deriveProjectIdentity(process.cwd()).id;
+        const desires = listManagedMemory().filter((record) => record.kind === "desire");
+        assertNoConfiguredCredential(desires.flatMap((record) => [record.statement, record.sourceArtifact, ...record.tags]), profile);
+        const inScope = desires.filter((record) => record.scope === "user" || record.projectID === undefined || record.projectID === projectID);
+        const content = inScope.length === 0
+          ? `# LightningLoop desires\n\nNo global or project desires for this project (\`${projectID}\`). Nothing is promoted silently.`
+          : `# LightningLoop desires · project \`${projectID}\`\n\n${inScope.map((record) => {
+              const where = record.scope === "user" ? "global" : `project ${record.projectID ?? "(any)"}`;
+              const status = record.promotionApprovedByUser ? "eligible" : "inactive — promotion required";
+              return `- **${where} · ${status}** · \`${record.id}\`\n  ${terminalSafe(record.statement)}`;
+            }).join("\n")}`;
+        pi.sendMessage({ customType: "lightningloop-desire", content, display: true }, { triggerTurn: false });
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Desire loading failed closed.", "error");
+      }
+    },
+  });
+
+  pi.registerCommand("desire-add", {
+    description: "Capture a global (user) or current-project desire without silently promoting it",
+    handler: async (args, ctx) => {
+      const target = args.trim().toLowerCase();
+      if (target !== "global" && target !== "project") {
+        ctx.ui.notify("Usage: /desire-add global|project", "warning");
+        return;
+      }
+      const statement = (await ctx.ui.editor("Desire / preference (secrets are prohibited)"))?.trim();
+      if (!statement) return;
+      try {
+        assertNoConfiguredCredential([statement], profile);
+        const scope = target === "global" ? "user" : "project";
+        const projectID = target === "project" ? deriveProjectIdentity(process.cwd()).id : undefined;
+        const record = addManagedMemory({
+          scope,
+          kind: "desire",
+          statement,
+          sourceArtifact: target === "global" ? "User desire (global)" : "User desire (project)",
+          ...(projectID ? { projectID } : {}),
+        });
+        ctx.ui.notify(`Desire ${record.id} captured inactive${projectID ? ` for project ${projectID}` : " globally"}. Use /memory-promote ${record.id} to make it eligible.`, "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Desire was not saved.", "error");
+      }
+    },
+  });
+
   pi.registerCommand("evolution", {
     description: "List prompt, skill, tool, MCP, and memory-policy proposals",
     handler: async (_args, ctx) => {
@@ -731,7 +868,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
     description: "Show the LightningLoop quick start",
     handler: async (_args, ctx) => {
       ctx.ui.notify(
-        "Queue images with /image, choose /research, and use /artifacts /empty/output [--verify] for real run-owned files. Run /loop <goal>. Govern durable context with /memory and /memory-add; govern reviewed changes with /evolution and /evolution-propose. Use /loop-cancel to stop safely and /quit or /exit to close.",
+        "Pin /agents select researcher|engineer|verifier MODEL. Browse a reputable page with /browse URL. Queue images with /image, choose /research free, and use /artifacts /empty/output [--verify] for run-owned files. Run /loop <goal>. Capture /desire. Govern /memory and /evolution. /loop-cancel stops the run.",
         "info",
       );
     },

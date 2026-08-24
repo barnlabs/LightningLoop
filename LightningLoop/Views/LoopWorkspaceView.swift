@@ -1,8 +1,10 @@
 import SwiftUI
+import WebKit
 
 private enum WorkspaceSection: String, CaseIterable, Identifiable {
     case output = "Output"
     case artifacts = "Evidence"
+    case browser = "Browser"
     case criteria = "Criteria"
     case plan = "Plan"
     case reviews = "Reviews"
@@ -13,6 +15,7 @@ private enum WorkspaceSection: String, CaseIterable, Identifiable {
         switch self {
         case .output: "doc.richtext"
         case .artifacts: "viewfinder"
+        case .browser: "safari"
         case .criteria: "scope"
         case .plan: "list.number"
         case .reviews: "checkmark.seal"
@@ -46,6 +49,7 @@ struct LoopWorkspaceView: View {
                     switch section {
                     case .output: output
                     case .artifacts: artifacts
+                    case .browser: LoopBrowserView(session: session)
                     case .criteria: criteria
                     case .plan: plan
                     case .reviews: reviews
@@ -367,6 +371,93 @@ struct LoopWorkspaceView: View {
                     Text(session.statusMessage).foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+}
+
+private struct LoopBrowserView: View {
+    let session: LoopSession
+    @State private var address = "https://www.rfc-editor.org/rfc/rfc9110"
+    @State private var destination: URL?
+    @State private var refusal = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Browser").font(.title2.bold())
+            Text("Opens hash-verified Evidence Lab pages on 127.0.0.1, or one reputable HTTPS primary source. Everything else is refused.")
+                .foregroundStyle(.secondary)
+            HStack {
+                TextField("https://…", text: $address)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.body.monospaced())
+                Button("Open", action: open)
+            }
+            if session.artifactReport != nil {
+                Text("Paste a reviewed 127.0.0.1 Evidence Lab URL from the Evidence tab to inspect it here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if !refusal.isEmpty {
+                Text(refusal).foregroundStyle(.orange)
+            }
+            LoopWebView(url: destination)
+                .frame(minHeight: 420)
+                .background(LoopBrand.raisedSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .accessibilityIdentifier("loop.browser")
+    }
+
+    private func open() {
+        guard let url = URL(string: address.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            refusal = "Enter a valid URL."
+            destination = nil
+            return
+        }
+        guard SourceTrust.isReputable(url) else {
+            refusal = "Refused: not a reputable primary source or reviewed artifact."
+            destination = nil
+            return
+        }
+        refusal = ""
+        destination = url
+    }
+}
+
+private struct LoopWebView: NSViewRepresentable {
+    let url: URL?
+
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        view.navigationDelegate = context.coordinator
+        return view
+    }
+
+    func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.allowed = url
+        guard let url else { return }
+        if view.url != url {
+            view.load(URLRequest(url: url))
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var allowed: URL?
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            guard let url = navigationAction.request.url, SourceTrust.isReputable(url) else {
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
         }
     }
 }

@@ -8,7 +8,10 @@ import type { IncomingHttpHeaders } from "node:http";
 import { registerRuntimeCredential, runtimeCredentialValuesForFiltering } from "../core/credential-safety.js";
 import { lightningLoopCredentialServices, loadProviderProfile } from "../core/provider-profile.js";
 
-export type SearchProvider = "exa" | "brave" | "firecrawl";
+export type SearchProvider = "exa" | "brave" | "firecrawl" | "free";
+
+/** Providers that authenticate with a stored/env credential. "free" needs none. */
+export type KeyedSearchProvider = Exclude<SearchProvider, "free">;
 
 export interface SearchResult {
   provider: SearchProvider;
@@ -73,18 +76,18 @@ const SOURCE_DEADLINE_MS = 10_000;
 const DOCUMENTATION_MAXIMUM_BYTES = 262_144;
 const DOCUMENTATION_DEADLINE_MS = 8_000;
 
-const services: Record<SearchProvider, string> = {
+const services: Record<KeyedSearchProvider, string> = {
   exa: "com.barnlabs.LightningLoop.search.exa",
   brave: "com.barnlabs.LightningLoop.search.brave",
   firecrawl: "com.barnlabs.LightningLoop.search.firecrawl",
 };
 
-const runtimeSearchCredentials = new Map<SearchProvider, string>();
+const runtimeSearchCredentials = new Map<KeyedSearchProvider, string>();
 
 /** Capture search-only environment credentials before the TUI scrubs its tool environment. */
 export function captureSearchCredentials(environment: NodeJS.ProcessEnv): void {
-  const names: Record<SearchProvider, string> = { exa: "EXA_API_KEY", brave: "BRAVE_SEARCH_API_KEY", firecrawl: "FIRECRAWL_API_KEY" };
-  for (const provider of Object.keys(names) as SearchProvider[]) {
+  const names: Record<KeyedSearchProvider, string> = { exa: "EXA_API_KEY", brave: "BRAVE_SEARCH_API_KEY", firecrawl: "FIRECRAWL_API_KEY" };
+  for (const provider of Object.keys(names) as KeyedSearchProvider[]) {
     const name = names[provider];
     const value = environment[name]?.trim();
     if (value) {
@@ -430,6 +433,122 @@ async function providerJSON(
   }
 }
 
+/**
+ * Keyless research backend. DuckDuckGo's HTML endpoint returns ranked results
+ * with no API key. It requires a POST form body and a self-identifying
+ * User-Agent (a bot-shaped UA is served an anti-automation page).
+ */
+const DUCKDUCKGO_HTML_ENDPOINT = "https://html.duckduckgo.com/html/";
+const FREE_SEARCH_USER_AGENT = "Mozilla/5.0 (compatible; LightningLoop/0.2; +https://github.com/barnlabs/LightningLoop)";
+const MAX_FREE_PARSED_RESULTS = 25;
+
+/** Fetch an HTML search body under the same redirect/deadline/byte gates as {@link providerJSON}. */
+async function providerHTML(
+  fetcher: FetchLike,
+  input: Parameters<FetchLike>[0],
+  init: RequestInit,
+  provider: SearchProvider,
+  timeoutMS: number,
+  maximumBytes: number,
+): Promise<string> {
+  const controller = new AbortController();
+  const deadlineAt = Date.now() + timeoutMS;
+  let response: Response;
+  try {
+    response = await beforeDeadline(fetcher(input, { ...init, redirect: "error", signal: controller.signal }), deadlineAt, () => controller.abort());
+  } catch {
+    throw new Error(`${provider} search request failed or exceeded its deadline. Provider response text was withheld.`);
+  }
+  if (response.redirected || response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+    controller.abort();
+    throw new Error(`${provider} search rejected a redirect. Provider response text was withheld.`);
+  }
+  if (!response.ok) {
+    controller.abort();
+    throw new Error(`${provider} search failed with HTTP ${response.status}. Provider response text was withheld.`);
+  }
+  if (mediaType(response.headers.get("content-type")) !== "text/html") {
+    controller.abort();
+    throw new Error(`${provider} search rejected a non-HTML response. Provider response text was withheld.`);
+  }
+  try {
+    const bytes = await boundedResponseBytes(response, maximumBytes, deadlineAt, () => controller.abort());
+    // HTML is normalized and redacted downstream, so a tolerant decode is safe.
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  } catch {
+    controller.abort();
+    throw new Error(`${provider} search rejected an invalid, oversized, or late response. Provider response text was withheld.`);
+  }
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#0*39;|&#x0*27;|&apos;/gi, "'")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&");
+}
+
+function stripHtml(value: string): string {
+  return decodeHtmlEntities(value.replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Resolve a DuckDuckGo result anchor href to a candidate target URL. Modern
+ * responses embed a direct URL; older ones wrap it in a `/l/?uddg=` redirector.
+ * DuckDuckGo-internal navigation (ads, settings, "more results") is dropped.
+ * The returned value is still untrusted and must pass {@link normalizeProviderURL}.
+ */
+function resolveDuckDuckGoHref(href: string): string | undefined {
+  if (!href) return undefined;
+  let target: string;
+  const wrapped = /[?&]uddg=([^&"]+)/i.exec(href);
+  if (wrapped) {
+    try { target = decodeURIComponent(wrapped[1] ?? ""); } catch { return undefined; }
+  } else {
+    target = decodeHtmlEntities(href);
+  }
+  if (target.startsWith("//")) target = `https:${target}`;
+  if (/^https?:\/\/(?:[a-z0-9-]+\.)*duckduckgo\.com(?:[/?#]|$)/i.test(target)) return undefined;
+  return target;
+}
+
+export interface ParsedFreeResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+/**
+ * Pure parser for the DuckDuckGo HTML result page. Extracts each result's
+ * candidate URL, title, and snippet as raw untrusted strings; the caller applies
+ * the same URL/text safety gates used for keyed providers. Bounded in both input
+ * size and result count.
+ */
+export function parseDuckDuckGoHtml(html: string): ParsedFreeResult[] {
+  if (typeof html !== "string" || html.length === 0) return [];
+  const bounded = html.slice(0, 1_000_000);
+  const anchor = /<a\b([^>]*\bresult__a\b[^>]*)>([\s\S]*?)<\/a>/gi;
+  const results: ParsedFreeResult[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = anchor.exec(bounded)) !== null && results.length < MAX_FREE_PARSED_RESULTS) {
+    const attributes = match[1] ?? "";
+    const hrefMatch = /\bhref="([^"]*)"/i.exec(attributes);
+    if (!hrefMatch) continue;
+    const url = resolveDuckDuckGoHref(hrefMatch[1] ?? "");
+    if (!url) continue;
+    const title = stripHtml(match[2] ?? "");
+    // Snippets follow their result anchor within the same result block.
+    const following = bounded.slice(anchor.lastIndex, anchor.lastIndex + 4_000);
+    const snippetMatch = /<a\b[^>]*\bresult__snippet\b[^>]*>([\s\S]*?)<\/a>/i.exec(following);
+    const snippet = snippetMatch ? stripHtml(snippetMatch[1] ?? "") : "";
+    results.push({ title, url, snippet });
+  }
+  return results;
+}
+
 export class SearchClient {
   private readonly sourceTransport: SourceTransport;
   private readonly resolver: DNSResolver;
@@ -496,10 +615,14 @@ export class SearchClient {
     if (cleanQuery.length > 400) throw new Error("Search query exceeds the 400-character safety limit.");
     const cleanLimit = Math.max(1, Math.min(20, Math.floor(limit)));
     const credentials = this.credentialFilterSet();
-    const credential = this.credentialReader(services[provider])?.trim();
-    if (!credential) throw new Error(`The ${provider} credential is not configured.`);
-    if (credential.length > 16_384) throw new Error(`The ${provider} credential exceeds the safety limit.`);
-    credentials.add(credential);
+    let credential = "";
+    if (provider !== "free") {
+      const resolved = this.credentialReader(services[provider])?.trim();
+      if (!resolved) throw new Error(`The ${provider} credential is not configured.`);
+      if (resolved.length > 16_384) throw new Error(`The ${provider} credential exceeds the safety limit.`);
+      credential = resolved;
+      credentials.add(credential);
+    }
     const redactor = new SecretRedactor([...credentials]);
     // Never silently rewrite an outbound query. A query that contains any
     // freshly loaded LightningLoop-owned credential or a recognized secret
@@ -515,6 +638,19 @@ export class SearchClient {
       return normalized ? normalized : undefined;
     };
     const safeNumber = (value: unknown): number | undefined => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+    if (provider === "free") {
+      const html = await providerHTML(this.fetcher, DUCKDUCKGO_HTML_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "text/html", "User-Agent": FREE_SEARCH_USER_AGENT },
+        body: new URLSearchParams({ q: cleanQuery, kl: "us-en" }).toString(),
+      }, provider, this.providerDeadlineMS, PROVIDER_MAXIMUM_BYTES);
+      const results = parseDuckDuckGoHtml(html).flatMap((item): SearchResult[] => {
+        const url = safeURL(item.url);
+        if (!url) return [];
+        return [{ provider, title: safeText(item.title, url), url, snippet: safeClip(item.snippet) }];
+      }).slice(0, cleanLimit);
+      return { provider, query: normalizeProviderText(cleanQuery, redactor, credentials, "", 400), results };
+    }
     if (provider === "exa") {
       const body = await providerJSON(this.fetcher, "https://api.exa.ai/search", {
         method: "POST",

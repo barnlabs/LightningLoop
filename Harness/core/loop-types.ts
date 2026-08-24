@@ -2,6 +2,7 @@ import type { Criterion, EvidenceRecord, ReviewRecord, RunStage } from "./schema
 import type { AgentImage } from "./image-input.js";
 import type { OpenedSource, SearchProvider, SearchResult } from "../search/search-client.js";
 import type { PromiseGraphTraceEntry } from "../graph/promise-graph.js";
+import type { ObjectiveContract } from "./objective-oracle.js";
 
 export interface AgentUsage {
   input: number;
@@ -39,6 +40,17 @@ export interface LoopContext {
     openSource?(resultURL: string): Promise<OpenedSource | undefined>;
   };
   artifactExecutor?: ArtifactExecutor;
+  /**
+   * Optional owner-supplied completion oracle. When present and satisfied by
+   * harness-observed evidence, it unblocks Gold; when absent or failing, the run
+   * stays paused (fail-closed).
+   */
+  objective?: ObjectiveContract;
+  /**
+   * Approved skill-evolution bodies. Drafts never appear here. Each entry is
+   * progressively disclosed only to the matching Researcher / Engineer / Verifier.
+   */
+  approvedSkills?: readonly string[];
 }
 
 export interface ArtifactFileDraft {
@@ -162,6 +174,12 @@ export interface LoopEvent {
   message: string;
   round?: number;
   role?: AgentRequest["role"];
+  /**
+   * A snapshot of accumulated usage at the moment the event was emitted. The
+   * engine attaches this so live surfaces (TUI status bar, CLI stage lines) can
+   * show tokens and cost climbing during a run without re-plumbing the loop.
+   */
+  usage?: AgentUsage;
 }
 
 export interface LoopRunResult {

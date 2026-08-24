@@ -31,12 +31,18 @@ export type ManagedEvolutionState =
   | "superseded"
   | "rolled_back";
 
+export type ManagedMemoryKind = "note" | "desire";
+
 export interface ManagedMemoryRecord {
   id: string;
   scope: ManagedMemoryScope;
+  /** "desire" marks a first-class user preference; "note" is a plain memory. */
+  kind: ManagedMemoryKind;
   statement: string;
   tags: string[];
   sourceArtifact: string;
+  /** Deterministic project identity; present only on project-scoped records. */
+  projectID?: string;
   sourceRunID?: string;
   confidence: number;
   verification: "unverified" | "source_backed" | "verified" | "contradicted";
@@ -84,6 +90,8 @@ export function addManagedMemory(
     sourceArtifact?: string;
     tags?: readonly string[];
     sourceRunID?: string;
+    kind?: ManagedMemoryKind;
+    projectID?: string;
   },
   path = managedMemoryPath(),
 ): ManagedMemoryRecord {
@@ -92,12 +100,21 @@ export function addManagedMemory(
   if (input.scope === "run" && !isUUID(input.sourceRunID)) {
     throw new Error("Run memory requires the UUID of its source run.");
   }
+  const kind: ManagedMemoryKind = input.kind === "desire" ? "desire" : "note";
+  let projectID: string | undefined;
+  if (input.scope === "project") {
+    projectID = input.projectID ? cleanRequired(input.projectID, 200, "Project identity") : undefined;
+  } else if (input.projectID) {
+    throw new Error("Only project-scoped memory may carry a project identity.");
+  }
   const record: ManagedMemoryRecord = {
     id: randomUUID(),
     scope: input.scope,
+    kind,
     statement,
     tags: (input.tags ?? []).map((tag) => cleanRequired(tag, 120, "Memory tag")).slice(0, 20),
     sourceArtifact,
+    ...(projectID ? { projectID } : {}),
     ...(input.scope === "run" ? { sourceRunID: input.sourceRunID } : {}),
     confidence: 1,
     verification: "unverified",
@@ -317,6 +334,9 @@ function isMemoryRecord(value: unknown): value is ManagedMemoryRecord {
   if (!isObject(value)) return false;
   return isUUID(value.id)
     && (value.scope === "run" || value.scope === "project" || value.scope === "user")
+    && (value.kind === undefined || value.kind === "note" || value.kind === "desire")
+    && (value.projectID === undefined || (isBoundedString(value.projectID, 1, 200) && !SECRET_SHAPE.test(value.projectID)))
+    && (value.scope === "project" || value.projectID === undefined)
     && isBoundedString(value.statement, 1, 10_000)
     && Array.isArray(value.tags) && value.tags.length <= 20 && value.tags.every((tag) => isBoundedString(tag, 1, 120))
     && isBoundedString(value.sourceArtifact, 1, 200)

@@ -7,6 +7,7 @@ import type {
   ArtifactExecutionReport,
   Clarification,
   ImplementationDraft,
+  LoopEvent,
   LoopEventSink,
   LoopContext,
   LoopRunResult,
@@ -16,7 +17,11 @@ import type {
 import type { Criterion, CriterionEvidenceKind, EvidenceRecord, ReviewFinding, ReviewRecord, Severity } from "./schema.js";
 import { objectValue, parseStructuredJSON, stringArray, stringValue } from "./structured-json.js";
 import { applyManagedMemoryContext } from "./memory-store.js";
+import { evaluateObjectiveContract } from "./objective-oracle.js";
 import { PromiseGraph, type PromiseGraphTraceEntry } from "../graph/promise-graph.js";
+import { loopAgentForRequestRole } from "./loop-roster.js";
+import { SHIPPED_SKILLS, discloseSkills } from "./skill-disclosure.js";
+import { filterReputableSearchResults, isReputableSourceUrl } from "./source-policy.js";
 
 interface CriterionAssessment {
   criterionID: string;
@@ -417,9 +422,14 @@ export class LoopEngine {
     const images = [...(request.images ?? []), ...(this.context.images ?? [])]
       .filter((image, index, all) => all.findIndex((candidate) => candidate.path === image.path) === index)
       .slice(0, 4);
+    const disclosure = discloseSkills(
+      loopAgentForRequestRole(request.role),
+      SHIPPED_SKILLS,
+      this.context.approvedSkills ?? [],
+    );
     return {
       ...request,
-      system: applyManagedMemoryContext(request.system, this.context.memories ?? []),
+      system: applyManagedMemoryContext(`${request.system}\n\n${disclosure.promptBlock}`, this.context.memories ?? []),
       user: `${request.user}${evidence}`,
       ...(images.length ? { images } : {}),
     };
@@ -437,11 +447,15 @@ export class LoopEngine {
     clarification: Clarification,
     answers: Record<string, string>,
     maxReviewCycles = 4,
-    emit: LoopEventSink = () => undefined,
+    emitRaw: LoopEventSink = () => undefined,
     signal?: AbortSignal,
   ): Promise<LoopRunResult> {
     const cycleLimit = Math.max(1, Math.min(8, Math.floor(maxReviewCycles)));
     const usage = emptyUsage();
+    // Every emitted event carries a snapshot of accumulated usage so live
+    // surfaces can render tokens/cost climbing without new plumbing.
+    const emit: (event: Omit<LoopEvent, "usage">) => void | Promise<void> = (event) =>
+      emitRaw({ ...event, usage: { ...usage } });
     const reviews: ReviewRecord[] = [];
     const graphTrace: PromiseGraphTraceEntry[] = [];
     const researchEvidence: unknown[] = [];
@@ -468,8 +482,8 @@ export class LoopEngine {
         signal?.throwIfAborted();
         seenResearchQueries.add(query.toLowerCase());
         researchQueryCount += 1;
-        const results = await this.context.research.search(query);
-        const documentation = /\b(?:docs?|documentation|api|sdk|reference|official)\b/i.test(query) && results[0] && this.context.research.documentationContext
+        const results = filterReputableSearchResults(await this.context.research.search(query));
+        const documentation = /\b(?:docs?|documentation|api|sdk|reference|official)\b/i.test(query) && results[0] && this.context.research.documentationContext && isReputableSourceUrl(results[0].url)
           ? await this.context.research.documentationContext(results[0].url)
           : undefined;
         if (documentation) {
@@ -493,8 +507,9 @@ export class LoopEngine {
             snippet: result.snippet,
             ...(result.publishedAt ? { publishedAt: result.publishedAt } : {}),
           });
-          if (this.context.research.openSource && results.indexOf(result) < 2) {
+          if (this.context.research.openSource && results.indexOf(result) < 2 && isReputableSourceUrl(result.url)) {
             const opened = await this.context.research.openSource(result.url);
+            if (opened && !isReputableSourceUrl(opened.url)) continue;
             if (opened) {
               researchEvidence.push({
                 verified: true,
@@ -665,10 +680,14 @@ export class LoopEngine {
           assessmentCounts.set(assessment.criterionID, (assessmentCounts.get(assessment.criterionID) ?? 0) + 1);
         }
         const criterionByID = new Map(planning.criteria.map((criterion) => [criterion.id, criterion]));
-        const objectiveContractPassed = false;
+        // The completion oracle judges harness-observed evidence (files the
+        // harness hashed and commands it ran), never model-claimed text. With no
+        // contract, or a failing one, Gold stays disabled exactly as before.
+        const objectiveEvaluation = evaluateObjectiveContract(this.context.objective, artifactReport);
+        const objectiveContractPassed = objectiveEvaluation.passed;
         const invalidAssessmentReasons: string[] = [];
         if (!objectiveContractPassed) {
-          invalidAssessmentReasons.push("Automatic Gold is disabled until an immutable harness- or owner-supplied objective oracle exists. Source authority classification, retrieval, hashing, exact text, planner/reviewer agreement, and artifact checks are review context only; every result requires explicit owner acceptance.");
+          invalidAssessmentReasons.push(objectiveEvaluation.reason);
         }
         if (candidateReviewImages.length > 0 && reviewImages.length === 0) {
           invalidAssessmentReasons.push("The selected Gold reviewer is not verified image-capable; output picture evidence was not inspected.");

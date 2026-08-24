@@ -1,4 +1,6 @@
-import { createPublicKey, verify as verifySignature } from "node:crypto";
+import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { join } from "node:path";
 
 export interface UpdatePolicy {
   schemaVersion: 1;
@@ -93,6 +95,90 @@ export function verifyUpdateManifest(value: SignedUpdateManifest, policy: Update
     return { state: "blocked", message: "Update manifest signature verification failed." };
   }
   return { state: "manifest-verified", version: value.version, message: `Manifest signature and bounded artifact declaration verified for ${targetPlatform}. Artifact bytes have not been downloaded or hashed; installation remains disabled until the platform installer independently verifies them.` };
+}
+
+export interface UpdateApplyResult {
+  applied: true;
+  version: string;
+  platform: UpdatePlatform;
+  sha256: string;
+  bytes: number;
+  stagedPath: string;
+  message: string;
+}
+
+/** Matches the per-artifact byte bound enforced in {@link verifyUpdateManifest}. */
+const MAX_ARTIFACT_BYTES = 1_073_741_824;
+
+/**
+ * Secure update SIMULATION: verify the signed manifest (Ed25519 via
+ * {@link verifyUpdateManifest}), verify the supplied artifact bytes against the
+ * manifest's pinned length and SHA-256, then stage the verified bytes into
+ * `stagingRoot` (a caller-owned temporary directory).
+ *
+ * Fail-closed: a tampered manifest (bad signature, stale version, unbound field,
+ * or an unconfigured signing key) or tampered bytes (wrong length or digest) is
+ * refused and NOTHING is written — every check runs before any filesystem write.
+ * Staging is atomic (private temp file → fsync → rename) and the staged file is
+ * re-hashed as defense in depth. This intentionally does NOT run any OS
+ * installer; macOS Sparkle and the Windows npm-pinned path remain out of scope,
+ * so real installation stays delegated to the platform source-installer path.
+ */
+export async function applyVerifiedUpdate(
+  manifest: SignedUpdateManifest,
+  policy: UpdatePolicy,
+  targetPlatform: UpdatePlatform,
+  artifactBytes: Buffer,
+  stagingRoot: string,
+): Promise<UpdateApplyResult> {
+  const verification = verifyUpdateManifest(manifest, policy, targetPlatform);
+  if (verification.state !== "manifest-verified") {
+    throw new Error(`Refusing to apply update: ${verification.message}`);
+  }
+  const artifact = manifest.artifacts.find((candidate) => candidate.platform === targetPlatform);
+  if (!artifact) throw new Error(`Refusing to apply update: the manifest has no artifact declaration for ${targetPlatform}.`);
+  if (!Buffer.isBuffer(artifactBytes)) throw new Error("Refusing to apply update: artifact bytes must be provided as a Buffer.");
+  if (artifactBytes.length > MAX_ARTIFACT_BYTES) throw new Error("Refusing to apply update: artifact bytes exceed the maximum permitted size.");
+  if (artifactBytes.length !== artifact.bytes) {
+    throw new Error(`Refusing to apply update: artifact byte length ${artifactBytes.length} does not match the signed length ${artifact.bytes}.`);
+  }
+  const digest = createHash("sha256").update(artifactBytes).digest("hex");
+  if (digest !== artifact.sha256) {
+    throw new Error("Refusing to apply update: artifact bytes failed their signed SHA-256 integrity check.");
+  }
+  // Every verification has passed; only now do we touch the filesystem, so a
+  // refused update never leaves partial bytes behind.
+  const versionDir = join(stagingRoot, `lightningloop-${manifest.version}`);
+  await mkdir(versionDir, { recursive: true, mode: 0o700 });
+  const stagedPath = join(versionDir, `${targetPlatform}.artifact`);
+  const temporaryPath = `${stagedPath}.partial`;
+  const handle = await open(temporaryPath, "wx", 0o600);
+  try {
+    await handle.writeFile(artifactBytes);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    await rename(temporaryPath, stagedPath);
+  } catch (error) {
+    await rm(temporaryPath, { force: true });
+    throw error;
+  }
+  const staged = await readFile(stagedPath);
+  if (staged.length !== artifact.bytes || createHash("sha256").update(staged).digest("hex") !== artifact.sha256) {
+    await rm(stagedPath, { force: true });
+    throw new Error("Refusing to complete update: the staged artifact failed re-verification after writing.");
+  }
+  return {
+    applied: true,
+    version: manifest.version,
+    platform: targetPlatform,
+    sha256: artifact.sha256,
+    bytes: artifact.bytes,
+    stagedPath,
+    message: `Verified update ${manifest.version} for ${targetPlatform} staged to ${stagedPath}. This simulation does not launch any OS installer; real installation remains delegated to the platform source-installer path.`,
+  };
 }
 
 export function canonicalManifestPayload(value: SignedUpdateManifest): Buffer {
