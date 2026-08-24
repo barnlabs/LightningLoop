@@ -34,6 +34,7 @@ import {
 } from "../core/provider-profile.js";
 import { enforceFreeMode, fetchOpenRouterKeyCredits, fetchOpenRouterModels, pickFreeModeModel, resolveSelectableModel, selectFreeModels, type OpenRouterKeyCredits } from "../core/openrouter.js";
 import { formatCreditLine, formatLiveUsageMeter, formatRunSummaryLine } from "../core/usage-format.js";
+import { recordSelfImprovementProposals } from "../core/self-improvement.js";
 import type { ProviderModelOverride } from "../core/provider-profile.js";
 import { clearProviderCredential, defaultSecretBackend, readStoredProviderCredential, storeProviderCredential } from "../core/key-store.js";
 import { validateImagePaths } from "../core/image-input.js";
@@ -62,6 +63,7 @@ interface CliOptions {
   searchLimit: number;
   researchProvider?: SearchProvider;
   objectiveFile?: string;
+  selfImprove: boolean;
   imagePaths: string[];
   passthrough: string[];
   mcpAction?: "verify" | "call";
@@ -109,6 +111,7 @@ Usage:
   lightningloop loop [GOAL] [--cycles 1-8] [--image PATH] [--research exa|brave|firecrawl|free]
     [--fusion "openrouter/id1,openrouter/id2"] (openrouter, non-free; runs 2-4 models per turn, longest reply wins)
     [--objective-file contract.json] (owner completion oracle: harness-evidence checks required for Gold)
+    [--self-improve] (records INERT draft evolution proposals from the run; activation still requires the full reviewed lifecycle)
     [--workspace EMPTY_DIR --approve-artifact-writes [--approve-verification-commands]]
   lightningloop search <exa|brave|firecrawl|free> QUERY [--limit 1-20]  (free = keyless DuckDuckGo HTML)
   lightningloop mcp verify MANIFEST.json --workspace PATH --approve-manifest
@@ -150,6 +153,7 @@ export function parse(args: string[]): CliOptions {
   let mcpInput: string | undefined;
   let approveManifest = false;
   let approveArtifactWrites = false;
+  let selfImprove = false;
   let approveVerificationCommands = false;
   let harnessAction: CliOptions["harnessAction"];
   let backupSlot = 0;
@@ -195,6 +199,7 @@ export function parse(args: string[]): CliOptions {
     else if (arg === "--allow-execution") allowExecution = true;
     else if (arg === "--approve-manifest") approveManifest = true;
     else if (arg === "--approve-artifact-writes") approveArtifactWrites = true;
+    else if (arg === "--self-improve") selfImprove = true;
     else if (arg === "--approve-verification-commands") approveVerificationCommands = true;
     else if (arg === "--approve-reset") approveReset = true;
     else if (arg === "--approve-restore") approveRestore = true;
@@ -357,6 +362,7 @@ export function parse(args: string[]): CliOptions {
     searchLimit,
     ...(researchProvider ? { researchProvider } : {}),
     ...(objectiveFile ? { objectiveFile } : {}),
+    selfImprove,
     imagePaths,
     passthrough,
     ...(mcpAction ? { mcpAction } : {}),
@@ -920,6 +926,11 @@ async function runLoop(options: CliOptions): Promise<void> {
         process.stdout.write(`  ${command.passed ? "PASS" : "FAIL"} ${terminalSafe(command.executable)} · ${terminalSafe(command.purpose)} · ${command.origin} · ${command.durationMs} ms\n`);
       }
       process.stdout.write(`  workspace audit: ${result.artifactReport.workspaceAudit.passed ? "PASS" : "FAIL"} · ${terminalSafe(result.artifactReport.workspaceAudit.message)}\n`);
+    }
+    if (options.selfImprove) {
+      const drafts = recordSelfImprovementProposals(result);
+      process.stdout.write(`\nSelf-improvement: recorded ${drafts.length} INERT draft proposal(s). Each stays inactive until it passes the full source-review → sandbox → adversarial-review → user-approval lifecycle.\n`);
+      for (const draft of drafts) process.stdout.write(`  draft ${draft.state} · ${draft.kind} · ${terminalSafe(draft.name)}\n`);
     }
     if (!result.completed) process.exitCode = 2;
     try { dispatchNotification(result.completed ? "gold" : "blocked", result.completed ? "LightningLoop reached Gold" : "LightningLoop paused"); }
