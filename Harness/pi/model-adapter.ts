@@ -20,7 +20,9 @@ type ProfileCredentialReader = (profile: ProviderProfile) => string | undefined;
 /**
  * Environment API key for a LightningLoop-managed API-key preset. GeneralCompute
  * reads GENERALCOMPUTE_API_KEY; OpenRouter reads OPENROUTER_API_KEY (falling back
- * to OPENROUTER_KEY). Returns undefined for every other preset.
+ * to OPENROUTER_KEY). Cerebras is Pi-managed by default but reads
+ * CEREBRAS_API_KEY (falling back to CEREBRAS_KEY) as an optional manual key.
+ * Returns undefined for every other preset.
  */
 export function providerEnvApiKey(profile: ProviderProfile): string | undefined {
   if (profile.preset === "generalcompute") {
@@ -29,7 +31,20 @@ export function providerEnvApiKey(profile: ProviderProfile): string | undefined 
   if (profile.preset === "openrouter") {
     return process.env.OPENROUTER_API_KEY?.trim() || process.env.OPENROUTER_KEY?.trim() || undefined;
   }
+  if (profile.preset === "cerebras") {
+    return process.env.CEREBRAS_API_KEY?.trim() || process.env.CEREBRAS_KEY?.trim() || undefined;
+  }
   return undefined;
+}
+
+/**
+ * Pi-managed presets that may optionally run through a manual LightningLoop-managed
+ * API key when one is available (env or OS secret store), instead of Pi `/login`.
+ * Cerebras is the only such preset today: `/login` remains the default with no key,
+ * but a manual key lets it run as an OpenAI-compatible LL-managed provider.
+ */
+export function supportsManualApiKeyOverride(profile: ProviderProfile): boolean {
+  return profile.preset === "cerebras";
 }
 
 /** LightningLoop-managed API-key credentials (never Pi /login). Env first, then the OS secret store. */
@@ -80,13 +95,19 @@ export class PiProviderAdapter implements AgentAdapter {
     }
     const runtime = await createRuntime();
     const providerID = profile.piProviderID;
+    // Managed API-key presets (no piProviderID) always require a manual credential.
+    // Pi-managed presets that opt into a manual override (Cerebras) use the manual
+    // key only when one is available; otherwise they keep the Pi /login path.
+    const eligibleForManualKey = !providerID || supportsManualApiKeyOverride(profile);
     let credential: string | undefined;
-    if (!providerID) {
+    if (eligibleForManualKey) {
       credential = credentialReader(profile);
-      if (!credential) throw new Error(missingManagedCredentialMessage(profile));
-      registerRuntimeCredential(credential);
+      if (!credential && !providerID) throw new Error(missingManagedCredentialMessage(profile));
+      if (credential) registerRuntimeCredential(credential);
     }
-    const resolvedProviderID = providerID ?? `lightningloop-${profile.id}`;
+    // With a manual credential, always register the LightningLoop-managed provider
+    // (even for a preset that also has a Pi provider ID) so Pi /login is bypassed.
+    const resolvedProviderID = credential ? `lightningloop-${profile.id}` : (providerID ?? `lightningloop-${profile.id}`);
     if (credential) {
       runtime.registerProvider(resolvedProviderID, {
         name: `LightningLoop / ${profile.displayName}`,
@@ -107,7 +128,7 @@ export class PiProviderAdapter implements AgentAdapter {
       });
     }
     const model = runtime.getModel(resolvedProviderID, profile.modelID);
-    if (!model) throw new Error(profile.piProviderID
+    if (!model) throw new Error(profile.piProviderID && !credential
       ? `The LightningLoop runtime does not currently catalog ${profile.modelID} for ${profile.displayName}. Choose a model shown by the runtime model picker, then complete provider sign-in with /login if requested.`
       : `The LightningLoop runtime does not currently catalog ${profile.modelID} for ${profile.displayName}. Choose a model shown by the runtime model picker.`);
     assertRuntimeModelSnapshot(model, profile);

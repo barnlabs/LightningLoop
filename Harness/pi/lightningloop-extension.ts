@@ -45,6 +45,40 @@ export interface LightningLoopExtensionOptions {
   generalComputeApiKey?: string;
   /** OpenRouter API key captured before TUI environment scrubbing. */
   openRouterApiKey?: string;
+  /**
+   * Cerebras manual API key resolved by the CLI (env or OS secret store) before
+   * TUI environment scrubbing. When present, Cerebras runs as an OpenAI-compatible
+   * LightningLoop-managed provider instead of the Pi `/login` path.
+   */
+  cerebrasApiKey?: string;
+}
+
+type ManagedProviderRegistration = Parameters<ExtensionAPI["registerProvider"]>[1];
+
+/** OpenAI-compatible LightningLoop-managed provider registration for an API-key credential. */
+function managedOpenAiProviderRegistration(
+  profile: ReturnType<typeof loadProviderProfile>,
+  apiKey: string,
+): ManagedProviderRegistration {
+  return {
+    name: `LightningLoop / ${profile.displayName}`,
+    baseUrl: profile.baseURL,
+    apiKey,
+    api: "openai-completions",
+    authHeader: true,
+    headers: providerHeaders(profile),
+    models: [
+      {
+        id: profile.modelID,
+        name: profile.modelName,
+        reasoning: true,
+        input: profile.supportsImages ? ["text", "image"] : ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: profile.contextWindow,
+        maxTokens: profile.maxOutputTokens,
+      },
+    ],
+  };
 }
 
 export function createLightningLoopExtension(options: LightningLoopExtensionOptions = {}): ExtensionFactory {
@@ -75,6 +109,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
     description: "Allow individually confirmed workspace mutations and shell commands",
   });
 
+  const cerebrasManualApiKey = profile.preset === "cerebras" ? options.cerebrasApiKey?.trim() : undefined;
   if (!profile.piProviderID) {
     const envApiKey = profile.preset === "generalcompute"
       ? options.generalComputeApiKey?.trim()
@@ -93,28 +128,16 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
       }
     }
     // An explicitly captured TUI env key is process-local; otherwise macOS uses Keychain.
-    const apiKey = envApiKey ?? (process.platform === "darwin"
-      ? keychainCommand([providerCredentialService(profile)])
-      : envApiKey!);
-    pi.registerProvider(providerID, {
-      name: `LightningLoop / ${profile.displayName}`,
-      baseUrl: profile.baseURL,
-      apiKey: envApiKey ? encodePiApiKey(envApiKey) : apiKey,
-      api: "openai-completions",
-      authHeader: true,
-      headers: providerHeaders(profile),
-      models: [
-        {
-          id: profile.modelID,
-          name: profile.modelName,
-          reasoning: true,
-          input: profile.supportsImages ? ["text", "image"] : ["text"],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: profile.contextWindow,
-          maxTokens: profile.maxOutputTokens,
-        },
-      ],
-    });
+    const apiKey = envApiKey
+      ? encodePiApiKey(envApiKey)
+      : (process.platform === "darwin" ? keychainCommand([providerCredentialService(profile)]) : envApiKey!);
+    pi.registerProvider(providerID, managedOpenAiProviderRegistration(profile, apiKey));
+  } else if (cerebrasManualApiKey) {
+    // Cerebras manual-key override: run as a LightningLoop-managed OpenAI-compatible
+    // provider instead of the Pi /login path. The CLI already resolved the key from
+    // env or the OS secret store and registered it for redaction; it never touches
+    // provider.json. Without a manual key, Cerebras keeps the Pi-managed path.
+    pi.registerProvider(providerID, managedOpenAiProviderRegistration(profile, encodePiApiKey(cerebrasManualApiKey)));
   }
 
   let boundaryPromise: Promise<WorkspaceBoundary> | undefined;

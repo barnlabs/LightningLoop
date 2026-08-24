@@ -647,7 +647,24 @@ async function runTUI(options: CliOptions): Promise<void> {
   // Pi otherwise downloads the latest fd/rg release at startup without a
   // repository-pinned checksum. LightningLoop keeps runtime acquisition offline.
   process.env.PI_OFFLINE = "1";
-  const { generalComputeApiKey, openRouterApiKey } = prepareTuiRuntimeCredentials(profile, process.env);
+  const { generalComputeApiKey, openRouterApiKey, cerebrasApiKey: cerebrasEnvApiKey } = prepareTuiRuntimeCredentials(profile, process.env);
+
+  // Cerebras optionally runs via a manual key (env or OS secret store) instead of
+  // Pi /login. The env key is captured above; fall back to the OS secret store.
+  let cerebrasApiKey = cerebrasEnvApiKey;
+  if (profile.preset === "cerebras" && !cerebrasApiKey) {
+    const stored = readStoredProviderCredential(profile);
+    if (stored) {
+      registerRuntimeCredential(stored);
+      cerebrasApiKey = stored;
+    }
+  }
+  const usesManualCerebras = profile.preset === "cerebras" && cerebrasApiKey !== undefined;
+  // A manual Cerebras key selects the LightningLoop-managed provider id; otherwise
+  // Pi-managed presets keep their built-in provider id (/login path).
+  const providerArg = profile.piProviderID && !usesManualCerebras
+    ? profile.piProviderID
+    : `lightningloop-${profile.id}`;
 
   // Mutations flow only through the OS-sandboxed bash override. Pi's in-process
   // write/edit tools are intentionally excluded because a confirmation dialog
@@ -655,7 +672,7 @@ async function runTUI(options: CliOptions): Promise<void> {
   const tools = options.allowExecution ? "read,grep,find,ls,bash" : "read,grep,find,ls";
   const args = [
     "--provider",
-    profile.piProviderID ?? `lightningloop-${profile.id}`,
+    providerArg,
     "--model",
     profile.modelID,
     "--session-dir",
@@ -674,6 +691,7 @@ async function runTUI(options: CliOptions): Promise<void> {
   const extensionOptions = {
     ...(generalComputeApiKey ? { generalComputeApiKey } : {}),
     ...(openRouterApiKey ? { openRouterApiKey } : {}),
+    ...(cerebrasApiKey ? { cerebrasApiKey } : {}),
   };
   await runPi(args, { extensionFactories: [{ name: "lightningloop", factory: createLightningLoopExtension(extensionOptions) }] });
 }
@@ -682,20 +700,24 @@ async function runTUI(options: CliOptions): Promise<void> {
 export function prepareTuiRuntimeCredentials(
   profile: ProviderProfile,
   environment: NodeJS.ProcessEnv,
-): { generalComputeApiKey?: string; openRouterApiKey?: string } {
+): { generalComputeApiKey?: string; openRouterApiKey?: string; cerebrasApiKey?: string } {
   const ambientGeneralComputeApiKey = environment.GENERALCOMPUTE_API_KEY?.trim();
   const ambientOpenRouterApiKey = environment.OPENROUTER_API_KEY?.trim() || environment.OPENROUTER_KEY?.trim();
+  const ambientCerebrasApiKey = environment.CEREBRAS_API_KEY?.trim() || environment.CEREBRAS_KEY?.trim();
   if (ambientGeneralComputeApiKey) registerRuntimeCredential(ambientGeneralComputeApiKey);
   if (ambientOpenRouterApiKey) registerRuntimeCredential(ambientOpenRouterApiKey);
+  if (ambientCerebrasApiKey) registerRuntimeCredential(ambientCerebrasApiKey);
   captureSearchCredentials(environment);
   scrubSensitiveEnvironment(environment);
-  // The shared scrubber matches *_API_KEY, but the OPENROUTER_KEY alias does not
-  // match its pattern. Delete it explicitly so no credential reaches the child
-  // tool environment.
+  // The shared scrubber matches *_API_KEY, but the OPENROUTER_KEY and CEREBRAS_KEY
+  // aliases do not match its pattern. Delete them explicitly so no credential
+  // reaches the child tool environment.
   delete environment.OPENROUTER_KEY;
+  delete environment.CEREBRAS_KEY;
   return {
     ...(profile.preset === "generalcompute" && ambientGeneralComputeApiKey ? { generalComputeApiKey: ambientGeneralComputeApiKey } : {}),
     ...(profile.preset === "openrouter" && ambientOpenRouterApiKey ? { openRouterApiKey: ambientOpenRouterApiKey } : {}),
+    ...(profile.preset === "cerebras" && ambientCerebrasApiKey ? { cerebrasApiKey: ambientCerebrasApiKey } : {}),
   };
 }
 
