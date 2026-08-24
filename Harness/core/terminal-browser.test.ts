@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  BROWSE_MAX_BYTES,
   browseReputablePage,
   describeBrowseRefusal,
   extractLinks,
@@ -40,7 +41,7 @@ test("browseReputablePage fetches a reputable host and fails closed otherwise", 
   assert.match(describeBrowseRefusal("https://example.com/x"), /not a reputable primary source/);
 });
 
-test("browse refuses redirects, non-text types, and oversize bodies", async () => {
+test("browse refuses redirects and non-text types, and snapshots oversize bodies", async () => {
   await assert.rejects(() => browseReputablePage("https://www.rfc-editor.org/rfc/rfc9110", async () => {
     throw new Error("redirect");
   }), /redirect/);
@@ -49,9 +50,14 @@ test("browse refuses redirects, non-text types, and oversize bodies", async () =
     headers: { "content-type": "application/pdf" },
     bytes: new TextEncoder().encode("%PDF"),
   })), /HTML, Markdown, or plain text/);
-  await assert.rejects(() => browseReputablePage("https://www.rfc-editor.org/rfc/rfc9110", async () => ({
+  const huge = new Uint8Array(BROWSE_MAX_BYTES + 32);
+  huge.fill(65);
+  const page = await browseReputablePage("https://www.rfc-editor.org/rfc/rfc9110", async () => ({
     status: 200,
-    headers: { "content-type": "text/plain", "content-length": "999999" },
-    bytes: new TextEncoder().encode("x"),
-  })), /byte cap/);
+    headers: { "content-type": "text/plain" },
+    bytes: huge,
+  }));
+  assert.equal(page.truncated, true);
+  assert.equal(page.bytes, BROWSE_MAX_BYTES);
+  assert.match(renderBrowsePage(page).join("\n"), /truncated/);
 });

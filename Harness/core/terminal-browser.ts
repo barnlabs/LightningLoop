@@ -34,6 +34,7 @@ export interface BrowsePage {
   contentType: string;
   sha256: string;
   bytes: number;
+  truncated: boolean;
   links: BrowseLink[];
 }
 
@@ -92,7 +93,7 @@ export function renderBrowsePage(page: BrowsePage): string[] {
   const lines = [
     `ϟ browse  ${page.url}`,
     `title     ${page.title}`,
-    `type      ${page.contentType} · ${page.bytes} bytes · sha256 ${page.sha256}`,
+    `type      ${page.contentType} · ${page.bytes} bytes${page.truncated ? " · truncated" : ""} · sha256 ${page.sha256}`,
     "",
     page.text,
   ];
@@ -129,16 +130,14 @@ export async function browseReputablePage(rawUrl: string, fetchImpl: BrowseFetch
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`Browse failed closed: HTTP ${response.status}.`);
   }
-  const declared = Number.parseInt(header(response.headers, "content-length") || "0", 10);
-  if (declared > BROWSE_MAX_BYTES) throw new Error("Browse response exceeds the byte cap.");
-  if (response.bytes.length < 1 || response.bytes.length > BROWSE_MAX_BYTES) {
-    throw new Error("Browse response is empty or exceeds the byte cap.");
-  }
+  if (response.bytes.length < 1) throw new Error("Browse page was empty.");
+  const truncated = response.bytes.length > BROWSE_MAX_BYTES;
+  const bytes = truncated ? response.bytes.slice(0, BROWSE_MAX_BYTES) : response.bytes;
   const contentType = mediaType(header(response.headers, "content-type")) ?? "";
   if (!["text/html", "text/plain", "text/markdown"].includes(contentType)) {
     throw new Error("Browse accepts only HTML, Markdown, or plain text.");
   }
-  const decoded = new TextDecoder("utf-8", { fatal: true }).decode(response.bytes).trim();
+  const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes).trim();
   if (!decoded) throw new Error("Browse page was empty.");
   const title = contentType === "text/html" ? extractTitle(decoded) : url.pathname.split("/").filter(Boolean).at(-1) || url.hostname;
   const text = (contentType === "text/html" ? stripTags(decoded) : decoded).slice(0, BROWSE_TEXT_CHARS);
@@ -148,8 +147,9 @@ export async function browseReputablePage(rawUrl: string, fetchImpl: BrowseFetch
     title,
     text,
     contentType,
-    sha256: createHash("sha256").update(response.bytes).digest("hex"),
-    bytes: response.bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
+    truncated,
     links,
   };
 }
