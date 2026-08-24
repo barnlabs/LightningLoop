@@ -58,7 +58,7 @@ import {
   type LoopAgent,
 } from "../core/loop-roster.js";
 import { SHIPPED_SKILLS } from "../core/skill-disclosure.js";
-import { browseReputablePage, renderBrowsePage } from "../core/terminal-browser.js";
+import { executeBrowseCommand } from "../core/terminal-browser.js";
 import { loadActiveGuidance } from "../core/evolution-store.js";
 
 const SESSION_DIR = lightningLoopDataPath("harness-sessions");
@@ -894,8 +894,8 @@ function runAgentsCommand(options: CliOptions): void {
 
 async function runBrowseCommand(options: CliOptions): Promise<void> {
   if (!options.browseURL) throw new Error("Usage: lightningloop browse URL");
-  const page = await browseReputablePage(options.browseURL);
-  process.stdout.write(`${renderBrowsePage(page).map((line) => terminalSafe(line)).join("\n")}\n`);
+  const rendered = await executeBrowseCommand(options.browseURL);
+  process.stdout.write(`${rendered.split("\n").map((line) => terminalSafe(line)).join("\n")}\n`);
 }
 
 async function buildLoopAdapter(profile: ProviderProfile, options: CliOptions): Promise<AgentAdapter> {

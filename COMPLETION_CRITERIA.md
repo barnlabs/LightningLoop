@@ -119,7 +119,7 @@ then runs against it.
 |----|-------------|-----------------|---------|------|--------|
 | CC-H1 | **Three selectable agents** (Researcher, Engineer, Verifier) | `agents list` shows all three; `agents select ROLE --model ID` persists credential-free `agents.json`; `RosterAdapter` routes orchestrator→researcher, implementer→engineer, reviewer→verifier; invalid role/id fail closed | HARNESS | unit + integration | DONE (harness; critic pending) |
 | CC-H2 | **Strict reputable-source rule for every agent** | `classifySourceUrl` allows only `.gov/.edu/.mil/.int` and the committed documentation-host allowlist; search/open/browse drop everything else; loop research ignores non-reputable hits | HARNESS | unit | DONE (harness; critic pending) |
-| CC-H3 | **Terminal browser** | `llp browse URL` and `/browse URL` render a bounded text snapshot of one reputable HTTPS page (no-redirect, size/time/type gated); non-reputable URL fails closed | HARNESS | unit + integration | DONE (harness; critic pending) |
+| CC-H3 | **Terminal browser** | `llp browse URL` and `/browse URL` render a bounded text snapshot of one reputable HTTPS page (no-redirect, size/time/type gated); non-reputable URL fails closed | HARNESS | unit + integration | DONE (harness; critic PARTIAL on live command success / DNS pin) |
 | CC-H4 | **GUI browser** | Workspace Browser pane uses WKWebView; navigation allowlist is loopback artifacts + reputable HTTPS; Settings expose the three agent model fields | GUI | manual-macos | WIP (source present; macOS proof pending) |
 | CC-H5 | **Shipped skills + tools with progressive disclosure** | five shipped skills exist; `discloseSkills(role)` returns the full catalog as one-liners and loads only matching bodies + that role's tools; recursive skill improvement remains inert drafts | HARNESS | unit | DONE (harness; critic pending) |
 
@@ -147,6 +147,12 @@ then runs against it.
   Non-blocking follow-ups: `enforceFreeMode` tolerates all fetch errors (best-effort
   runtime re-check); no committed libsecret/bun *integration* tests (logic covered
   by unit tests + injected backends); GUI surfaces still pending (macOS).
+- **Increment H — three-agent loop (CC-H1..H5):** Independent critic at `ed2be9a`
+  returned **PASS for CC-H1, CC-H2, CC-H5** (harness). **CC-H3 PARTIAL** (command
+  success is proven via `executeBrowseCommand` + injected fetch; live `llp browse`
+  RFC 9110 snapshot was captured this session; default browse transport is not
+  DNS-pinned). **CC-H4 PARTIAL** — Swift Browser pane + Settings source present;
+  macOS XCTest / UI proof pending. Search/open now share `isReputableSourceUrl`.
 
 ---
 

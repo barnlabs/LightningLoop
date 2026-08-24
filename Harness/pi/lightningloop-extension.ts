@@ -35,7 +35,7 @@ import { assertCredentialSafeInput, assertNoConfiguredCredential } from "../core
 import { dispatchNotification } from "../notifications/notification-dispatcher.js";
 import { encodePiApiKey } from "../core/pi-options.js";
 import { RosterAdapter, buildRosterMembers, formatRosterLines, isLoopAgent, loadLoopRoster, saveLoopAgentModel } from "../core/loop-roster.js";
-import { browseReputablePage, renderBrowsePage } from "../core/terminal-browser.js";
+import { executeBrowseCommand } from "../core/terminal-browser.js";
 import type { ProviderProfile } from "../core/provider-profile.js";
 import type { AgentAdapter } from "../core/loop-types.js";
 
@@ -468,8 +468,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
         return;
       }
       try {
-        const page = await browseReputablePage(url);
-        ctx.ui.notify(renderBrowsePage(page).join("\n"), "info");
+        ctx.ui.notify(await executeBrowseCommand(url), "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Browse failed closed.", "error");
       }
