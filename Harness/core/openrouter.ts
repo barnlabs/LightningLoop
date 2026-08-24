@@ -183,16 +183,16 @@ export async function enforceFreeMode(
 }
 
 /** Read a response body with a hard byte cap enforced while streaming, not after. */
-async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+async function readBoundedText(response: Response, maxBytes: number, label = "OpenRouter model discovery"): Promise<string> {
   const declaredLength = Number(response.headers.get("content-length") ?? "");
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-    throw new Error("OpenRouter model discovery response exceeded the size bound.");
+    throw new Error(`${label} response exceeded the size bound.`);
   }
   const body = response.body;
   if (!body) {
     const text = await response.text();
     if (Buffer.byteLength(text) > maxBytes) {
-      throw new Error("OpenRouter model discovery response exceeded the size bound.");
+      throw new Error(`${label} response exceeded the size bound.`);
     }
     return text;
   }
@@ -206,7 +206,7 @@ async function readBoundedText(response: Response, maxBytes: number): Promise<st
       total += value.byteLength;
       if (total > maxBytes) {
         await reader.cancel();
-        throw new Error("OpenRouter model discovery response exceeded the size bound.");
+        throw new Error(`${label} response exceeded the size bound.`);
       }
       chunks.push(value);
     }
@@ -251,6 +251,111 @@ export async function fetchOpenRouterModels(options: FetchOpenRouterModelsOption
     }
     const raw = await readBoundedText(response, MAX_MODELS_RESPONSE_BYTES);
     return parseOpenRouterModels(JSON.parse(raw) as unknown);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** OpenRouter's authenticated key-info endpoint (usage + limit for the calling key). */
+export const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/auth/key";
+/** The auth/key payload is tiny; cap it well below the models catalog cap. */
+const MAX_KEY_RESPONSE_BYTES = 65_536; // 64 KiB
+
+export interface OpenRouterKeyCredits {
+  /** Lifetime USD spent on this key. */
+  usage: number;
+  /** USD spending cap for this key, or null when uncapped. */
+  limit: number | null;
+  /** USD credit remaining, or null when the key is uncapped. */
+  remaining: number | null;
+  /** True when the key is a free-tier key. */
+  isFreeTier: boolean;
+}
+
+/** Accept only finite, non-negative numbers; anything else is undefined. */
+function finiteNonNegative(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * Parse the OpenRouter `GET /auth/key` payload into a normalized credit view.
+ * Fail-closed: a malformed shape throws rather than guessing a balance. When the
+ * account is uncapped (`limit` null) remaining is null (unlimited); when a cap
+ * exists but the API omits `limit_remaining` we derive it as `limit - usage`.
+ */
+export function parseOpenRouterKeyCredits(value: unknown): OpenRouterKeyCredits {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("OpenRouter key info is not a JSON object.");
+  }
+  const data = (value as Record<string, unknown>).data;
+  if (typeof data !== "object" || data === null) {
+    throw new Error("OpenRouter key info is missing its data object.");
+  }
+  const record = data as Record<string, unknown>;
+  const usage = finiteNonNegative(record.usage) ?? 0;
+  let limit: number | null;
+  if (record.limit === null || record.limit === undefined) {
+    limit = null;
+  } else {
+    const parsedLimit = finiteNonNegative(record.limit);
+    if (parsedLimit === undefined) throw new Error("OpenRouter key info has an invalid limit.");
+    limit = parsedLimit;
+  }
+  const remainingRaw = record.limit_remaining;
+  let remaining: number | null;
+  if (remainingRaw === null || remainingRaw === undefined) {
+    remaining = limit === null ? null : Math.max(0, limit - usage);
+  } else {
+    const parsedRemaining = finiteNonNegative(remainingRaw);
+    if (parsedRemaining === undefined) throw new Error("OpenRouter key info has an invalid remaining credit.");
+    remaining = parsedRemaining;
+  }
+  return { usage, limit, remaining, isFreeTier: record.is_free_tier === true };
+}
+
+export interface FetchOpenRouterKeyCreditsOptions {
+  fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
+}
+
+/**
+ * Read the calling key's OpenRouter credit balance. The API key travels only in
+ * the Authorization header (never a query string or log). Same bounded gates as
+ * the catalog fetch: HTTPS-only endpoint, redirects disabled, an absolute
+ * deadline, a response-size cap, and a strict JSON content-type check.
+ */
+export async function fetchOpenRouterKeyCredits(
+  apiKey: string,
+  options: FetchOpenRouterKeyCreditsOptions = {},
+): Promise<OpenRouterKeyCredits> {
+  const key = apiKey.trim();
+  if (!key) throw new Error("An OpenRouter API key is required to read credit balance.");
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    throw new Error("A fetch implementation is required to read OpenRouter credit balance.");
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new DOMException("OpenRouter credit read timed out.", "TimeoutError")), MODELS_REQUEST_TIMEOUT_MS);
+  if (options.signal) {
+    if (options.signal.aborted) controller.abort(options.signal.reason);
+    else options.signal.addEventListener("abort", () => controller.abort(options.signal?.reason), { once: true });
+  }
+  try {
+    const response = await fetchImpl(OPENROUTER_KEY_URL, {
+      method: "GET",
+      redirect: "error",
+      headers: { Accept: "application/json", Authorization: `Bearer ${key}` },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`OpenRouter credit read failed with HTTP ${response.status}.`);
+    }
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!/application\/json/iu.test(contentType)) {
+      throw new Error("OpenRouter credit read returned a non-JSON response.");
+    }
+    const raw = await readBoundedText(response, MAX_KEY_RESPONSE_BYTES, "OpenRouter credit read");
+    return parseOpenRouterKeyCredits(JSON.parse(raw) as unknown);
   } finally {
     clearTimeout(timeout);
   }

@@ -169,6 +169,12 @@ export interface LoopEvent {
   message: string;
   round?: number;
   role?: AgentRequest["role"];
+  /**
+   * A snapshot of accumulated usage at the moment the event was emitted. The
+   * engine attaches this so live surfaces (TUI status bar, CLI stage lines) can
+   * show tokens and cost climbing during a run without re-plumbing the loop.
+   */
+  usage?: AgentUsage;
 }
 
 export interface LoopRunResult {

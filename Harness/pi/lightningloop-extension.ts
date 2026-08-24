@@ -7,6 +7,7 @@ import { LIGHTNINGLOOP_SYSTEM_PROMPT } from "../core/system-prompt.js";
 import { SandboxedBashRuntime } from "../sandbox/sandboxed-bash.js";
 import { builtinWorkflowGuidance } from "../core/workflow-catalog.js";
 import { terminalSafe } from "../core/terminal-output.js";
+import { formatLiveUsageMeter } from "../core/usage-format.js";
 import { validateImagePaths } from "../core/image-input.js";
 import { loadProviderProfile, providerCredentialService, providerHeaders } from "../core/provider-profile.js";
 import { LoopEngine } from "../core/loop-engine.js";
@@ -357,6 +358,9 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
           4,
           async (event) => {
             ctx.ui.setStatus("lightningloop-run", event.message);
+            if (event.usage && event.usage.total > 0) {
+              ctx.ui.setStatus("lightningloop-usage", formatLiveUsageMeter(event.usage));
+            }
           },
           controller.signal,
         );
@@ -395,6 +399,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
       } finally {
         activeLoopController = undefined;
         ctx.ui.setStatus("lightningloop-run", undefined);
+        ctx.ui.setStatus("lightningloop-usage", undefined);
       }
     },
   });

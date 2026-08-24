@@ -32,7 +32,8 @@ import {
   type SelectableProviderPreset,
   type ProviderProfile,
 } from "../core/provider-profile.js";
-import { enforceFreeMode, fetchOpenRouterModels, pickFreeModeModel, resolveSelectableModel, selectFreeModels } from "../core/openrouter.js";
+import { enforceFreeMode, fetchOpenRouterKeyCredits, fetchOpenRouterModels, pickFreeModeModel, resolveSelectableModel, selectFreeModels, type OpenRouterKeyCredits } from "../core/openrouter.js";
+import { formatCreditLine, formatLiveUsageMeter, formatRunSummaryLine } from "../core/usage-format.js";
 import type { ProviderModelOverride } from "../core/provider-profile.js";
 import { clearProviderCredential, defaultSecretBackend, readStoredProviderCredential, storeProviderCredential } from "../core/key-store.js";
 import { validateImagePaths } from "../core/image-input.js";
@@ -765,7 +766,25 @@ async function runAuth(options: CliOptions): Promise<void> {
 
 function renderEvent(event: LoopEvent): void {
   const round = event.round ? ` · round ${event.round}` : "";
-  process.stdout.write(`\n[${event.stage}${round}] ${terminalSafe(event.message)}\n`);
+  const meter = event.usage && event.usage.total > 0 ? `  ${formatLiveUsageMeter(event.usage)}` : "";
+  process.stdout.write(`\n[${event.stage}${round}] ${terminalSafe(event.message)}${meter}\n`);
+}
+
+/**
+ * Read the OpenRouter credit balance when (and only when) an OpenRouter key is
+ * present in the environment. Fail-closed: any error resolves to undefined so
+ * the summary falls back to the always-present run-cost line. Keyless runs skip
+ * the network entirely.
+ */
+async function readOptionalOpenRouterCredits(profile: ProviderProfile): Promise<OpenRouterKeyCredits | undefined> {
+  if (profile.preset !== "openrouter") return undefined;
+  const key = (process.env.OPENROUTER_API_KEY ?? process.env.OPENROUTER_KEY ?? "").trim();
+  if (!key) return undefined;
+  try {
+    return await fetchOpenRouterKeyCredits(key);
+  } catch {
+    return undefined;
+  }
 }
 
 type Questioner = (prompt: string) => Promise<string>;
@@ -884,8 +903,9 @@ async function runLoop(options: CliOptions): Promise<void> {
     const result = await engine.execute(goal, clarification, answers, options.cycles, renderEvent);
 
     process.stdout.write(`\n=== ${result.stage.toUpperCase()} ===\n${result.message}\n`);
-    const cost = result.usage.cost > 0 ? ` · Provider-reported cost: $${result.usage.cost.toFixed(4)}` : " · Cost: unavailable";
-    process.stdout.write(`Reviews: ${result.reviews.length} · Tokens: ${result.usage.total}${cost}\n`);
+    process.stdout.write(`${formatRunSummaryLine({ reviews: result.reviews.length, usage: result.usage })}\n`);
+    const credits = await readOptionalOpenRouterCredits(profile);
+    if (credits) process.stdout.write(`${formatCreditLine(credits)}\n`);
     if (result.implementation.deliverable) process.stdout.write(`\n${terminalSafe(result.implementation.deliverable)}\n`);
     if (result.artifactReport) {
       process.stdout.write(`\nEvidence Lab: ${result.artifactReport.passed ? "PASS" : "FAIL"}\n`);

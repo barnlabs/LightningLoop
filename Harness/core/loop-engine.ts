@@ -7,6 +7,7 @@ import type {
   ArtifactExecutionReport,
   Clarification,
   ImplementationDraft,
+  LoopEvent,
   LoopEventSink,
   LoopContext,
   LoopRunResult,
@@ -438,11 +439,15 @@ export class LoopEngine {
     clarification: Clarification,
     answers: Record<string, string>,
     maxReviewCycles = 4,
-    emit: LoopEventSink = () => undefined,
+    emitRaw: LoopEventSink = () => undefined,
     signal?: AbortSignal,
   ): Promise<LoopRunResult> {
     const cycleLimit = Math.max(1, Math.min(8, Math.floor(maxReviewCycles)));
     const usage = emptyUsage();
+    // Every emitted event carries a snapshot of accumulated usage so live
+    // surfaces can render tokens/cost climbing without new plumbing.
+    const emit: (event: Omit<LoopEvent, "usage">) => void | Promise<void> = (event) =>
+      emitRaw({ ...event, usage: { ...usage } });
     const reviews: ReviewRecord[] = [];
     const graphTrace: PromiseGraphTraceEntry[] = [];
     const researchEvidence: unknown[] = [];

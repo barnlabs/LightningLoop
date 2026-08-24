@@ -3,10 +3,13 @@ import test from "node:test";
 import {
   assertModelFreeInCatalog,
   enforceFreeMode,
+  fetchOpenRouterKeyCredits,
   fetchOpenRouterModels,
   isFreeModel,
   OPENROUTER_FREE_ROUTER_ID,
+  OPENROUTER_KEY_URL,
   OPENROUTER_MODELS_URL,
+  parseOpenRouterKeyCredits,
   parseOpenRouterModels,
   pickFreeModeModel,
   resolveSelectableModel,
@@ -145,4 +148,68 @@ test("fetchOpenRouterModels uses a bounded, no-redirect JSON request and rejects
 
   const nonJson: typeof fetch = async () => new Response("<html></html>", { status: 200, headers: { "content-type": "text/html" } });
   await assert.rejects(() => fetchOpenRouterModels({ fetchImpl: nonJson }), /non-JSON/);
+});
+
+// A representative OpenRouter `GET /auth/key` payload (capped account).
+const KEY_FIXTURE = {
+  data: { label: "sk-or-...abcd", usage: 3.5, limit: 10, is_free_tier: false, limit_remaining: 6.5 },
+};
+
+test("parseOpenRouterKeyCredits reads a capped account with explicit remaining credit", () => {
+  const credits = parseOpenRouterKeyCredits(KEY_FIXTURE);
+  assert.deepEqual(credits, { usage: 3.5, limit: 10, remaining: 6.5, isFreeTier: false });
+});
+
+test("parseOpenRouterKeyCredits derives remaining from limit - usage when the API omits it", () => {
+  const credits = parseOpenRouterKeyCredits({ data: { usage: 4, limit: 10 } });
+  assert.deepEqual(credits, { usage: 4, limit: 10, remaining: 6, isFreeTier: false });
+  // Overspend never yields a negative balance.
+  const clamped = parseOpenRouterKeyCredits({ data: { usage: 12, limit: 10 } });
+  assert.equal(clamped.remaining, 0);
+});
+
+test("parseOpenRouterKeyCredits treats a null limit as an uncapped (unlimited) key", () => {
+  const credits = parseOpenRouterKeyCredits({ data: { usage: 2.25, limit: null, is_free_tier: true } });
+  assert.deepEqual(credits, { usage: 2.25, limit: null, remaining: null, isFreeTier: true });
+  // A missing usage defaults to zero rather than throwing.
+  assert.equal(parseOpenRouterKeyCredits({ data: {} }).usage, 0);
+});
+
+test("parseOpenRouterKeyCredits fails closed on a malformed payload or invalid numbers", () => {
+  assert.throws(() => parseOpenRouterKeyCredits(null), /not a JSON object/);
+  assert.throws(() => parseOpenRouterKeyCredits({}), /missing its data object/);
+  assert.throws(() => parseOpenRouterKeyCredits({ data: { limit: -1 } }), /invalid limit/);
+  assert.throws(() => parseOpenRouterKeyCredits({ data: { limit: "10" } }), /invalid limit/);
+  assert.throws(() => parseOpenRouterKeyCredits({ data: { usage: 1, limit_remaining: -5 } }), /invalid remaining/);
+});
+
+test("fetchOpenRouterKeyCredits sends the key in a bounded, no-redirect Authorization request (fixture, no live call)", async () => {
+  let requestedURL: string | undefined;
+  let requestInit: RequestInit | undefined;
+  const okFetch: typeof fetch = async (input, init) => {
+    requestedURL = String(input);
+    requestInit = init;
+    return new Response(JSON.stringify(KEY_FIXTURE), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const credits = await fetchOpenRouterKeyCredits("sk-or-secret", { fetchImpl: okFetch });
+  assert.equal(requestedURL, OPENROUTER_KEY_URL);
+  assert.equal((requestInit as { redirect?: string }).redirect, "error");
+  const headers = (requestInit as { headers?: Record<string, string> }).headers ?? {};
+  assert.equal(headers.Authorization, "Bearer sk-or-secret");
+  assert.equal(credits.remaining, 6.5);
+});
+
+test("fetchOpenRouterKeyCredits fails closed without a key, on non-JSON, on non-OK, and rejects redirects", async () => {
+  const unused: typeof fetch = async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  await assert.rejects(() => fetchOpenRouterKeyCredits("   ", { fetchImpl: unused }), /API key is required/);
+
+  const nonJson: typeof fetch = async () => new Response("nope", { status: 200, headers: { "content-type": "text/html" } });
+  await assert.rejects(() => fetchOpenRouterKeyCredits("k", { fetchImpl: nonJson }), /non-JSON/);
+
+  const badStatus: typeof fetch = async () => new Response("{}", { status: 401, headers: { "content-type": "application/json" } });
+  await assert.rejects(() => fetchOpenRouterKeyCredits("k", { fetchImpl: badStatus }), /HTTP 401/);
+
+  // redirect: "error" makes fetch throw on a 3xx; the reader surfaces it as a failure.
+  const redirecting: typeof fetch = async () => { throw new TypeError("redirect not allowed"); };
+  await assert.rejects(() => fetchOpenRouterKeyCredits("k", { fetchImpl: redirecting }));
 });
