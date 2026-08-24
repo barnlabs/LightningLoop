@@ -39,6 +39,7 @@ import type { ProviderModelOverride } from "../core/provider-profile.js";
 import { clearProviderCredential, defaultSecretBackend, readStoredProviderCredential, storeProviderCredential } from "../core/key-store.js";
 import { validateImagePaths } from "../core/image-input.js";
 import { loadEligibleMemoryContext } from "../core/memory-store.js";
+import { deriveProjectIdentity } from "../core/project-identity.js";
 import { WorkspaceArtifactExecutor } from "../artifacts/workspace-artifact-executor.js";
 import { startBrowserArtifactServer } from "../artifacts/browser-artifact-server.js";
 import { artifactSeedsForGoal } from "../artifacts/builtin-artifact-seeds.js";
@@ -883,7 +884,8 @@ async function runLoop(options: CliOptions): Promise<void> {
       ? `Mode: reviewed workspace artifacts · ${artifactExecutor.allowVerificationCommands ? "sandboxed verification approved" : "commands disabled"}\nOutput: ${terminalSafe(realpathSync(options.workspace))}\n`
       : "Mode: complete text-deliverable loop · workspace writes and commands disabled\n");
     const search = options.researchProvider ? new SearchClient() : undefined;
-    const memories = loadEligibleMemoryContext();
+    const { id: projectID } = deriveProjectIdentity(process.cwd());
+    const memories = loadEligibleMemoryContext(undefined, undefined, undefined, projectID);
     assertNoConfiguredCredential(memories, profile);
     const objective = await readObjectiveContract(options.objectiveFile);
     if (objective) {

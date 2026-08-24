@@ -16,6 +16,7 @@ import { enforceFreeMode } from "../core/openrouter.js";
 import { SearchClient, type SearchProvider } from "../search/search-client.js";
 import { applyActiveSystemPromptAddenda } from "../core/evolution-store.js";
 import { applyManagedMemoryContext, loadEligibleMemoryContext } from "../core/memory-store.js";
+import { deriveProjectIdentity } from "../core/project-identity.js";
 import { WorkspaceArtifactExecutor } from "../artifacts/workspace-artifact-executor.js";
 import { artifactSeedsForGoal } from "../artifacts/builtin-artifact-seeds.js";
 import {
@@ -212,7 +213,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
   });
 
   pi.on("before_agent_start", (event, ctx) => {
-    const memories = loadEligibleMemoryContext();
+    const memories = loadEligibleMemoryContext(undefined, undefined, undefined, deriveProjectIdentity(process.cwd()).id);
     const current = applyManagedMemoryContext(
       applyActiveSystemPromptAddenda(ctx.getSystemPrompt()),
       memories,
@@ -319,7 +320,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
               await artifactSeedsForGoal(goal, images),
             )
           : undefined;
-        const memories = loadEligibleMemoryContext();
+        const memories = loadEligibleMemoryContext(undefined, undefined, undefined, deriveProjectIdentity(process.cwd()).id);
         assertNoConfiguredCredential(memories, profile);
         // Just-free-mode guarantee: refuse to run a model that is no longer free.
         await enforceFreeMode(profile);
@@ -609,6 +610,56 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
         ctx.ui.notify("Memory deleted from the local ledger.", "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Memory deletion failed.", "error");
+      }
+    },
+  });
+
+  pi.registerCommand("desire", {
+    description: "List global (user) and current-project desires/preferences",
+    handler: async (_args, ctx) => {
+      try {
+        const projectID = deriveProjectIdentity(process.cwd()).id;
+        const desires = listManagedMemory().filter((record) => record.kind === "desire");
+        assertNoConfiguredCredential(desires.flatMap((record) => [record.statement, record.sourceArtifact, ...record.tags]), profile);
+        const inScope = desires.filter((record) => record.scope === "user" || record.projectID === undefined || record.projectID === projectID);
+        const content = inScope.length === 0
+          ? `# LightningLoop desires\n\nNo global or project desires for this project (\`${projectID}\`). Nothing is promoted silently.`
+          : `# LightningLoop desires · project \`${projectID}\`\n\n${inScope.map((record) => {
+              const where = record.scope === "user" ? "global" : `project ${record.projectID ?? "(any)"}`;
+              const status = record.promotionApprovedByUser ? "eligible" : "inactive — promotion required";
+              return `- **${where} · ${status}** · \`${record.id}\`\n  ${terminalSafe(record.statement)}`;
+            }).join("\n")}`;
+        pi.sendMessage({ customType: "lightningloop-desire", content, display: true }, { triggerTurn: false });
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Desire loading failed closed.", "error");
+      }
+    },
+  });
+
+  pi.registerCommand("desire-add", {
+    description: "Capture a global (user) or current-project desire without silently promoting it",
+    handler: async (args, ctx) => {
+      const target = args.trim().toLowerCase();
+      if (target !== "global" && target !== "project") {
+        ctx.ui.notify("Usage: /desire-add global|project", "warning");
+        return;
+      }
+      const statement = (await ctx.ui.editor("Desire / preference (secrets are prohibited)"))?.trim();
+      if (!statement) return;
+      try {
+        assertNoConfiguredCredential([statement], profile);
+        const scope = target === "global" ? "user" : "project";
+        const projectID = target === "project" ? deriveProjectIdentity(process.cwd()).id : undefined;
+        const record = addManagedMemory({
+          scope,
+          kind: "desire",
+          statement,
+          sourceArtifact: target === "global" ? "User desire (global)" : "User desire (project)",
+          ...(projectID ? { projectID } : {}),
+        });
+        ctx.ui.notify(`Desire ${record.id} captured inactive${projectID ? ` for project ${projectID}` : " globally"}. Use /memory-promote ${record.id} to make it eligible.`, "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Desire was not saved.", "error");
       }
     },
   });
