@@ -16,6 +16,7 @@ import type {
 import type { Criterion, CriterionEvidenceKind, EvidenceRecord, ReviewFinding, ReviewRecord, Severity } from "./schema.js";
 import { objectValue, parseStructuredJSON, stringArray, stringValue } from "./structured-json.js";
 import { applyManagedMemoryContext } from "./memory-store.js";
+import { evaluateObjectiveContract } from "./objective-oracle.js";
 import { PromiseGraph, type PromiseGraphTraceEntry } from "../graph/promise-graph.js";
 
 interface CriterionAssessment {
@@ -665,10 +666,14 @@ export class LoopEngine {
           assessmentCounts.set(assessment.criterionID, (assessmentCounts.get(assessment.criterionID) ?? 0) + 1);
         }
         const criterionByID = new Map(planning.criteria.map((criterion) => [criterion.id, criterion]));
-        const objectiveContractPassed = false;
+        // The completion oracle judges harness-observed evidence (files the
+        // harness hashed and commands it ran), never model-claimed text. With no
+        // contract, or a failing one, Gold stays disabled exactly as before.
+        const objectiveEvaluation = evaluateObjectiveContract(this.context.objective, artifactReport);
+        const objectiveContractPassed = objectiveEvaluation.passed;
         const invalidAssessmentReasons: string[] = [];
         if (!objectiveContractPassed) {
-          invalidAssessmentReasons.push("Automatic Gold is disabled until an immutable harness- or owner-supplied objective oracle exists. Source authority classification, retrieval, hashing, exact text, planner/reviewer agreement, and artifact checks are review context only; every result requires explicit owner acceptance.");
+          invalidAssessmentReasons.push(objectiveEvaluation.reason);
         }
         if (candidateReviewImages.length > 0 && reviewImages.length === 0) {
           invalidAssessmentReasons.push("The selected Gold reviewer is not verified image-capable; output picture evidence was not inspected.");

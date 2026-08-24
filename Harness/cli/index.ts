@@ -15,6 +15,7 @@ import { terminalSafe } from "../core/terminal-output.js";
 import { createLightningLoopExtension } from "../pi/lightningloop-extension.js";
 import { PiProviderAdapter } from "../pi/model-adapter.js";
 import { FusionAdapter, buildOpenRouterFusionMembers, parseFusionModelIds, type FusionCallProvenance } from "../core/fusion-adapter.js";
+import { parseObjectiveContract, type ObjectiveContract } from "../core/objective-oracle.js";
 import type { AgentAdapter } from "../core/loop-types.js";
 import { captureSearchCredentials, SearchClient, type SearchProvider } from "../search/search-client.js";
 import { runJsonlServer } from "../rpc/server.js";
@@ -59,6 +60,7 @@ interface CliOptions {
   searchQuery?: string;
   searchLimit: number;
   researchProvider?: SearchProvider;
+  objectiveFile?: string;
   imagePaths: string[];
   passthrough: string[];
   mcpAction?: "verify" | "call";
@@ -105,6 +107,7 @@ Usage:
   lightningloop key set|status|clear <openrouter|generalcompute|cerebras>
   lightningloop loop [GOAL] [--cycles 1-8] [--image PATH] [--research exa|brave|firecrawl|free]
     [--fusion "openrouter/id1,openrouter/id2"] (openrouter, non-free; runs 2-4 models per turn, longest reply wins)
+    [--objective-file contract.json] (owner completion oracle: harness-evidence checks required for Gold)
     [--workspace EMPTY_DIR --approve-artifact-writes [--approve-verification-commands]]
   lightningloop search <exa|brave|firecrawl|free> QUERY [--limit 1-20]  (free = keyless DuckDuckGo HTML)
   lightningloop mcp verify MANIFEST.json --workspace PATH --approve-manifest
@@ -137,6 +140,7 @@ export function parse(args: string[]): CliOptions {
   const searchQueryParts: string[] = [];
   let searchLimit = 5;
   let researchProvider: SearchProvider | undefined;
+  let objectiveFile: string | undefined;
   const imagePaths: string[] = [];
   const passthrough: string[] = [];
   let mcpAction: CliOptions["mcpAction"];
@@ -230,6 +234,12 @@ export function parse(args: string[]): CliOptions {
       const value = args[index + 1];
       if (value !== "exa" && value !== "brave" && value !== "firecrawl" && value !== "free") throw new Error("--research must be exa, brave, firecrawl, or free.");
       researchProvider = value;
+      index += 1;
+    }
+    else if (arg === "--objective-file") {
+      const value = args[index + 1];
+      if (!value) throw new Error("--objective-file requires a JSON contract path.");
+      objectiveFile = resolve(value);
       index += 1;
     }
     else if (arg === "--input") {
@@ -345,6 +355,7 @@ export function parse(args: string[]): CliOptions {
     ...(searchQuery ? { searchQuery } : {}),
     searchLimit,
     ...(researchProvider ? { researchProvider } : {}),
+    ...(objectiveFile ? { objectiveFile } : {}),
     imagePaths,
     passthrough,
     ...(mcpAction ? { mcpAction } : {}),
@@ -464,6 +475,13 @@ async function runMcp(options: CliOptions): Promise<void> {
     process.stdout.write(`\n${terminalSafe(callResult.output)}\n`);
     if (callResult.isError) process.exitCode = 2;
   }
+}
+
+async function readObjectiveContract(path: string | undefined): Promise<ObjectiveContract | undefined> {
+  if (!path) return undefined;
+  const encoded = await readFile(path);
+  if (encoded.length > 65_536) throw new Error("Objective contract exceeds 64 KiB.");
+  return parseObjectiveContract(JSON.parse(encoded.toString("utf8")) as unknown);
 }
 
 async function readMcpInput(path: string | undefined): Promise<Record<string, unknown>> {
@@ -842,10 +860,15 @@ async function runLoop(options: CliOptions): Promise<void> {
     const search = options.researchProvider ? new SearchClient() : undefined;
     const memories = loadEligibleMemoryContext();
     assertNoConfiguredCredential(memories, profile);
+    const objective = await readObjectiveContract(options.objectiveFile);
+    if (objective) {
+      process.stdout.write(`Objective oracle: ${objective.checks.length} harness-evidence check(s) required for Gold.\n`);
+    }
     const engine = new LoopEngine(await buildLoopAdapter(profile, options), {
       images,
       memories,
       ...(artifactExecutor ? { artifactExecutor } : {}),
+      ...(objective ? { objective } : {}),
       ...(options.researchProvider && search ? {
         research: {
           provider: options.researchProvider,
