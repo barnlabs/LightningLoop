@@ -1,5 +1,5 @@
 import { createBashTool, type ExtensionAPI, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { renderBrandHeaderLines, renderStatusFooterLines } from "./lightningloop-theme.js";
 import { basename } from "node:path";
 import { resolve } from "node:path";
 import { WorkspaceBoundary, evaluateToolRequest } from "../core/capability-policy.js";
@@ -157,40 +157,26 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
     if (ctx.mode === "tui") {
       ctx.ui.setHeader((_tui, theme) => ({
         render(width: number): string[] {
-          const rule = theme.fg("accent", "━".repeat(Math.max(1, width)));
-          const brand = `${theme.bold(theme.fg("accent", "ϟ  LIGHTNINGLOOP"))}${theme.fg("dim", "  /  BARNLABS")}`;
-          const loop = `${theme.fg("muted", `${profile.displayName} · ${profile.modelName}`)}  ${theme.fg("dim", "clarify → challenge → implement → verify")}`;
-          const identity = theme.fg("dim", profile.piProviderID
-            ? "Provider-neutral · authentication and model catalog managed by the LightningLoop runtime"
-            : profile.preset === "generalcompute"
-              ? "GeneralCompute · LightningLoop-managed fixed provider · Keychain or GENERALCOMPUTE_API_KEY"
-              : profile.preset === "openrouter"
-                ? "OpenRouter · LightningLoop-managed · Keychain or OPENROUTER_API_KEY · free models via provider models --free"
-                : profile.preset === "selection-required"
-                ? "Provider selection required · run lightningloop provider select"
-                : "Custom provider · credential stays in macOS Keychain");
-          return [
-            truncateToWidth(rule, width),
-            truncateToWidth(brand, width),
-            truncateToWidth(loop, width),
-            truncateToWidth(identity, width),
-            "",
-          ];
+          return renderBrandHeaderLines(theme, {
+            displayName: profile.displayName,
+            modelName: profile.modelName,
+            runtimeManaged: Boolean(profile.piProviderID),
+            preset: profile.preset,
+          }, width);
         },
         invalidate() {},
       }));
       ctx.ui.setFooter((_tui, theme) => ({
         render(width: number): string[] {
-          const left = `${theme.fg(executionEnabled ? "warning" : "success", `● ${policyLabel}`)}${theme.fg("dim", `  ·  ${workspaceLabel}`)}`;
-          const research = activeResearchProvider ? `research:${activeResearchProvider}` : "research:off";
-          const artifacts = activeArtifactWorkspace ? (activeArtifactCommands ? "artifacts+verify" : "artifacts") : "text-only";
-          const right = theme.fg("muted", `${profile.displayName}  ·  ${research}  ·  ${artifacts}  ·  /loop`);
-          const help = theme.fg("dim", "Attach /image · set /research or /artifacts · run /loop <goal>");
-          if (width >= 68) {
-            const padding = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
-            return [truncateToWidth(left + padding + right, width), truncateToWidth(help, width)];
-          }
-          return [truncateToWidth(left, width), truncateToWidth(right, width), truncateToWidth(help, width)];
+          return renderStatusFooterLines(theme, {
+            displayName: profile.displayName,
+            executionEnabled,
+            policyLabel,
+            workspaceLabel,
+            researchProvider: activeResearchProvider,
+            artifactWorkspace: Boolean(activeArtifactWorkspace),
+            artifactCommands: activeArtifactCommands,
+          }, width);
         },
         invalidate() {},
       }));
