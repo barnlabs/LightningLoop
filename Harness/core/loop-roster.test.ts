@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import type { AgentAdapter, AgentReply, AgentRequest } from "./loop-types.js";
 import {
-  EMPTY_ROSTER,
+  emptyRoster,
   LOOP_AGENTS,
   RosterAdapter,
   formatRosterLines,
@@ -47,11 +47,20 @@ test("roster parse is fail-closed and credential-free", () => {
   }), /invalid/);
 });
 
+test("missing roster files do not share a mutable singleton", () => {
+  const missing = join(tmpdir(), `lightningloop-roster-missing-${process.pid}.json`);
+  const first = loadLoopRoster(missing);
+  first.agents.researcher.modelID = "must-not-leak";
+  const second = loadLoopRoster(missing);
+  assert.equal(second.agents.researcher.modelID, "");
+  assert.deepEqual(second, emptyRoster());
+});
+
 test("save/load pins one agent model without touching the others", async () => {
   const directory = await mkdtemp(join(tmpdir(), "lightningloop-roster-"));
   const path = join(directory, "agents.json");
   try {
-    assert.deepEqual(loadLoopRoster(path), EMPTY_ROSTER);
+    assert.deepEqual(loadLoopRoster(path), emptyRoster());
     const saved = saveLoopAgentModel("engineer", "vendor/model-a", path);
     assert.equal(saved.agents.engineer.modelID, "vendor/model-a");
     assert.equal(saved.agents.researcher.modelID, "");

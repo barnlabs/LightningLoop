@@ -25,14 +25,18 @@ export interface LoopRoster {
   agents: Record<LoopAgent, LoopAgentAssignment>;
 }
 
-export const EMPTY_ROSTER: LoopRoster = {
-  schemaVersion: LOOP_ROSTER_VERSION,
-  agents: {
-    researcher: { modelID: "" },
-    engineer: { modelID: "" },
-    verifier: { modelID: "" },
-  },
-};
+export function emptyRoster(): LoopRoster {
+  return {
+    schemaVersion: LOOP_ROSTER_VERSION,
+    agents: {
+      researcher: { modelID: "" },
+      engineer: { modelID: "" },
+      verifier: { modelID: "" },
+    },
+  };
+}
+
+export const EMPTY_ROSTER: LoopRoster = emptyRoster();
 
 export function loopRosterPath(): string {
   const override = process.env.LIGHTNINGLOOP_AGENTS_CONFIG_PATH;
@@ -57,10 +61,14 @@ export function parseLoopRoster(value: unknown): LoopRoster {
   const root = objectValue(value, "loop roster");
   if (root.schemaVersion !== LOOP_ROSTER_VERSION) throw new Error("Loop roster version is unsupported.");
   const agents = objectValue(root.agents, "loop roster.agents");
-  const parsed = { ...EMPTY_ROSTER, agents: { ...EMPTY_ROSTER.agents } };
+  const parsed = emptyRoster();
   for (const agent of LOOP_AGENTS) {
     if (agents[agent] === undefined) continue;
     const entry = objectValue(agents[agent], `loop roster.agents.${agent}`);
+    if (entry.modelID === "") {
+      parsed.agents[agent] = { modelID: "" };
+      continue;
+    }
     const modelID = stringValue(entry.modelID, `loop roster.agents.${agent}.modelID`).trim();
     if (modelID && !MODEL_ID_PATTERN.test(modelID)) {
       throw new Error(`Loop agent ${agent} model ID is invalid.`);
@@ -75,7 +83,7 @@ export function loadLoopRoster(path = loopRosterPath()): LoopRoster {
     return parseLoopRoster(JSON.parse(readFileSync(path, "utf8")) as unknown);
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
-    if (code === "ENOENT") return EMPTY_ROSTER;
+    if (code === "ENOENT") return emptyRoster();
     throw error;
   }
 }
