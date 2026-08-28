@@ -433,7 +433,7 @@ npm run build:harness
 | First-run | `llp` with no provider prints Next/Then only. Cut help/free/doctor/agents/browse from the required path. Windows still matches `provider select PRESET`. |
 | Skills | Shipped pack: lloop-research, lloop-engineer, lloop-verify, lloop-sources, lloop-browse, maintain-lightningloop. `llp skills list\|enable\|disable`. TUI `/skills`. Settings Skills tab. `skill-pack.json` is IDs only. Drafts never auto-enable. |
 | No bloat | Removed Settings General/Memory/Evolution tabs and agent-handoff cards. Removed goal-composer pipeline cards. Footer is help · provider · key · skills · /loop. |
-| Proof (this Linux VM) | Recorded after gates. **Not run:** xcodebuild, XCTest, XCUITest, live TTY, live inference. |
+| Proof (this Linux VM) | Node v22.22.2. `npm run check:harness` exit 0. `npm run test:portable` **201 tests, 200 pass, 1 skipped, 0 fail**. `npm run build:harness` exit 0. Isolated first-run exit 2 is Next/Then only (provider → key or /login → loop). `llp help` is four numbered steps. `llp skills list` shows the six shipped IDs enabled; disable/enable `lloop-browse` is explicit; unknown ID fail-closed; `skill-pack.json` is IDs only. `doctor --runtime-only` ends with `Next: llp provider select PRESET`. **Not run:** xcodebuild, XCTest, XCUITest, live TTY, live inference. |
 | Production rows | **Unchanged.** LL-013–017, LL-021, LL-022 remain MISSING. LL-010 and LL-011 remain REWORK. No production row faked. |
 
 **Phase exit bullets:**

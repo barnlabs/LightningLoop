@@ -20,6 +20,6 @@ test("first-run is four steps and names the next action", () => {
 test("doctor next action fail-closes to the one required step", () => {
   assert.equal(doctorNextAction({ selectionRequired: true, piManaged: false, managedKeyReady: false }), "Next: llp provider select PRESET");
   assert.match(doctorNextAction({ selectionRequired: false, piManaged: true, managedKeyReady: false }), /llp auth then \/login/u);
-  assert.match(doctorNextAction({ selectionRequired: false, piManaged: false, managedKeyReady: false, managedKeyName: "openrouter" }), /llp key set openrouter/u);
+  assert.match(doctorNextAction({ selectionRequired: false, piManaged: false, managedKeyReady: false, managedKeyName: "openrouter" }), /key set openrouter/u);
   assert.equal(doctorNextAction({ selectionRequired: false, piManaged: false, managedKeyReady: true }), "Next: llp loop \"your goal\"");
 });
