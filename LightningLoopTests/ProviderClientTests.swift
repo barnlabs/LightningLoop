@@ -93,7 +93,7 @@ final class ProviderClientTests: XCTestCase {
     }
 
     func testOpenRouterNativeListModelsIsAllowedWithFixedEndpoint() async throws {
-        var credentialReads = 0
+        let credentialReads = LockedCounter()
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let store = ProviderConfigurationStore(fileURL: root.appendingPathComponent("provider.json"))
         try store.save(.preset(.openrouter))
@@ -113,13 +113,13 @@ final class ProviderClientTests: XCTestCase {
             profileStore: store,
             session: URLSession(configuration: configuration),
             credentialReader: { _ in
-                credentialReads += 1
+                credentialReads.increment()
                 return "must-not-be-read"
             }
         )
         let models = try await client.listModels()
         XCTAssertEqual(models, ["deepseek/deepseek-chat-v3-0324:free"])
-        XCTAssertEqual(credentialReads, 0)
+        XCTAssertEqual(credentialReads.value, 0, "OpenRouter catalog load must not read a credential")
     }
 
     func testOpenRouterPublicCatalogDoesNotRequireAKey() async throws {
