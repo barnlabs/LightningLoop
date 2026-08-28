@@ -22,7 +22,8 @@ test("help remains a noninteractive command", () => {
   assert.equal(parse(["--help"]).command, "help");
   assert.match(usage(), /llp \| lloop \| lightningloop \[tui\]/u);
   assert.match(usage(), /RUNTIME_OPTIONS/u);
-  assert.match(usage(), /Provider sign-in uses the managed LightningLoop runtime/u);
+  assert.match(usage(), /Runtime-managed sign-in/u);
+  assert.match(usage(), /lightningloop key set NAME/u);
   assert.match(usage(), /agents select <researcher\|engineer\|verifier>/u);
   assert.match(usage(), /lightningloop browse URL/u);
   assert.match(usage(), /llp, lloop, and lightningloop are the same product/u);
@@ -57,6 +58,10 @@ test("provider and install-doctor commands parse as bounded first-run operations
   assert.throws(() => parse(["loop", "goal", "--fusion", "bad\nlist"]), /bounded comma-separated model list/);
   assert.equal(parse(["key", "set", "openrouter"]).keyAction, "set");
   assert.equal(parse(["key", "status", "openrouter"]).keyProvider, "openrouter");
+  assert.equal(parse(["key", "set", "firecrawl"]).keyProvider, "firecrawl");
+  assert.equal(parse(["key", "status", "exa"]).keyProvider, "exa");
+  assert.equal(parse(["key", "clear", "brave"]).keyProvider, "brave");
+  assert.equal(parse(["key", "set", "custom"]).keyProvider, "custom");
   assert.throws(() => parse(["key", "bogus", "openrouter"]), /set, status, or clear/);
   assert.equal(parse(["doctor", "--runtime-only"]).doctorRuntimeOnly, true);
   assert.equal(parse(["agents", "list"]).command, "agents");
@@ -202,6 +207,10 @@ test("clean cross-platform data flow requires selection, lists presets, and stor
     assert.match(list.stdout, /openai-codex/u);
     await assert.rejects(readFile(join(dataDirectory, "provider.json"), "utf8"), { code: "ENOENT" });
 
+    const modelsUnselected = spawnSync(process.execPath, [cli, "provider", "models"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.notEqual(modelsUnselected.status, 0);
+    assert.match(`${modelsUnselected.stderr}${modelsUnselected.stdout}`, /Provider selection is required/u);
+
     const select = spawnSync(process.execPath, [cli, "provider", "select", "cerebras"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(select.status, 0, select.stderr);
     const encoded = await readFile(join(dataDirectory, "provider.json"), "utf8");
@@ -210,6 +219,15 @@ test("clean cross-platform data flow requires selection, lists presets, and stor
 
     const selectedDoctor = spawnSync(process.execPath, [cli, "doctor"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(selectedDoctor.status, 0, selectedDoctor.stderr);
+    assert.match(selectedDoctor.stdout, /Firecrawl research credential: missing/u);
+
+    const runtimeModels = spawnSync(process.execPath, [cli, "provider", "models"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    if (runtimeModels.status === 0) {
+      assert.match(runtimeModels.stdout, /installed runtime catalog/u);
+    }
+    const unknownModel = spawnSync(process.execPath, [cli, "provider", "select", "cerebras", "--model", "totally-made-up-model-xyz"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.notEqual(unknownModel.status, 0);
+    assert.match(`${unknownModel.stderr}${unknownModel.stdout}`, /not catalogued by the installed LightningLoop runtime/u);
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
   }
@@ -302,7 +320,15 @@ test("key status reports the secure store and never displays a value", async () 
     const status = spawnSync(process.execPath, [cli, "key", "status", "openrouter"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(status.status, 0, status.stderr);
     assert.match(status.stdout, /Secure store:/u);
-    assert.match(status.stdout, /Stored key: (?:PRESENT|none)/u);
+    assert.match(status.stdout, /Stored key: (?:stored|missing)/u);
+    const firecrawl = spawnSync(process.execPath, [cli, "key", "status", "firecrawl"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.equal(firecrawl.status, 0, firecrawl.stderr);
+    assert.match(firecrawl.stdout, /LightningLoop key · firecrawl/u);
+    assert.match(firecrawl.stdout, /Stored key: (?:stored|missing)/u);
+    assert.doesNotMatch(`${status.stdout}${firecrawl.stdout}`, /sk-|fc-|Bearer/u);
+    const unknown = spawnSync(process.execPath, [cli, "key", "status", "anthropic"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.notEqual(unknown.status, 0);
+    assert.match(`${unknown.stderr}${unknown.stdout}`, /firecrawl, exa, brave/u);
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
   }

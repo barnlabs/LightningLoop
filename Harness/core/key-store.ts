@@ -128,20 +128,39 @@ export function defaultSecretBackend(): SecretBackend {
   return unavailableBackend;
 }
 
-export function storeProviderCredential(profile: ProviderProfile, secret: string, backend: SecretBackend = defaultSecretBackend()): void {
+export function storeSecret(service: string, secret: string, backend: SecretBackend = defaultSecretBackend()): void {
+  assertSafeService(service);
   assertSafeSecret(secret);
   if (!backend.isAvailable()) {
     throw new Error(`Secure key storage is unavailable (${backend.name}). Set the key as an environment variable instead, or install a system keyring.`);
   }
-  backend.set(providerCredentialService(profile), secret);
+  backend.set(service, secret);
+}
+
+export function readSecret(service: string, backend: SecretBackend = defaultSecretBackend()): string | undefined {
+  assertSafeService(service);
+  if (!backend.isAvailable()) return undefined;
+  return backend.get(service);
+}
+
+export function clearSecret(service: string, backend: SecretBackend = defaultSecretBackend()): void {
+  assertSafeService(service);
+  if (!backend.isAvailable()) return;
+  backend.clear(service);
+}
+
+export function secretPresent(service: string, backend: SecretBackend = defaultSecretBackend()): boolean {
+  return readSecret(service, backend) !== undefined;
+}
+
+export function storeProviderCredential(profile: ProviderProfile, secret: string, backend: SecretBackend = defaultSecretBackend()): void {
+  storeSecret(providerCredentialService(profile), secret, backend);
 }
 
 export function readStoredProviderCredential(profile: ProviderProfile, backend: SecretBackend = defaultSecretBackend()): string | undefined {
-  if (!backend.isAvailable()) return undefined;
-  return backend.get(providerCredentialService(profile));
+  return readSecret(providerCredentialService(profile), backend);
 }
 
 export function clearProviderCredential(profile: ProviderProfile, backend: SecretBackend = defaultSecretBackend()): void {
-  if (!backend.isAvailable()) return;
-  backend.clear(providerCredentialService(profile));
+  clearSecret(providerCredentialService(profile), backend);
 }

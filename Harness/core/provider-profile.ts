@@ -275,10 +275,7 @@ export interface ProviderModelOverride {
  * presets (GeneralCompute, OpenRouter) may override the model here, because
  * Pi-managed presets are validated against the runtime catalog instead.
  */
-export function applyModelOverride(profile: ProviderProfile, override: ProviderModelOverride): ProviderProfile {
-  if (profile.piProviderID) {
-    throw new Error("A model cannot be chosen this way for a runtime-managed provider; use the runtime model catalog.");
-  }
+function applyModelFields(profile: ProviderProfile, override: ProviderModelOverride): ProviderProfile {
   const modelID = override.modelID.trim();
   if (!modelID || modelID.length > 200 || /[\r\n\0]/u.test(modelID)) {
     throw new Error("Model ID must contain 1-200 safe characters.");
@@ -298,10 +295,22 @@ export function applyModelOverride(profile: ProviderProfile, override: ProviderM
   };
 }
 
-export function saveProviderPreset(preset: SelectableProviderPreset, path = providerConfigPath(), modelOverride?: ProviderModelOverride): ProviderProfile {
-  if (!selectableProviderPresets.includes(preset)) throw new Error("Provider preset is not selectable.");
-  const baseProfile = profileForPreset(preset);
-  const profile = modelOverride ? applyModelOverride(baseProfile, modelOverride) : baseProfile;
+export function applyModelOverride(profile: ProviderProfile, override: ProviderModelOverride): ProviderProfile {
+  if (profile.piProviderID) {
+    throw new Error("A model cannot be chosen this way for a runtime-managed provider; use the runtime model catalog.");
+  }
+  return applyModelFields(profile, override);
+}
+
+/**
+ * Apply a model that has already been checked against the installed runtime
+ * catalog (Pi-managed) or a live LightningLoop-managed host catalog.
+ */
+export function applyCataloguedModel(profile: ProviderProfile, override: ProviderModelOverride): ProviderProfile {
+  return applyModelFields(profile, override);
+}
+
+export function saveProviderProfile(profile: ProviderProfile, path = providerConfigPath()): ProviderProfile {
   const encoded = `${JSON.stringify(profile, null, 2)}\n`;
   if (Buffer.byteLength(encoded) > 16_384 || /(?:api.?key|authorization|bearer\s|(?:csk|sk)-[a-z0-9])/iu.test(encoded)) {
     throw new Error("Provider configuration must remain bounded and credential-free.");
@@ -335,6 +344,13 @@ export function saveProviderPreset(preset: SelectableProviderPreset, path = prov
     throw error;
   }
   return profile;
+}
+
+export function saveProviderPreset(preset: SelectableProviderPreset, path = providerConfigPath(), modelOverride?: ProviderModelOverride): ProviderProfile {
+  if (!selectableProviderPresets.includes(preset)) throw new Error("Provider preset is not selectable.");
+  const baseProfile = profileForPreset(preset);
+  const profile = modelOverride ? applyModelOverride(baseProfile, modelOverride) : baseProfile;
+  return saveProviderProfile(profile, path);
 }
 
 export function providerCredentialService(profile: ProviderProfile): string {

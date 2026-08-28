@@ -36,7 +36,7 @@ struct SettingsView: View {
             _selectedTab = State(initialValue: .general)
         }
 #else
-        _selectedTab = State(initialValue: .general)
+        _selectedTab = State(initialValue: model.providerProfile.requiresProviderSelection ? .providers : .general)
 #endif
     }
 
@@ -120,7 +120,7 @@ struct SettingsView: View {
                                     isTesting = false
                                 }
                             }
-                            .disabled(!model.hasCredential(draft) || isTesting)
+                            .disabled(!model.canDiscoverHostModels || isTesting)
                         }
                     }
                     if draft.usesPiAuthentication {
@@ -224,6 +224,50 @@ struct SettingsView: View {
             .tag(SettingsTab.general)
 
             Form {
+                Section("Discover and select a model") {
+                    Text(draft.usesPiAuthentication
+                         ? "Refresh the installed runtime catalog, pick a listed ID, then save. Catalogued is not sign-in."
+                         : "Discover loads live host model IDs. OpenRouter's public catalog needs no key. GeneralCompute and Custom need a stored key.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        if draft.usesPiAuthentication {
+                            Button(isTesting ? "Refreshing…" : "Refresh Runtime Models") {
+                                isTesting = true
+                                Task {
+                                    await model.refreshRuntimeModelCatalog()
+                                    if let selected = model.runtimeModels.first(where: { $0.modelID == draft.modelID }) {
+                                        draft = draft.applyingRuntimeModel(selected)
+                                    }
+                                    isTesting = false
+                                }
+                            }
+                            .disabled(isTesting)
+                            .buttonStyle(.borderedProminent)
+                            Button("Copy runtime login command") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString("lightningloop auth", forType: .string)
+                            }
+                        } else {
+                            Button(isTesting ? "Discovering…" : "Discover Models") {
+                                isTesting = true
+                                Task {
+                                    await model.testConnection()
+                                    if model.availableModels.contains(draft.modelID) {
+                                        model.applyDiscoveredCustomModel(draft.modelID, to: &draft)
+                                    }
+                                    isTesting = false
+                                }
+                            }
+                            .disabled(!model.canDiscoverHostModels || isTesting)
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+                    if !model.settingsMessage.isEmpty {
+                        Text(model.settingsMessage).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("Active provider profile") {
                     Picker("Preset", selection: providerPresetBinding) {
                         ForEach(ProviderPreset.allCases) { preset in Text(preset.label).tag(preset) }

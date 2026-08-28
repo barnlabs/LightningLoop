@@ -27,7 +27,9 @@ GeneralCompute is a LightningLoop-managed fixed preset (not Pi-managed). Selecti
 
 ## Custom providers
 
-Custom OpenAI-compatible profiles and GeneralCompute retain the user-triggered **Discover Models & Test** action. That is the only direct native provider operation: it requires the user’s LightningLoop-managed API key, is not run automatically, and does not provide a fallback path for Pi-managed built-in providers.
+LightningLoop-managed presets (OpenRouter, GeneralCompute, Custom) expose **Discover Models** in Settings and `lightningloop provider models` on the CLI. OpenRouter's public catalog needs no key. GeneralCompute and Custom call the host `/models` endpoint with the stored key. `provider select PRESET --model ID` persists only a catalogued ID; an unknown ID fails closed.
+
+Custom OpenAI-compatible profiles and GeneralCompute retain the user-triggered Discover action. That is the only direct native provider operation: it is not run automatically, and it does not provide a fallback path for Pi-managed built-in providers. Pi-managed presets list the installed runtime catalog only; LightningLoop does not invent a native `/models` client for those.
 
 Discovery calls the host’s OpenAI-compatible `GET /models` endpoint and surfaces **account-visible model IDs**. The list is not a marketing catalog and usually does not include display names or capability metadata; context window and image support remain user-set until the host exposes richer fields. Selecting a discovered ID copies it into the draft profile and sets the display name to that ID by default. GeneralCompute’s org inventory may prefer `POST /v1/models/list`; if `GET /models` is unsupported, enter model IDs manually.
 

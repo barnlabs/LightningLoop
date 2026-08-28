@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { SecretRedactor } from "../core/redaction.js";
 import { isIP } from "node:net";
@@ -8,6 +7,8 @@ import type { IncomingHttpHeaders } from "node:http";
 import { registerRuntimeCredential, runtimeCredentialValuesForFiltering } from "../core/credential-safety.js";
 import { lightningLoopCredentialServices, loadProviderProfile } from "../core/provider-profile.js";
 import { isReputableSourceUrl } from "../core/source-policy.js";
+import { defaultSecretBackend, readSecret } from "../core/key-store.js";
+import { missingKeyNextAction } from "../core/key-catalog.js";
 
 export type SearchProvider = "exa" | "brave" | "firecrawl" | "free";
 
@@ -88,9 +89,10 @@ const runtimeSearchCredentials = new Map<KeyedSearchProvider, string>();
 /** Capture search-only environment credentials before the TUI scrubs its tool environment. */
 export function captureSearchCredentials(environment: NodeJS.ProcessEnv): void {
   const names: Record<KeyedSearchProvider, string> = { exa: "EXA_API_KEY", brave: "BRAVE_SEARCH_API_KEY", firecrawl: "FIRECRAWL_API_KEY" };
+  const backend = defaultSecretBackend();
   for (const provider of Object.keys(names) as KeyedSearchProvider[]) {
     const name = names[provider];
-    const value = environment[name]?.trim();
+    const value = environment[name]?.trim() || readSecret(services[provider], backend);
     if (value) {
       runtimeSearchCredentials.set(provider, value);
       registerRuntimeCredential(value);
@@ -105,14 +107,7 @@ function readCredential(service: string): string | undefined {
   const environmentName = provider === "exa" ? "EXA_API_KEY" : provider === "brave" ? "BRAVE_SEARCH_API_KEY" : provider === "firecrawl" ? "FIRECRAWL_API_KEY" : "";
   const environmentCredential = environmentName ? process.env[environmentName]?.trim() : undefined;
   if (environmentCredential) return environmentCredential;
-  if (process.platform !== "darwin") return undefined;
-  const result = spawnSync("/usr/bin/security", ["find-generic-password", "-s", service, "-w"], {
-    encoding: "utf8",
-    timeout: 5_000,
-    maxBuffer: 16_384,
-  });
-  if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
-  return undefined;
+  return readSecret(service);
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -619,7 +614,7 @@ export class SearchClient {
     let credential = "";
     if (provider !== "free") {
       const resolved = this.credentialReader(services[provider])?.trim();
-      if (!resolved) throw new Error(`The ${provider} credential is not configured.`);
+      if (!resolved) throw new Error(missingKeyNextAction(provider));
       if (resolved.length > 16_384) throw new Error(`The ${provider} credential exceeds the safety limit.`);
       credential = resolved;
       credentials.add(credential);

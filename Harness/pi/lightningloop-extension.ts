@@ -57,6 +57,8 @@ export interface LightningLoopExtensionOptions {
    * LightningLoop-managed provider instead of the Pi `/login` path.
    */
   cerebrasApiKey?: string;
+  /** Custom host key resolved by the CLI from the OS secret store. */
+  customApiKey?: string;
 }
 
 type ManagedProviderRegistration = Parameters<ExtensionAPI["registerProvider"]>[1];
@@ -127,27 +129,25 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
   if (isProviderSelectionRequired(profile)) {
     // First-run TUI: register commands and the terminal browser without a provider.
   } else if (!profile.piProviderID) {
-    const envApiKey = profile.preset === "generalcompute"
+    const resolvedApiKey = profile.preset === "generalcompute"
       ? options.generalComputeApiKey?.trim()
       : profile.preset === "openrouter"
         ? options.openRouterApiKey?.trim()
-        : undefined;
-    if (process.platform !== "darwin") {
-      if (!envApiKey) {
+        : profile.preset === "custom"
+          ? options.customApiKey?.trim()
+          : undefined;
+    if (!resolvedApiKey) {
+      if (process.platform === "darwin") {
+        pi.registerProvider(providerID, managedOpenAiProviderRegistration(profile, keychainCommand([providerCredentialService(profile)])));
+      } else {
+        const name = profile.preset === "generalcompute" ? "generalcompute" : profile.preset === "openrouter" ? "openrouter" : "custom";
         throw new Error(
-          profile.preset === "generalcompute"
-            ? "GeneralCompute on non-macOS requires GENERALCOMPUTE_API_KEY. It is not managed by runtime /login."
-            : profile.preset === "openrouter"
-              ? "OpenRouter on non-macOS requires OPENROUTER_API_KEY (or OPENROUTER_KEY). It is not managed by runtime /login."
-              : "Custom provider Keychain profiles are macOS-only. Configure GeneralCompute or OpenRouter with an API key environment variable, or a runtime-managed built-in provider for cross-platform use.",
+          `${profile.displayName} requires a LightningLoop-managed API key. Pipe it with 'printf %s "$KEY" | lightningloop key set ${name}' or set the provider environment variable. It is not managed by runtime /login.`,
         );
       }
+    } else {
+      pi.registerProvider(providerID, managedOpenAiProviderRegistration(profile, encodePiApiKey(resolvedApiKey)));
     }
-    // An explicitly captured TUI env key is process-local; otherwise macOS uses Keychain.
-    const apiKey = envApiKey
-      ? encodePiApiKey(envApiKey)
-      : (process.platform === "darwin" ? keychainCommand([providerCredentialService(profile)]) : envApiKey!);
-    pi.registerProvider(providerID, managedOpenAiProviderRegistration(profile, apiKey));
   } else if (cerebrasManualApiKey) {
     // Cerebras manual-key override: run as a LightningLoop-managed OpenAI-compatible
     // provider instead of the Pi /login path. The CLI already resolved the key from
@@ -891,7 +891,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
   pi.registerCommand("key", {
     description: "Show how to store a LightningLoop-managed API key",
     handler: async (_args, ctx) => {
-      ctx.ui.notify("Use `llp key set openrouter|generalcompute|cerebras`. The key is read from stdin only — never argv, a file, or this TUI prompt.", "info");
+      ctx.ui.notify("Use `llp key set openrouter|generalcompute|custom|cerebras|firecrawl|exa|brave`. The key is read from stdin only — never argv, a file, or this TUI prompt.", "info");
     },
   });
 

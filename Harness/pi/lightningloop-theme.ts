@@ -67,7 +67,7 @@ export function renderDiscoverableHelp(): string {
     "  help                 this list",
     "  provider list        show selectable presets",
     "  provider select …    persist credential-free provider.json",
-    "  key set|status|clear LightningLoop-managed key (stdin, never argv or a file)",
+    "  key set|status|clear openrouter|generalcompute|custom|cerebras|firecrawl|exa|brave (stdin, never argv or a file)",
     "  free                 pin OpenRouter just-free mode",
     "  doctor               environment and credential presence (never values)",
     "  loop <goal>          run the strict loop",

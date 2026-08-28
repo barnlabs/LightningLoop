@@ -831,12 +831,21 @@ final class AppModel {
         }
     }
 
+    var canDiscoverHostModels: Bool {
+        providerProfile.usesPiAuthentication
+            || hasCredential(providerProfile)
+            || providerProfile.preset == .openrouter
+    }
+
     func testConnection() async {
         guard providerProfile.allowsNativeConnectionTesting else {
             await refreshRuntimeModelCatalog()
             return
         }
-        settingsMessage = "Discovering \(providerProfile.displayName) models and testing \(providerProfile.modelName)…"
+        let hasKey = hasCredential(providerProfile)
+        settingsMessage = hasKey
+            ? "Discovering \(providerProfile.displayName) models and testing \(providerProfile.modelName)…"
+            : "Discovering \(providerProfile.displayName) models from the live host catalog…"
         do {
             let client = ProviderClient(keychain: keychain, profileStore: providerStore)
             let ids = try await client.listModels()
@@ -854,12 +863,17 @@ final class AppModel {
                 throw ProviderClientError.server(
                     provider: providerProfile.displayName,
                     status: 0,
-                    message: "Model \(providerProfile.modelID) was not returned by /models. Pick a discovered model, then retest."
+                    message: "Model \(providerProfile.modelID) was not returned by /models. Pick a discovered model, then save the profile."
                 )
             }
-            let reply = try await client.complete(LoopPrompts.connectionProbe())
-            connectionMetrics = reply.metrics
-            settingsMessage = "Connected to \(reply.model). Discovered \(availableModels.count) model\(availableModels.count == 1 ? "" : "s") from the provider /models list (account-visible IDs, not a marketing catalog)."
+            if hasKey {
+                let reply = try await client.complete(LoopPrompts.connectionProbe())
+                connectionMetrics = reply.metrics
+                settingsMessage = "Connected to \(reply.model). Discovered \(availableModels.count) model\(availableModels.count == 1 ? "" : "s") from the provider /models list (account-visible IDs, not a marketing catalog)."
+            } else {
+                connectionMetrics = nil
+                settingsMessage = "Discovered \(availableModels.count) model ID\(availableModels.count == 1 ? "" : "s") from the public OpenRouter catalog. Save a key to test a completion."
+            }
         } catch {
             connectionMetrics = nil
             availableModels = []

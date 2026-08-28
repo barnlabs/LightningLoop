@@ -132,11 +132,15 @@ struct ProviderClient: AgentServing, Sendable {
         let profile = try profileStore.loadValidated()
         guard profile.allowsNativeConnectionTesting else { throw ProviderClientError.piManagedProfile }
         guard let endpoint = profile.modelsEndpoint else { throw ProviderClientError.invalidConfiguration }
-        guard let apiKey = try credentialReader(profile), !apiKey.isEmpty else {
+        let apiKey = (try credentialReader(profile))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // OpenRouter's public /models catalog is credential-free. Other hosts need a key.
+        if apiKey.isEmpty && profile.preset != .openrouter {
             throw ProviderClientError.missingAPIKey(profile.displayName)
         }
         var request = URLRequest(url: endpoint)
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        if !apiKey.isEmpty {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ProviderClientError.invalidResponse(profile.displayName) }
         guard (200..<300).contains(http.statusCode) else {
