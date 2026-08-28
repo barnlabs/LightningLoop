@@ -139,7 +139,9 @@ struct ArtifactEvidenceView: View {
 
     @ViewBuilder
     private func viewers(_ report: ArtifactExecutionReport) -> some View {
-        let viewable = report.files.filter { ArtifactViewerPolicy.kind(forRelativePath: $0.path) != .none }
+        let viewable: [ArtifactFileEvidence] = report.files.filter { file in
+            ArtifactViewerPolicy.kind(forRelativePath: file.path) != .none
+        }
         if !viewable.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Bound viewers", systemImage: "eye")
@@ -148,34 +150,39 @@ struct ArtifactEvidenceView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 ForEach(viewable, id: \.path) { file in
-                    let current = currentFileEvidence(file, maximumBytes: ArtifactEvidenceReader.maximumEvidenceBytes)
-                    let kind = ArtifactViewerPolicy.kind(forRelativePath: file.path)
-                    SurfaceCard {
-                        switch kind {
-                        case .image:
-                            ArtifactImageViewer(
-                                title: file.path,
-                                evidence: current,
-                                compare: compareEvidence(for: file, in: report)
-                            )
-                        case .sceneKitModel, .glbOrGltf:
-                            ArtifactModelViewer(
-                                title: file.path,
-                                relativePath: file.path,
-                                evidence: current,
-                                fileURL: evidenceReader.verifiedFileURL(
-                                    relativePath: file.path,
-                                    expectedSHA256: file.sha256,
-                                    expectedBytes: file.bytes
-                                )
-                            )
-                        case .none:
-                            EmptyView()
-                        }
-                    }
+                    boundViewerCard(for: file, in: report)
                 }
             }
             .accessibilityIdentifier("evidence.bound.viewers")
+        }
+    }
+
+    @ViewBuilder
+    private func boundViewerCard(for file: ArtifactFileEvidence, in report: ArtifactExecutionReport) -> some View {
+        let current = currentFileEvidence(file, maximumBytes: ArtifactEvidenceReader.maximumEvidenceBytes)
+        let kind = ArtifactViewerPolicy.kind(forRelativePath: file.path)
+        SurfaceCard {
+            switch kind {
+            case .image:
+                ArtifactImageViewer(
+                    title: file.path,
+                    evidence: current,
+                    compare: compareEvidence(for: file, in: report)
+                )
+            case .sceneKitModel, .glbOrGltf:
+                ArtifactModelViewer(
+                    title: file.path,
+                    relativePath: file.path,
+                    evidence: current,
+                    fileURL: evidenceReader.verifiedFileURL(
+                        relativePath: file.path,
+                        expectedSHA256: file.sha256,
+                        expectedBytes: file.bytes
+                    )
+                )
+            case .none:
+                EmptyView()
+            }
         }
     }
 

@@ -441,3 +441,13 @@ npm run build:harness
 1. **Changed:** GUI product source (OpenRouter, designed states, bound viewers) and TUI discoverability/branding. Honest checklist/criteria only.
 2. **Commands:** see proof row. Seatbelt/sandbox tests were not edited to pass on Linux.
 3. **Risk:** native GUI is source-complete, not live-proven. Do not merge as a production ship.
+
+### 2026-08-28 — macos-app target membership (PR 15 follow-up)
+
+| Item | Detail |
+|------|--------|
+| Trigger | GitHub Actions run 33137383836, job 98740296269, step "Build and test", exit 65. Isolated UI journey skipped. |
+| Cause (verified) | CI runs `xcodebuild -project LightningLoop.xcodeproj` and does **not** run `xcodegen generate`. New Swift files were on disk and listed by `project.yml`, but absent from the committed `project.pbxproj`, so `DesignedEmptyState`, `DesignedCopy`, `ProviderIdentityChip`, `ArtifactViewerPolicy`, `ArtifactImageViewer`, and `ArtifactModelViewer` were never compiled. The generic `R` error was a cascade from those missing types. |
+| Fix | Added `DesignedCopy.swift`, `DesignedStateViews.swift`, `ArtifactViewerPolicy.swift`, `ArtifactImageViewer.swift`, `ArtifactModelViewer.swift`, `LoopHistoryFilter.swift` to the app target, and `ArtifactViewerPolicyTests.swift` to the unit-test target. Tightened `ArtifactEvidenceView` viewer types. Gold / sandbox / credential boundaries unchanged. |
+| Proof (this Linux VM) | Membership verified by reading `LightningLoop.xcodeproj/project.pbxproj` (file refs + Sources phases). **Not run:** xcodebuild, XCTest, XCUITest. Do not treat this follow-up as a green macos-app row. |
+| Production rows | **Unchanged.** LL-010 and LL-011 remain REWORK. No production row faked. |
