@@ -432,7 +432,7 @@ npm run build:harness
 | Branch | `cursor/gui-tui-product-feel-b678` |
 | GUI | OpenRouter preset + Keychain key entry (lockstep with harness); designed empty/error/offline/long-history states; evidence-bound image zoom/compare and SceneKit mesh viewers (hash-verified only); Browser pane empty/refused/offline; Settings just-free toggle; brand tagline on the goal hero |
 | TUI | Header tagline + invoked bin; footer lists `help · provider · key · free · doctor · /loop`; `/help` and TUI aliases; honest usage line only when the provider reported tokens/cost |
-| Proof (this Linux VM) | `npm ci --ignore-scripts`; `npm run check:harness`; `npm run test:portable`; `npm run build:harness`; `node dist/cli/index.js help`; `provider list`; `doctor --runtime-only`. **Not run:** xcodebuild, XCTest, XCUITest, live TTY chrome, any live inference |
+| Proof (this Linux VM) | Node v22.22.2. `npm run check:harness` exit 0. `npm run test:portable` **188 tests, 187 pass, 1 skipped, 0 fail**. `npm run build:harness` exit 0. `node dist/cli/index.js help` shows first commands. Isolated `LIGHTNINGLOOP_DATA_DIR`: no-arg first-run exit 2 lists help/provider/key/free/doctor; `provider list` includes openrouter; `doctor --runtime-only` PASS; `key status openrouter` reports store none and never a value. **Not run:** xcodebuild, XCTest, XCUITest, live TTY chrome, any live inference |
 | Production rows | **Unchanged.** LL-013–017, LL-021, LL-022 remain MISSING. LL-010 and LL-011 remain REWORK. No cost figures invented. No screenshots taken. |
 | Remaining risk | Swift compiles only on macOS 14+ / Xcode 16. SceneKit GLB load may fall back to a verified placeholder. Live key-entry journey and VoiceOver remain unproven. |
 
