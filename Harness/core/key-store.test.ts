@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   assertSafeSecret,
   assertSafeService,
   clearProviderCredential,
   clearSecret,
+  linuxSecretToolBackend,
+  macOSKeychainBackend,
   readSecret,
   readStoredProviderCredential,
   secretPresent,
@@ -64,4 +68,26 @@ test("secret and service inputs are validated", () => {
   assert.doesNotThrow(() => assertSafeSecret("sk-or-v1-abcDEF123"));
   assert.throws(() => assertSafeService("bad service!"), /Invalid credential service/);
   assert.doesNotThrow(() => assertSafeService("com.barnlabs.LightningLoop.provider.openrouter.apiKey"));
+});
+
+test("OS secret backends never look up a password and get returns nothing", () => {
+  assert.equal(macOSKeychainBackend.get("com.barnlabs.LightningLoop.search.firecrawl"), undefined);
+  assert.equal(linuxSecretToolBackend.get("com.barnlabs.LightningLoop.search.exa"), undefined);
+  assert.equal(readSecret("com.barnlabs.LightningLoop.search.brave"), undefined);
+});
+
+test("harness sources never invoke security find-generic-password", () => {
+  const files = [
+    "./key-store.js",
+    "./credential-safety.js",
+    "./key-catalog.js",
+    "../cli/index.js",
+    "../search/search-client.js",
+    "../pi/lightningloop-extension.js",
+    "../pi/model-adapter.js",
+  ];
+  for (const relative of files) {
+    const source = readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");
+    assert.doesNotMatch(source, /["']find-generic-password["']/u, relative);
+  }
 });

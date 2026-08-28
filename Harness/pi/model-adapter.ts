@@ -47,7 +47,7 @@ export function supportsManualApiKeyOverride(profile: ProviderProfile): boolean 
   return profile.preset === "cerebras";
 }
 
-/** LightningLoop-managed API-key credentials (never Pi /login). Env first, then the OS secret store. */
+/** LightningLoop-managed API-key credentials (never Pi /login). Env first, then a key written in this process. */
 export function readLightningLoopManagedCredential(profile: ProviderProfile): string | undefined {
   return providerEnvApiKey(profile) ?? readStoredProviderCredential(profile);
 }

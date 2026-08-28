@@ -5,9 +5,12 @@
  * - **Never** write a credential to a plaintext file. If no OS secret store is
  *   available, operations fail closed with guidance to use an environment
  *   variable instead. LightningLoop's `provider.json` stays credential-free.
- * - macOS uses the Keychain via `security`; Linux uses libsecret via
- *   `secret-tool` (the secret is passed on stdin, never argv). Windows is not
- *   yet supported here and fails closed.
+ * - macOS uses the Keychain via `security` for **write/clear only**; Linux uses
+ *   libsecret via `secret-tool` the same way (the secret is passed on stdin,
+ *   never argv). Windows is not yet supported here and fails closed.
+ * - `get` never runs `security find-generic-password` or `secret-tool lookup`.
+ *   Those lookups prompt the login keychain / keyring. Status and doctor treat
+ *   a key the user did not just write in this process as env-or-missing.
  * - Backends are injectable so the storage logic is unit-tested without touching
  *   a real keyring.
  */
@@ -22,8 +25,16 @@ export interface SecretBackend {
   readonly name: string;
   isAvailable(): boolean;
   set(service: string, secret: string): void;
+  /** Read is env or same-process write. OS backends must not probe the store. */
   get(service: string): string | undefined;
   clear(service: string): void;
+}
+
+/** Secrets written by `storeSecret` in this process. Never a live Keychain dump. */
+const sessionSecrets = new Map<string, string>();
+
+function isWriteOnlyOsBackend(backend: SecretBackend): boolean {
+  return backend === macOSKeychainBackend || backend === linuxSecretToolBackend;
 }
 
 export function assertSafeService(service: string): void {
@@ -54,13 +65,10 @@ export const macOSKeychainBackend: SecretBackend = {
   },
   get(service) {
     assertSafeService(service);
-    const result = spawnSync("/usr/bin/security", ["find-generic-password", "-s", service, "-w"], {
-      encoding: "utf8",
-      timeout: 5_000,
-      maxBuffer: 16_384,
-    });
-    const credential = result.status === 0 ? result.stdout.trim() : "";
-    return credential || undefined;
+    // Do not call `security find-generic-password`. Attribute or password
+    // lookup prompts the login keychain when the item exists and this binary
+    // is not on the ACL (installer, doctor, tests, `key status`).
+    return undefined;
   },
   clear(service) {
     assertSafeService(service);
@@ -96,12 +104,8 @@ export const linuxSecretToolBackend: SecretBackend = {
   },
   get(service) {
     assertSafeService(service);
-    const tool = secretToolPath();
-    if (!tool) return undefined;
-    const result = spawnSync(tool, ["lookup", "service", service], { encoding: "utf8", timeout: 5_000, maxBuffer: 16_384 });
-    // secret-tool prints the secret with no trailing newline; exit 1 = not found.
-    const credential = result.status === 0 ? result.stdout.replace(/\n$/u, "") : "";
-    return credential || undefined;
+    // `secret-tool lookup` can prompt the session keyring. Status is env-or-missing.
+    return undefined;
   },
   clear(service) {
     assertSafeService(service);
@@ -135,16 +139,19 @@ export function storeSecret(service: string, secret: string, backend: SecretBack
     throw new Error(`Secure key storage is unavailable (${backend.name}). Set the key as an environment variable instead, or install a system keyring.`);
   }
   backend.set(service, secret);
+  if (isWriteOnlyOsBackend(backend)) sessionSecrets.set(service, secret);
 }
 
 export function readSecret(service: string, backend: SecretBackend = defaultSecretBackend()): string | undefined {
   assertSafeService(service);
+  if (isWriteOnlyOsBackend(backend)) return sessionSecrets.get(service);
   if (!backend.isAvailable()) return undefined;
   return backend.get(service);
 }
 
 export function clearSecret(service: string, backend: SecretBackend = defaultSecretBackend()): void {
   assertSafeService(service);
+  if (isWriteOnlyOsBackend(backend)) sessionSecrets.delete(service);
   if (!backend.isAvailable()) return;
   backend.clear(service);
 }

@@ -115,6 +115,15 @@ export function envCredential(name: ManagedKeyName, environment: NodeJS.ProcessE
   return undefined;
 }
 
+/** Env value for a known LightningLoop service. Unknown or custom services are missing. */
+export function envCredentialForService(service: string, environment: NodeJS.ProcessEnv = process.env): string | undefined {
+  for (const name of managedKeyNames) {
+    const slot = slots[name];
+    if (slot.service && slot.service === service) return envCredential(name, environment);
+  }
+  return undefined;
+}
+
 export function missingKeyNextAction(name: ManagedKeyName): string {
   const slot = slots[name];
   const envHint = slot.envNames[0] ? ` or set ${slot.envNames[0]}` : "";

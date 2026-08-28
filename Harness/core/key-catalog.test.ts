@@ -7,6 +7,8 @@ import {
   managedKeySlot,
   missingKeyNextAction,
   parseManagedKeyName,
+  envCredential,
+  envCredentialForService,
 } from "./key-catalog.js";
 import { profileForPreset, providerSelectionRequiredProfile } from "./provider-profile.js";
 
@@ -27,4 +29,13 @@ test("custom key service requires a saved custom profile and never invents a hos
   assert.throws(() => managedKeyService("custom", profileForPreset("openrouter")), /Save the HTTPS host/);
   assert.match(missingKeyNextAction("firecrawl"), /key set firecrawl/u);
   assert.doesNotMatch(missingKeyNextAction("firecrawl"), /sk-|api_key=/iu);
+});
+
+test("env credential lookup is by name or service and never invents a value", () => {
+  const environment = { FIRECRAWL_API_KEY: " fc-env-only-not-a-secret-for-status ", EXA_API_KEY: "" };
+  assert.equal(envCredential("firecrawl", environment), "fc-env-only-not-a-secret-for-status");
+  assert.equal(envCredentialForService("com.barnlabs.LightningLoop.search.firecrawl", environment), "fc-env-only-not-a-secret-for-status");
+  assert.equal(envCredential("exa", environment), undefined);
+  assert.equal(envCredentialForService("com.barnlabs.LightningLoop.search.exa", environment), undefined);
+  assert.equal(envCredentialForService("com.barnlabs.LightningLoop.provider.custom.example.apiKey", environment), undefined);
 });
