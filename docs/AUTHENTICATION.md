@@ -10,7 +10,11 @@ Then use Pi's `/login` picker for OpenAI Codex, Anthropic, or xAI, and `/logout`
 
 Pi-managed built-in presets are: Cerebras, Groq, Fireworks, xAI/Grok, OpenAI Codex, and Anthropic Claude. LightningLoop never probes, reads, or uses a native Keychain fallback for any of those profiles; it invokes Pi and surfaces Pi's authentication failure. Status surfaces label those built-ins `Pi-managed/unknown`.
 
-**GeneralCompute** is a LightningLoop-owned fixed OpenAI-compatible preset (not a Pi `knownProvider`). It uses a fixed base URL `https://api.generalcompute.com/v1`, an API key in macOS Keychain (`com.barnlabs.LightningLoop.provider.generalcompute.apiKey`) or environment variable `GENERALCOMPUTE_API_KEY`, and Settings **Discover Models & Test**. It is never authenticated via runtime `/login`.
+**GeneralCompute** is a LightningLoop-owned fixed OpenAI-compatible preset (not a Pi `knownProvider`). It uses a fixed base URL `https://api.generalcompute.com/v1`, an API key in the OS secret store (`com.barnlabs.LightningLoop.provider.generalcompute.apiKey`, macOS Keychain or Linux libsecret) or `GENERALCOMPUTE_API_KEY`, and Settings **Discover Models**. It is never authenticated via runtime `/login`.
+
+**OpenRouter** is the same LightningLoop-managed pattern: `llp key set openrouter` or `OPENROUTER_API_KEY` / `OPENROUTER_KEY`, public catalog via `llp provider models` (no key required), never `/login`.
+
+LightningLoop-managed keys that `llp key set|status|clear` accepts: `openrouter`, `generalcompute`, `custom`, `cerebras` (optional manual override), `firecrawl`, `exa`, `brave`. Status is `stored` or `missing`. The secret is read from stdin only and never written to argv, files, `provider.json`, or logs. Firecrawl, Exa, and Brave are API-key research tools, not OAuth. `doctor` reports those research slots honestly from env or the OS store.
 
 For `llp`/`lloop` TUI startup, LightningLoop captures only this bounded GeneralCompute environment value for the process-local provider registration, registers it for redaction, and scrubs the ambient environment before Pi or any tools/hooks run. The key is therefore not inherited by tools, hooks, logs, UI, persisted configuration, or command output; when no environment value is supplied on macOS, the Keychain path remains in use.
 

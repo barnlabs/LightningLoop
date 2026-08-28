@@ -186,4 +186,21 @@ final class ProviderConfigurationTests: XCTestCase {
             XCTAssertEqual($0 as? ImageAttachmentError, .limitReached)
         }
     }
+
+    func testDefaultSkillPackEnableDisableIsExplicitAndNeverWritesASecret() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = root.appendingPathComponent("skill-pack.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let initial = DefaultSkillPack.items(fileURL: fileURL)
+        XCTAssertEqual(initial.count, 6)
+        XCTAssertTrue(initial.allSatisfy(\.enabled))
+        try DefaultSkillPack.setEnabled(false, id: "lloop-research", fileURL: fileURL)
+        let disabled = DefaultSkillPack.items(fileURL: fileURL)
+        XCTAssertEqual(disabled.first { $0.id == "lloop-research" }?.enabled, false)
+        XCTAssertEqual(disabled.first { $0.id == "lloop-engineer" }?.enabled, true)
+        let encoded = String(data: try Data(contentsOf: fileURL), encoding: .utf8) ?? ""
+        XCTAssertFalse(encoded.contains("sk-"))
+        XCTAssertFalse(encoded.contains("Bearer"))
+        XCTAssertThrowsError(try DefaultSkillPack.setEnabled(true, id: "marketplace-plugin", fileURL: fileURL))
+    }
 }

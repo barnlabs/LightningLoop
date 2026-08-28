@@ -44,11 +44,11 @@ export const BRAND_TAGLINE = "Fast models. Strict evidence.";
 /** The fixed pipeline shown next to the active model. */
 export const PIPELINE_TAGLINE = "research → engineer → verify";
 /** First-run / status-bar command list. Same product on every bin. */
-export const FOOTER_HELP = "llp help · provider · key · free · doctor · /loop <goal>";
+export const FOOTER_HELP = "llp help · provider · key · skills · /loop <goal>";
 /** Below this width the footer stacks its segments instead of justifying them. */
 export const FOOTER_JUSTIFY_MIN_WIDTH = 68;
 
-export const DISCOVERABLE_COMMANDS = ["help", "provider", "key", "free", "doctor", "loop"] as const;
+export const DISCOVERABLE_COMMANDS = ["help", "provider", "key", "skills", "loop"] as const;
 
 /** Resolve the product bin from argv[1] without treating unknown names as branding. */
 export function invokedProductBin(argv1: string | undefined): "llp" | "lloop" | "lightningloop" {
@@ -62,18 +62,20 @@ export function renderDiscoverableHelp(): string {
   return [
     `LightningLoop — ${BRAND_TAGLINE}`,
     "",
-    "Same product on llp, lloop, and lightningloop.",
+    "llp, lloop, and lightningloop are the same product.",
+    "",
+    "1. provider select PRESET",
+    "2. key set NAME          stdin, never argv or a file — or /login after llp auth",
+    "3. /loop <goal>",
     "",
     "  help                 this list",
-    "  provider list        show selectable presets",
-    "  provider select …    persist credential-free provider.json",
-    "  key set|status|clear LightningLoop-managed key (stdin, never argv or a file)",
-    "  free                 pin OpenRouter just-free mode",
-    "  doctor               environment and credential presence (never values)",
+    "  provider list        presets",
+    "  key status|clear     stored/missing only",
+    "  skills list|enable|disable",
     "  loop <goal>          run the strict loop",
     "  /loop <goal>         same loop from inside the TUI",
     "",
-    "Cost is provider-reported evidence only. When a provider sends no price, LightningLoop says unavailable — it never invents a dollar amount.",
+    "Cost is provider-reported. LightningLoop never invents a dollar amount.",
   ].join("\n");
 }
 

@@ -54,12 +54,12 @@ export function readLightningLoopManagedCredential(profile: ProviderProfile): st
 
 function missingManagedCredentialMessage(profile: ProviderProfile): string {
   if (profile.preset === "generalcompute") {
-    return "GeneralCompute requires GENERALCOMPUTE_API_KEY or a LightningLoop Keychain credential (Settings on macOS). It is not managed by runtime /login.";
+    return "GeneralCompute requires GENERALCOMPUTE_API_KEY or 'lightningloop key set generalcompute'. It is not managed by runtime /login.";
   }
   if (profile.preset === "openrouter") {
-    return "OpenRouter requires OPENROUTER_API_KEY (or OPENROUTER_KEY) or a LightningLoop Keychain credential (Settings on macOS). It is not managed by runtime /login.";
+    return "OpenRouter requires OPENROUTER_API_KEY (or OPENROUTER_KEY) or 'lightningloop key set openrouter'. It is not managed by runtime /login.";
   }
-  return "LightningLoop-managed API-key providers require a credential from the macOS Settings Keychain (Custom OpenAI-compatible). GeneralCompute also accepts GENERALCOMPUTE_API_KEY.";
+  return "LightningLoop-managed API-key providers require 'lightningloop key set custom' (or Settings Keychain on macOS). GeneralCompute and OpenRouter also accept their environment variables.";
 }
 
 function assertRuntimeModelSnapshot(

@@ -21,6 +21,7 @@ import { evaluateObjectiveContract } from "./objective-oracle.js";
 import { PromiseGraph, type PromiseGraphTraceEntry } from "../graph/promise-graph.js";
 import { loopAgentForRequestRole } from "./loop-roster.js";
 import { SHIPPED_SKILLS, discloseSkills } from "./skill-disclosure.js";
+import { filterEnabledShippedSkills } from "./default-skill-pack.js";
 import { filterReputableSearchResults, isReputableSourceUrl } from "./source-policy.js";
 
 interface CriterionAssessment {
@@ -424,7 +425,7 @@ export class LoopEngine {
       .slice(0, 4);
     const disclosure = discloseSkills(
       loopAgentForRequestRole(request.role),
-      SHIPPED_SKILLS,
+      filterEnabledShippedSkills(SHIPPED_SKILLS),
       this.context.approvedSkills ?? [],
     );
     return {

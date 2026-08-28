@@ -422,7 +422,44 @@ npm run build:harness
 | Contribute | `CONTRIBUTING.md` |
 | Local deploy honesty | § Local deploy vs public release |
 
-**Last checklist structure update:** 2026-08-28 (GUI/TUI product-feel delivery log). Re-verify LL statuses against `PRODUCTION_READINESS_CHECKLIST.md` before claiming a row green.
+**Last checklist structure update:** 2026-08-28 (one-minute setup / skills pack / no-bloat delivery log). Re-verify LL statuses against `PRODUCTION_READINESS_CHECKLIST.md` before claiming a row green.
+
+### 2026-08-28 — One-minute setup, obvious skills, no extra panels
+
+| Item | Detail |
+|------|--------|
+| Intent | Same PR 16. First-run is four steps: provider → key or /login → one model → loop. doctor/help name the next action. Settings is Setup / Skills / Harness. Default skill pack list/enable/disable in CLI, TUI, and Settings. No marketplace. No leaks. |
+| Branch | `cursor/e2e-models-keys-oauth-pi-1b7b` |
+| First-run | `llp` with no provider prints Next/Then only. Cut help/free/doctor/agents/browse from the required path. Windows still matches `provider select PRESET`. |
+| Skills | Shipped pack: lloop-research, lloop-engineer, lloop-verify, lloop-sources, lloop-browse, maintain-lightningloop. `llp skills list\|enable\|disable`. TUI `/skills`. Settings Skills tab. `skill-pack.json` is IDs only. Drafts never auto-enable. |
+| No bloat | Removed Settings General/Memory/Evolution tabs and agent-handoff cards. Removed goal-composer pipeline cards. Footer is help · provider · key · skills · /loop. |
+| Proof (this Linux VM) | Node v22.22.2. `npm run check:harness` exit 0. `npm run test:portable` **201 tests, 200 pass, 1 skipped, 0 fail**. `npm run build:harness` exit 0. Isolated first-run exit 2 is Next/Then only (provider → key or /login → loop). `llp help` is four numbered steps. `llp skills list` shows the six shipped IDs enabled; disable/enable `lloop-browse` is explicit; unknown ID fail-closed; `skill-pack.json` is IDs only. `doctor --runtime-only` ends with `Next: llp provider select PRESET`. **Not run:** xcodebuild, XCTest, XCUITest, live TTY, live inference. |
+| Production rows | **Unchanged.** LL-013–017, LL-021, LL-022 remain MISSING. LL-010 and LL-011 remain REWORK. No production row faked. |
+
+**Phase exit bullets:**
+
+1. **Changed:** Four-step first-run, next-action doctor/help, default skill pack enable/disable, slimmer Settings and goal composer.
+2. **Commands:** `check:harness`, `test:portable`, `build:harness`, isolated CLI first-run/skills probes.
+3. **Risk:** Live macOS Settings/Keychain journey still unproven. LL-010/011 stay REWORK.
+
+### 2026-08-28 — Model selection, keys, tool auth, shared engine state
+
+| Item | Detail |
+|------|--------|
+| Intent | One product path for model pick, Discover/pull, OS-store keys (including search), runtime `/login` for built-ins, and GUI/TUI/`loop` sharing the same provider.json + secret store. Not a signed release. |
+| Branch | `cursor/e2e-models-keys-oauth-pi-1b7b` |
+| Model selection | `provider select PRESET --model ID` validates OpenRouter against the public catalog, GeneralCompute against the live host catalog, and Pi-managed presets against the installed runtime catalog. Unknown IDs fail closed. |
+| Discover | `provider models` uses the active profile: public OpenRouter, host `/models` for GeneralCompute/Custom, installed runtime catalog for built-ins. Settings Providers tab leads with Discover. OpenRouter Discover works without a key. |
+| Keys | `llp key set\|status\|clear` accepts `openrouter`, `generalcompute`, `custom`, `cerebras`, `firecrawl`, `exa`, `brave`. stdin only. Status is stored/missing. TUI/`loop`/serve resolve env then the OS store on every platform. |
+| Tool auth | Firecrawl/Exa/Brave stay API-key (no invented OAuth). Missing research keys fail closed with `llp key set NAME`. Runtime sign-in remains `lightningloop auth` + `/login`. |
+| Proof (this Linux VM) | Node v22.22.2. `npm run check:harness` exit 0. `npm run test:portable` **193 tests, 192 pass, 1 skipped, 0 fail**. `npm run build:harness` exit 0. Isolated `LIGHTNINGLOOP_DATA_DIR`: no-arg first-run exit 2; `provider models` without a profile fails closed; `provider select cerebras` then `provider models` lists the installed runtime catalog (gemma-4-31b, gpt-oss-120b, zai-glm-4.7); unknown `--model totally-made-up-model-xyz` fails closed for Cerebras and OpenRouter; `provider select openrouter --model google/gemma-4-31b-it:free --free` persists that ID and doctor shows it on all three agents; `provider models --free` lists the public OpenRouter catalog with no key; `key status openrouter|firecrawl|exa|brave` reports stored/missing and never a value; `key status anthropic` rejected; `search firecrawl` / `search exa` fail closed with `llp key set NAME`; `doctor --runtime-only` PASS; `provider.json` has no secrets. GitHub Actions run 33190079302 on `01e6b33`: harness, windows-tui, and macos-app all green (`xcodebuild test` + LightningLoopUI `build-for-testing`). **Not run here:** live TTY, live inference, XCUITest journey. |
+| Production rows | **Unchanged.** LL-013–017, LL-021, LL-022 remain MISSING. LL-010 and LL-011 remain REWORK. No production row faked. |
+
+**Phase exit bullets:**
+
+1. **Changed:** Shared catalog + key resolution so GUI, TUI, and `loop` read one provider/key/model/research state.
+2. **Commands:** `check:harness`, `test:portable`, `build:harness`, isolated CLI provider/key/doctor probes.
+3. **Risk:** Native GUI Discover and Keychain journey compiled and unit-tested in macos-app CI; they are not a live Settings/Keychain proof. LL-010/011 stay REWORK.
 
 ### 2026-08-28 — GUI + TUI product feel (owner-assigned one PR)
 

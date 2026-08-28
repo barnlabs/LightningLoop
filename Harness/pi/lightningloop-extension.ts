@@ -1,5 +1,7 @@
 import { createBashTool, type ExtensionAPI, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { invokedProductBin, renderBrandHeaderLines, renderDiscoverableHelp, renderStatusFooterLines } from "./lightningloop-theme.js";
+import { formatDefaultSkillPack, isDefaultSkillId, setDefaultSkillEnabled } from "../core/default-skill-pack.js";
+import { ManagedOverlay } from "../governance/managed-overlay.js";
 import { basename } from "node:path";
 import { resolve } from "node:path";
 import { WorkspaceBoundary, evaluateToolRequest } from "../core/capability-policy.js";
@@ -57,6 +59,8 @@ export interface LightningLoopExtensionOptions {
    * LightningLoop-managed provider instead of the Pi `/login` path.
    */
   cerebrasApiKey?: string;
+  /** Custom host key resolved by the CLI from the OS secret store. */
+  customApiKey?: string;
 }
 
 type ManagedProviderRegistration = Parameters<ExtensionAPI["registerProvider"]>[1];
@@ -127,27 +131,25 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
   if (isProviderSelectionRequired(profile)) {
     // First-run TUI: register commands and the terminal browser without a provider.
   } else if (!profile.piProviderID) {
-    const envApiKey = profile.preset === "generalcompute"
+    const resolvedApiKey = profile.preset === "generalcompute"
       ? options.generalComputeApiKey?.trim()
       : profile.preset === "openrouter"
         ? options.openRouterApiKey?.trim()
-        : undefined;
-    if (process.platform !== "darwin") {
-      if (!envApiKey) {
+        : profile.preset === "custom"
+          ? options.customApiKey?.trim()
+          : undefined;
+    if (!resolvedApiKey) {
+      if (process.platform === "darwin") {
+        pi.registerProvider(providerID, managedOpenAiProviderRegistration(profile, keychainCommand([providerCredentialService(profile)])));
+      } else {
+        const name = profile.preset === "generalcompute" ? "generalcompute" : profile.preset === "openrouter" ? "openrouter" : "custom";
         throw new Error(
-          profile.preset === "generalcompute"
-            ? "GeneralCompute on non-macOS requires GENERALCOMPUTE_API_KEY. It is not managed by runtime /login."
-            : profile.preset === "openrouter"
-              ? "OpenRouter on non-macOS requires OPENROUTER_API_KEY (or OPENROUTER_KEY). It is not managed by runtime /login."
-              : "Custom provider Keychain profiles are macOS-only. Configure GeneralCompute or OpenRouter with an API key environment variable, or a runtime-managed built-in provider for cross-platform use.",
+          `${profile.displayName} requires a LightningLoop-managed API key. Pipe it with 'printf %s "$KEY" | lightningloop key set ${name}' or set the provider environment variable. It is not managed by runtime /login.`,
         );
       }
+    } else {
+      pi.registerProvider(providerID, managedOpenAiProviderRegistration(profile, encodePiApiKey(resolvedApiKey)));
     }
-    // An explicitly captured TUI env key is process-local; otherwise macOS uses Keychain.
-    const apiKey = envApiKey
-      ? encodePiApiKey(envApiKey)
-      : (process.platform === "darwin" ? keychainCommand([providerCredentialService(profile)]) : envApiKey!);
-    pi.registerProvider(providerID, managedOpenAiProviderRegistration(profile, apiKey));
   } else if (cerebrasManualApiKey) {
     // Cerebras manual-key override: run as a LightningLoop-managed OpenAI-compatible
     // provider instead of the Pi /login path. The CLI already resolved the key from
@@ -867,8 +869,33 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
     },
   });
 
+  pi.registerCommand("skills", {
+    description: "List, enable, or disable the shipped skill pack",
+    handler: async (args, ctx) => {
+      const [verb, id] = args.trim().split(/\s+/u);
+      try {
+        if (!verb || verb === "list") {
+          ctx.ui.notify(formatDefaultSkillPack(), "info");
+          return;
+        }
+        if (verb !== "enable" && verb !== "disable") {
+          throw new Error("Next: /skills list  or  /skills enable|disable ID");
+        }
+        if (!id) throw new Error(`Skill ${verb} requires a skill ID.`);
+        if (isDefaultSkillId(id)) {
+          setDefaultSkillEnabled(id, verb === "enable");
+        } else {
+          new ManagedOverlay().setSkillEnabled(id, verb === "enable", "");
+        }
+        ctx.ui.notify(formatDefaultSkillPack(), "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Skill command failed.", "error");
+      }
+    },
+  });
+
   pi.registerCommand("help", {
-    description: "Show LightningLoop commands (help, provider, key, free, doctor, loop)",
+    description: "Show LightningLoop commands (help, provider, key, skills, loop)",
     handler: async (_args, ctx) => {
       ctx.ui.notify(renderDiscoverableHelp(), "info");
     },
@@ -891,7 +918,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
   pi.registerCommand("key", {
     description: "Show how to store a LightningLoop-managed API key",
     handler: async (_args, ctx) => {
-      ctx.ui.notify("Use `llp key set openrouter|generalcompute|cerebras`. The key is read from stdin only — never argv, a file, or this TUI prompt.", "info");
+      ctx.ui.notify("Use `llp key set openrouter|generalcompute|custom|cerebras|firecrawl|exa|brave`. The key is read from stdin only — never argv, a file, or this TUI prompt.", "info");
     },
   });
 

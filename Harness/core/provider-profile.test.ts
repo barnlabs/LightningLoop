@@ -15,7 +15,9 @@ import {
   providerCredentialService,
   providerHeaders,
   runtimeModelSelectionNotice,
+  applyCataloguedModel,
   saveProviderPreset,
+  saveProviderProfile,
   selectableProviderPresets,
 } from "./provider-profile.js";
 
@@ -156,8 +158,19 @@ test("provider select openrouter can persist a chosen model and rejects it for r
     assert.equal(loadProviderProfile(config).modelID, "meta/llama-guard-4:free");
     const encoded = readFileSync(config, "utf8");
     assert.doesNotMatch(encoded, /(?:api.?key|authorization|bearer\s|(?:csk|sk)-)/iu);
-    // A model override is meaningless for a runtime-managed (Pi) preset.
+    // Casual overrides stay blocked for runtime-managed presets; catalogued apply is explicit.
     assert.throws(() => saveProviderPreset("cerebras", config, { modelID: "gemma-4-31b" }), /runtime-managed provider/);
+    const catalogued = applyCataloguedModel(profileForPreset("cerebras"), {
+      modelID: "gpt-oss-120b",
+      modelName: "OpenAI GPT OSS",
+      supportsImages: false,
+      contextWindow: 131_072,
+      maxOutputTokens: 32_768,
+    });
+    const saved = saveProviderProfile(catalogued, config);
+    assert.equal(saved.preset, "cerebras");
+    assert.equal(saved.modelID, "gpt-oss-120b");
+    assert.equal(loadProviderProfile(config).modelID, "gpt-oss-120b");
     // Unsafe model IDs are rejected.
     assert.throws(() => saveProviderPreset("openrouter", config, { modelID: "bad\nid" }), /1-200 safe characters/);
   } finally {

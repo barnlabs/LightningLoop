@@ -4,8 +4,12 @@ import {
   assertSafeSecret,
   assertSafeService,
   clearProviderCredential,
+  clearSecret,
+  readSecret,
   readStoredProviderCredential,
+  secretPresent,
   storeProviderCredential,
+  storeSecret,
   unavailableBackend,
   type SecretBackend,
 } from "./key-store.js";
@@ -40,6 +44,17 @@ test("an unavailable backend fails set closed and never returns a value", () => 
   assert.throws(() => unavailableBackend.set("svc", "secret"), /environment variable/);
   assert.equal(unavailableBackend.get("svc"), undefined);
   assert.equal(readStoredProviderCredential(profile, unavailableBackend), undefined);
+});
+
+test("generic store/read/clear works for research services without a provider profile", () => {
+  const backend = memoryBackend();
+  const service = "com.barnlabs.LightningLoop.search.firecrawl";
+  assert.equal(secretPresent(service, backend), false);
+  storeSecret(service, "fc-test-secret-1234", backend);
+  assert.equal(readSecret(service, backend), "fc-test-secret-1234");
+  assert.equal(secretPresent(service, backend), true);
+  clearSecret(service, backend);
+  assert.equal(readSecret(service, backend), undefined);
 });
 
 test("secret and service inputs are validated", () => {

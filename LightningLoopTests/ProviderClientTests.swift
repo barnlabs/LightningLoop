@@ -118,6 +118,27 @@ final class ProviderClientTests: XCTestCase {
         XCTAssertEqual(models, ["deepseek/deepseek-chat-v3-0324:free"])
     }
 
+    func testOpenRouterPublicCatalogDoesNotRequireAKey() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = ProviderConfigurationStore(fileURL: root.appendingPathComponent("provider.json"))
+        try store.save(.preset(.openrouter))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ProviderURLProtocol.self]
+        ProviderURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://openrouter.ai/api/v1/models")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            let body = #"{"object":"list","data":[{"id":"openrouter/free","object":"model"}]}"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(body.utf8))
+        }
+        let client = ProviderClient(
+            profileStore: store,
+            session: URLSession(configuration: configuration),
+            credentialReader: { _ in nil }
+        )
+        let models = try await client.listModels()
+        XCTAssertEqual(models, ["openrouter/free"])
+    }
+
     func testCustomSuccessRedactsExactCredentialBeforeReplyLeavesProviderClient() async throws {
         let credential = "plain-reflected-credential-without-a-known-prefix"
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

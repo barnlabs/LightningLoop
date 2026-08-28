@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -26,9 +25,11 @@ import {
   loadProviderProfile,
   profileForPreset,
   providerConfigPath,
-  providerCredentialService,
   saveProviderPreset,
+  saveProviderProfile,
+  applyCataloguedModel,
   selectableProviderPresets,
+  isPiManagedPreset,
   type SelectableProviderPreset,
   type ProviderProfile,
 } from "../core/provider-profile.js";
@@ -36,7 +37,11 @@ import { enforceFreeMode, fetchOpenRouterKeyCredits, fetchOpenRouterModels, pick
 import { formatCreditLine, formatLiveUsageMeter, formatRunSummaryLine } from "../core/usage-format.js";
 import { recordSelfImprovementProposals } from "../core/self-improvement.js";
 import type { ProviderModelOverride } from "../core/provider-profile.js";
-import { clearProviderCredential, defaultSecretBackend, readStoredProviderCredential, storeProviderCredential } from "../core/key-store.js";
+import { clearSecret, defaultSecretBackend, readSecret, readStoredProviderCredential, storeSecret } from "../core/key-store.js";
+import { managedKeyService, managedKeySlot, missingKeyNextAction, parseManagedKeyName } from "../core/key-catalog.js";
+import { fetchHostModels, resolveHostModel } from "../core/host-catalog.js";
+import { loadInstalledRuntimeCatalog, resolveRuntimeModel } from "../core/runtime-catalog.js";
+import { readLightningLoopManagedCredential } from "../pi/model-adapter.js";
 import { validateImagePaths } from "../core/image-input.js";
 import { loadEligibleMemoryContext } from "../core/memory-store.js";
 import { deriveProjectIdentity } from "../core/project-identity.js";
@@ -58,6 +63,13 @@ import {
   type LoopAgent,
 } from "../core/loop-roster.js";
 import { SHIPPED_SKILLS } from "../core/skill-disclosure.js";
+import { doctorNextAction, firstRunMessage } from "../core/first-run.js";
+import {
+  enabledDefaultSkillDirectories,
+  formatDefaultSkillPack,
+  isDefaultSkillId,
+  setDefaultSkillEnabled,
+} from "../core/default-skill-pack.js";
 import { executeBrowseCommand } from "../core/terminal-browser.js";
 import { loadActiveGuidance } from "../core/evolution-store.js";
 
@@ -114,53 +126,29 @@ interface CliOptions {
 export function usage(): string {
   return `LightningLoop — Fast models. Strict evidence.
 
-An independent BarnLabs open-source project.
 llp, lloop, and lightningloop are the same product.
 
-First commands:
-  llp help
-  llp provider list
-  llp provider select openrouter
-  llp key set openrouter          (reads the key from stdin; never argv or a file)
-  llp free
-  llp doctor
-  llp loop "your goal"
+1. llp provider select PRESET
+2. printf %s "$KEY" | llp key set NAME     (stdin, never argv or a file)
+   or: llp auth  then /login
+3. llp provider models                     (optional: pick one catalogued ID)
+4. llp loop "your goal"
 
-Usage:
+Also:
   llp | lloop | lightningloop [tui] [--workspace PATH] [--allow-execution] [-- RUNTIME_OPTIONS...]
-  lightningloop auth
-  lightningloop provider list
-  lightningloop provider select <cerebras|groq|fireworks|generalcompute|openrouter|xai|openai-codex|anthropic> [--model ID] [--free]
-  lightningloop provider models [--free]
+  lightningloop provider list|select|models
+  lightningloop key set|status|clear <openrouter|generalcompute|custom|cerebras|firecrawl|exa|brave>
+  lightningloop skills list|enable|disable|install
+  lightningloop doctor [--runtime-only]
   lightningloop free [--model ID]
-  lightningloop key set|status|clear <openrouter|generalcompute|cerebras>
-  lightningloop loop [GOAL] [--cycles 1-8] [--image PATH] [--research exa|brave|firecrawl|free]
-    [--fusion "openrouter/id1,openrouter/id2"] (openrouter, non-free; runs 2-4 models per turn, longest reply wins)
-    [--objective-file contract.json] (owner completion oracle: harness-evidence checks required for Gold)
-    [--self-improve] (records INERT draft evolution proposals from the run; activation still requires the full reviewed lifecycle)
-    [--workspace EMPTY_DIR --approve-artifact-writes [--approve-verification-commands]]
-  lightningloop search <exa|brave|firecrawl|free> QUERY [--limit 1-20]  (free = keyless DuckDuckGo HTML)
-  lightningloop mcp verify MANIFEST.json --workspace PATH --approve-manifest
-  lightningloop mcp call MANIFEST.json TOOL --input PARAMS.json --workspace PATH --approve-manifest
-  lightningloop harness status|backup|restore|reset [--slot 0-2] [--approve-restore|--approve-reset]
-  lightningloop skills list|install|enable|disable [SOURCE_OR_ID] [--approve-skill-install|--approve-skill-enable HASH]
-  lightningloop agents list
+  lightningloop auth
   lightningloop agents select <researcher|engineer|verifier> --model ID
   lightningloop browse URL
-  lightningloop update check
-  lightningloop artifact serve --workspace PATH --source RELATIVE.html --sha256 HASH [--manifest-json JSON]
-  lightningloop serve
-  lightningloop doctor [--runtime-only]
   lightningloop help
 
-The TUI starts read-only. --allow-execution only makes mutation and shell requests eligible for an additional per-call confirmation.
-Running llp or lloop with no arguments opens the interactive TUI.
-The loop command is text-only by default. Artifact writes require an explicit empty directory and approval flag.
-Verification commands additionally require --approve-verification-commands and run allowlisted programs in the network-denied OS sandbox.
-MCP verification requires a versioned integrity manifest and an explicit approval flag for that exact invocation.
-Provider sign-in uses the managed LightningLoop runtime. Run 'lightningloop auth', then use its /login command.
-Choose a first-run provider with 'lightningloop provider list' and 'lightningloop provider select PRESET'.
-LightningLoop never copies OAuth credentials into its own settings or managed overlay.`;
+Runtime-managed sign-in: lightningloop auth, then /login. lightningloop key set NAME reads stdin only.
+Status is stored/missing. Keys never enter argv, files, provider.json, or logs.
+Drafts never auto-enable.`;
 }
 
 export function parse(args: string[]): CliOptions {
@@ -452,13 +440,18 @@ function runSkillGovernance(options: CliOptions): void {
     if (!options.skillArgument) throw new Error("Skill install requires a local source directory.");
     overlay.installSkill(resolve(options.skillArgument), options.approveSkillInstall ? "INSTALL-MANAGED-SKILL" : "");
   } else if (action === "enable" || action === "disable") {
-    if (!options.skillArgument) throw new Error(`Skill ${action} requires an installed skill ID.`);
-    overlay.setSkillEnabled(options.skillArgument, action === "enable", options.approveSkillEnableHash ?? "");
+    if (!options.skillArgument) throw new Error(`Skill ${action} requires a skill ID.`);
+    if (isDefaultSkillId(options.skillArgument)) {
+      setDefaultSkillEnabled(options.skillArgument, action === "enable");
+    } else {
+      overlay.setSkillEnabled(options.skillArgument, action === "enable", options.approveSkillEnableHash ?? "");
+    }
   }
+  process.stdout.write(`${formatDefaultSkillPack()}\n`);
   const skills = overlay.listSkills();
-  process.stdout.write("LightningLoop managed skills\n");
+  process.stdout.write("Managed extras\n");
   for (const skill of skills) process.stdout.write(`  ${skill.enabled ? "ENABLED" : "DISABLED"} ${terminalSafe(skill.id)} · sha256 ${skill.sha256}\n`);
-  if (skills.length === 0) process.stdout.write("  No managed skills installed. Shipped project skills are unchanged.\n");
+  if (skills.length === 0) process.stdout.write("  None. Overlay imports stay disabled until enable + hash.\n");
   process.stdout.write("  Provider runtime packages/settings changed: NO\n");
 }
 
@@ -550,13 +543,12 @@ async function readMcpInput(path: string | undefined): Promise<Record<string, un
   return value as Record<string, unknown>;
 }
 
-function keychainConfigured(service: string): boolean {
-  if (process.platform !== "darwin") return false;
-  const result = spawnSync("/usr/bin/security", ["find-generic-password", "-s", service], {
-    stdio: "ignore",
-    timeout: 5_000,
-  });
-  return result.status === 0;
+function secretConfigured(service: string): boolean {
+  return readSecret(service) !== undefined;
+}
+
+function envOrStoreConfigured(environmentNames: readonly string[], service: string): boolean {
+  return environmentNames.some((name) => Boolean(process.env[name]?.trim())) || secretConfigured(service);
 }
 
 export function isSupportedNodeVersion(version: string): boolean {
@@ -572,12 +564,8 @@ export async function doctor(runtimeOnly = false): Promise<number> {
   const nodeOK = isSupportedNodeVersion(process.version);
   const selectionRequired = isProviderSelectionRequired(profile);
   const piManaged = !selectionRequired && Boolean(profile.piProviderID);
-  const keychainCredential = !selectionRequired && !piManaged && process.platform === "darwin" && keychainConfigured(providerCredentialService(profile));
-  const managedEnvKey = !selectionRequired && !piManaged && (
-    (profile.preset === "generalcompute" && Boolean(process.env.GENERALCOMPUTE_API_KEY?.trim()))
-    || (profile.preset === "openrouter" && Boolean(process.env.OPENROUTER_API_KEY?.trim() || process.env.OPENROUTER_KEY?.trim()))
-  );
-  const managedApiKeyReady = keychainCredential || managedEnvKey;
+  const managedEnvKey = !selectionRequired && !piManaged && Boolean(readLightningLoopManagedCredential(profile));
+  const managedApiKeyReady = managedEnvKey;
   process.stdout.write("LightningLoop doctor\n");
   process.stdout.write(`  Node >=22.19: ${nodeOK ? "PASS" : "FAIL"} (${process.version})\n`);
   process.stdout.write(selectionRequired
@@ -592,14 +580,28 @@ export async function doctor(runtimeOnly = false): Promise<number> {
   process.stdout.write(`  Shipped skills: ${SHIPPED_SKILLS.length} (progressive disclosure)\n`);
   process.stdout.write("  Source policy: reputable primary hosts only\n");
   process.stdout.write(`  Provider sign-in: ${piManaged ? "MANAGED BY RUNTIME/UNKNOWN" : "NOT APPLICABLE"}\n`);
-  const researchStatus = (environmentName: string, service: string): string => process.env[environmentName]?.trim()
-    || keychainConfigured(service) ? "CONFIGURED" : "MISSING";
-  process.stdout.write(`  Exa research credential: ${researchStatus("EXA_API_KEY", "com.barnlabs.LightningLoop.search.exa")}\n`);
-  process.stdout.write(`  Brave research credential: ${researchStatus("BRAVE_SEARCH_API_KEY", "com.barnlabs.LightningLoop.search.brave")}\n`);
-  process.stdout.write(`  Firecrawl research credential: ${researchStatus("FIRECRAWL_API_KEY", "com.barnlabs.LightningLoop.search.firecrawl")}\n`);
+  const researchStatus = (name: "exa" | "brave" | "firecrawl"): string => {
+    const slot = managedKeySlot(name);
+    return envOrStoreConfigured(slot.envNames, slot.service) ? "stored" : "missing";
+  };
+  process.stdout.write(`  Exa research credential: ${researchStatus("exa")}\n`);
+  process.stdout.write(`  Brave research credential: ${researchStatus("brave")}\n`);
+  process.stdout.write(`  Firecrawl research credential: ${researchStatus("firecrawl")}\n`);
+  if (!selectionRequired && !piManaged) {
+    process.stdout.write(`  Inference credential: ${managedApiKeyReady ? "stored" : "missing"}\n`);
+  }
   process.stdout.write("  Default workspace-tool policy: READ-ONLY\n");
   process.stdout.write("  Credential values displayed: NEVER\n");
   if (runtimeOnly) process.stdout.write("  Install/runtime-only health: provider onboarding is reported but does not fail installation\n");
+  const managedKeyName = profile.preset === "generalcompute" || profile.preset === "custom" || profile.preset === "openrouter"
+    ? profile.preset
+    : "openrouter";
+  process.stdout.write(`  ${doctorNextAction({
+    selectionRequired,
+    piManaged,
+    managedKeyReady: managedApiKeyReady,
+    managedKeyName,
+  })}\n`);
   // `doctor` verifies local prerequisites. It never probes Pi credentials;
   // Pi owns their status and reports an auth failure only during its own run.
   return runtimeOnly ? (nodeOK ? 0 : 1) : (nodeOK && !selectionRequired && (piManaged || managedApiKeyReady) ? 0 : 1);
@@ -613,21 +615,16 @@ async function runProviderCommand(options: CliOptions): Promise<void> {
   }
   if (action === "select") {
     if (!options.providerArgument) throw new Error("Provider select requires a reviewed preset.");
-    let override: ProviderModelOverride | undefined;
-    if (options.providerArgument === "openrouter") {
-      override = await buildOpenRouterOverride(options.providerModel, options.providerFreeOnly);
-    } else if (options.providerModel) {
-      override = { modelID: options.providerModel };
-    }
-    const selected = saveProviderPreset(options.providerArgument, providerConfigPath(), override);
+    const selected = await persistSelectedProvider(options.providerArgument, options.providerModel, options.providerFreeOnly);
     process.stdout.write(`Selected ${terminalSafe(selected.displayName)} · ${terminalSafe(selected.modelName)}${selected.freeOnly ? " · FREE MODE" : ""}\n`);
     if (selected.preset === "generalcompute") {
-      process.stdout.write("Credential: LightningLoop-managed API key (Settings Keychain on macOS, or GENERALCOMPUTE_API_KEY). Not runtime /login.\n");
+      process.stdout.write("Credential: LightningLoop-managed API key. Store it with 'lightningloop key set generalcompute' or GENERALCOMPUTE_API_KEY. Not runtime /login.\n");
+      process.stdout.write("Discover host models with: lightningloop provider models\n");
     } else if (selected.preset === "openrouter") {
-      process.stdout.write("Credential: LightningLoop-managed API key. Store it easily with 'lightningloop key set openrouter', or set OPENROUTER_API_KEY / OPENROUTER_KEY. Not runtime /login.\n");
+      process.stdout.write("Credential: LightningLoop-managed API key. Store it with 'lightningloop key set openrouter', or set OPENROUTER_API_KEY / OPENROUTER_KEY. Not runtime /login.\n");
       process.stdout.write("Discover free models with: lightningloop provider models --free\n");
     } else {
-      process.stdout.write("Credential stored by LightningLoop: NO. Use 'lightningloop auth' to start provider sign-in.\n");
+      process.stdout.write("Credential stored by LightningLoop: NO. Use 'lightningloop auth' then /login. Runtime catalog: lightningloop provider models\n");
     }
     return;
   }
@@ -657,38 +654,66 @@ async function buildOpenRouterOverride(model: string | undefined, freeOnly: bool
   };
 }
 
-const KEY_STORE_PROVIDERS = ["openrouter", "generalcompute", "cerebras"] as const;
+async function persistSelectedProvider(
+  preset: SelectableProviderPreset,
+  model: string | undefined,
+  freeOnly: boolean,
+): Promise<ProviderProfile> {
+  if (preset === "openrouter") {
+    const override = await buildOpenRouterOverride(model, freeOnly);
+    return saveProviderPreset(preset, providerConfigPath(), override);
+  }
+  const base = profileForPreset(preset);
+  if (!model) {
+    if (freeOnly) throw new Error("--free is only supported for OpenRouter.");
+    return saveProviderPreset(preset);
+  }
+  if (freeOnly) throw new Error("--free is only supported for OpenRouter.");
+  if (isPiManagedPreset(preset)) {
+    const catalog = await loadInstalledRuntimeCatalog(base);
+    const selected = resolveRuntimeModel(catalog, model, base.displayName);
+    return saveProviderProfile(applyCataloguedModel(base, {
+      modelID: selected.modelID,
+      modelName: selected.modelName,
+      supportsImages: selected.supportsImages,
+      contextWindow: selected.contextWindow,
+      maxOutputTokens: selected.maxOutputTokens,
+    }));
+  }
+  const credential = readLightningLoopManagedCredential(base);
+  if (!credential) throw new Error(missingKeyNextAction(preset === "generalcompute" ? "generalcompute" : "openrouter"));
+  const catalog = await fetchHostModels(base, credential);
+  const selected = resolveHostModel(catalog, model, base.displayName);
+  return saveProviderPreset(preset, providerConfigPath(), { modelID: selected.id, modelName: selected.name });
+}
 
 /** Easy, secure API-key storage in the OS secret store. Values are never echoed or filed. */
 async function runKeyCommand(options: CliOptions): Promise<void> {
   const action = options.keyAction ?? "status";
-  const providerName = options.keyProvider;
-  if (!providerName || !(KEY_STORE_PROVIDERS as readonly string[]).includes(providerName)) {
-    throw new Error(`Key command requires a provider: ${KEY_STORE_PROVIDERS.join(", ")}.`);
-  }
-  const profile = profileForPreset(providerName as SelectableProviderPreset);
+  const name = parseManagedKeyName(options.keyProvider);
+  const profile = loadProviderProfile();
+  const service = managedKeyService(name, profile);
   const backend = defaultSecretBackend();
   if (action === "status") {
-    const present = readStoredProviderCredential(profile, backend) !== undefined;
-    process.stdout.write(`LightningLoop key · ${providerName}\n`);
+    const present = readSecret(service, backend) !== undefined;
+    process.stdout.write(`LightningLoop key · ${name}\n`);
     process.stdout.write(`  Secure store: ${terminalSafe(backend.name)}\n`);
-    process.stdout.write(`  Stored key: ${present ? "PRESENT" : "none"} · value never displayed\n`);
+    process.stdout.write(`  Stored key: ${present ? "stored" : "missing"} · value never displayed\n`);
     return;
   }
   if (action === "clear") {
-    clearProviderCredential(profile, backend);
-    process.stdout.write(`Cleared any stored ${providerName} key from ${terminalSafe(backend.name)}.\n`);
+    clearSecret(service, backend);
+    process.stdout.write(`Cleared any stored ${name} key from ${terminalSafe(backend.name)}.\n`);
     return;
   }
-  // set: read the secret from stdin so it never appears in argv or shell history.
   if (process.stdin.isTTY) {
-    throw new Error(`Pipe the key on stdin, e.g.: printf %s "$OPENROUTER_KEY" | lightningloop key set ${providerName}`);
+    throw new Error(`Pipe the key on stdin, e.g.: printf %s "$KEY" | lightningloop key set ${name}`);
   }
   let input = "";
   for await (const chunk of process.stdin) input += String(chunk);
   const secret = input.trim();
-  storeProviderCredential(profile, secret, backend);
-  process.stdout.write(`Stored ${providerName} key in ${terminalSafe(backend.name)}. It is never written to provider.json or logs.\n`);
+  storeSecret(service, secret, backend);
+  process.stdout.write(`Stored ${name} key in ${terminalSafe(backend.name)}. It is never written to provider.json or logs.\n`);
 }
 
 /** "Just free mode": pin OpenRouter to a zero-cost model (free router preferred). */
@@ -700,19 +725,54 @@ async function runFreeMode(options: CliOptions): Promise<void> {
   process.stdout.write("Add your key with 'lightningloop key set openrouter' (or set OPENROUTER_API_KEY / OPENROUTER_KEY), then run llp.\n");
 }
 
-/** Credential-free live discovery of the OpenRouter catalog, optionally free models only. */
+/** Discover models for the active profile: public OpenRouter, host catalog, or installed runtime. */
 async function runProviderModels(options: CliOptions): Promise<void> {
-  const models = await fetchOpenRouterModels();
-  const shown = options.providerFreeOnly
-    ? selectFreeModels(models)
-    : models.slice().sort((a, b) => a.id.localeCompare(b.id));
-  const scope = options.providerFreeOnly ? "free" : "all";
-  process.stdout.write(`OpenRouter models · ${scope} · ${shown.length} of ${models.length}\n`);
-  for (const model of shown) {
-    const price = model.free ? "free" : `in ${model.promptPrice} · out ${model.completionPrice} (USD/token)`;
-    process.stdout.write(`  ${terminalSafe(model.id)} · ${terminalSafe(model.name)} · ctx ${model.contextWindow} · ${price}\n`);
+  if (options.providerFreeOnly) {
+    const models = await fetchOpenRouterModels();
+    const shown = selectFreeModels(models);
+    process.stdout.write(`OpenRouter models · free · ${shown.length} of ${models.length}\n`);
+    for (const model of shown) {
+      process.stdout.write(`  ${terminalSafe(model.id)} · ${terminalSafe(model.name)} · ctx ${model.contextWindow} · free\n`);
+    }
+    process.stdout.write("Select one with: lightningloop provider select openrouter --model <id> --free\n");
+    return;
   }
-  process.stdout.write("Select one with: lightningloop provider select openrouter --model <id>\n");
+  const profile = loadProviderProfile();
+  if (isProviderSelectionRequired(profile)) {
+    throw new Error("Provider selection is required. Run 'lightningloop provider list' then 'lightningloop provider select PRESET' before 'provider models'.");
+  }
+  if (profile.preset === "openrouter") {
+    const models = await fetchOpenRouterModels();
+    process.stdout.write(`OpenRouter models · all · ${models.length}\n`);
+    for (const model of models.slice().sort((left, right) => left.id.localeCompare(right.id))) {
+      const price = model.free ? "free" : `in ${model.promptPrice} · out ${model.completionPrice} (USD/token)`;
+      process.stdout.write(`  ${terminalSafe(model.id)} · ${terminalSafe(model.name)} · ctx ${model.contextWindow} · ${price}\n`);
+    }
+    process.stdout.write("Select one with: lightningloop provider select openrouter --model <id>\n");
+    return;
+  }
+  if (profile.piProviderID) {
+    const catalog = await loadInstalledRuntimeCatalog(profile);
+    process.stdout.write(`${terminalSafe(profile.displayName)} models · installed runtime catalog · ${catalog.models.length}\n`);
+    for (const model of catalog.models) {
+      process.stdout.write(`  ${terminalSafe(model.modelID)} · ${terminalSafe(model.modelName)} · ctx ${model.contextWindow} · ${model.supportsImages ? "image+text" : "text"}\n`);
+    }
+    process.stdout.write(`Select one with: lightningloop provider select ${profile.preset} --model <id>\n`);
+    return;
+  }
+  const credential = readLightningLoopManagedCredential(profile);
+  if (!credential) {
+    throw new Error(missingKeyNextAction(profile.preset === "generalcompute" ? "generalcompute" : "custom"));
+  }
+  const models = await fetchHostModels(profile, credential);
+  process.stdout.write(`${terminalSafe(profile.displayName)} models · live host catalog · ${models.length}\n`);
+  for (const model of models) {
+    process.stdout.write(`  ${terminalSafe(model.id)} · ${terminalSafe(model.name)}\n`);
+  }
+  process.stdout.write(`Select one with: lightningloop provider select ${profile.preset === "custom" ? "openrouter" : profile.preset} --model <id>\n`);
+  if (profile.preset === "custom") {
+    process.stdout.write("Custom hosts keep the saved profile; copy a discovered ID into Settings or re-save the custom model ID.\n");
+  }
 }
 
 async function runSearch(options: CliOptions): Promise<void> {
@@ -729,18 +789,7 @@ async function runSearch(options: CliOptions): Promise<void> {
 async function runTUI(options: CliOptions): Promise<void> {
   const profile = loadProviderProfile();
   if (isProviderSelectionRequired(profile)) {
-    process.stdout.write("LightningLoop first run: choose a provider before opening the TUI.\n");
-    process.stdout.write("  llp help\n");
-    process.stdout.write("  llp provider list\n");
-    process.stdout.write("  llp provider select PRESET\n");
-    process.stdout.write("  llp key set openrouter|generalcompute|cerebras   (stdin only)\n");
-    process.stdout.write("  llp free\n");
-    process.stdout.write("  llp doctor\n");
-    process.stdout.write("Without a provider you can still pin the three agents and browse a reputable source:\n");
-    process.stdout.write("  lightningloop agents list\n");
-    process.stdout.write("  lightningloop agents select researcher|engineer|verifier --model ID\n");
-    process.stdout.write("  lightningloop browse URL\n");
-    process.stdout.write("No credential has been read or stored. After selection, run llp again.\n");
+    process.stdout.write(`${firstRunMessage()}\n`);
     process.exitCode = 2;
     return;
   }
@@ -751,7 +800,7 @@ async function runTUI(options: CliOptions): Promise<void> {
   // Pi otherwise downloads the latest fd/rg release at startup without a
   // repository-pinned checksum. LightningLoop keeps runtime acquisition offline.
   process.env.PI_OFFLINE = "1";
-  const { generalComputeApiKey, openRouterApiKey, cerebrasApiKey: cerebrasEnvApiKey } = prepareTuiRuntimeCredentials(profile, process.env);
+  const { generalComputeApiKey, openRouterApiKey, cerebrasApiKey: cerebrasEnvApiKey, customApiKey } = prepareTuiRuntimeCredentials(profile, process.env);
 
   // Cerebras optionally runs via a manual key (env or OS secret store) instead of
   // Pi /login. The env key is captured above; fall back to the OS secret store.
@@ -785,7 +834,7 @@ async function runTUI(options: CliOptions): Promise<void> {
     tools,
     "--no-extensions",
     "--no-skills",
-    ...(existsSync(SHIPPED_SKILLS_DIR) ? ["--skill", SHIPPED_SKILLS_DIR] : []),
+    ...enabledDefaultSkillDirectories(SHIPPED_SKILLS_DIR).flatMap((directory) => ["--skill", directory]),
     ...(existsSync(MANAGED_SKILLS_DIR) ? ["--skill", MANAGED_SKILLS_DIR] : []),
     "--no-prompt-templates",
     ...(options.allowExecution ? ["--lightningloop-execution"] : []),
@@ -796,6 +845,7 @@ async function runTUI(options: CliOptions): Promise<void> {
     ...(generalComputeApiKey ? { generalComputeApiKey } : {}),
     ...(openRouterApiKey ? { openRouterApiKey } : {}),
     ...(cerebrasApiKey ? { cerebrasApiKey } : {}),
+    ...(customApiKey ? { customApiKey } : {}),
   };
   await runPi(args, { extensionFactories: [{ name: "lightningloop", factory: createLightningLoopExtension(extensionOptions) }] });
 }
@@ -804,24 +854,27 @@ async function runTUI(options: CliOptions): Promise<void> {
 export function prepareTuiRuntimeCredentials(
   profile: ProviderProfile,
   environment: NodeJS.ProcessEnv,
-): { generalComputeApiKey?: string; openRouterApiKey?: string; cerebrasApiKey?: string } {
-  const ambientGeneralComputeApiKey = environment.GENERALCOMPUTE_API_KEY?.trim();
-  const ambientOpenRouterApiKey = environment.OPENROUTER_API_KEY?.trim() || environment.OPENROUTER_KEY?.trim();
-  const ambientCerebrasApiKey = environment.CEREBRAS_API_KEY?.trim() || environment.CEREBRAS_KEY?.trim();
+): { generalComputeApiKey?: string; openRouterApiKey?: string; cerebrasApiKey?: string; customApiKey?: string } {
+  const ambientGeneralComputeApiKey = environment.GENERALCOMPUTE_API_KEY?.trim()
+    || (profile.preset === "generalcompute" ? readStoredProviderCredential(profile) : undefined);
+  const ambientOpenRouterApiKey = environment.OPENROUTER_API_KEY?.trim() || environment.OPENROUTER_KEY?.trim()
+    || (profile.preset === "openrouter" ? readStoredProviderCredential(profile) : undefined);
+  const ambientCerebrasApiKey = environment.CEREBRAS_API_KEY?.trim() || environment.CEREBRAS_KEY?.trim()
+    || (profile.preset === "cerebras" ? readStoredProviderCredential(profile) : undefined);
+  const customApiKey = profile.preset === "custom" ? readStoredProviderCredential(profile) : undefined;
   if (ambientGeneralComputeApiKey) registerRuntimeCredential(ambientGeneralComputeApiKey);
   if (ambientOpenRouterApiKey) registerRuntimeCredential(ambientOpenRouterApiKey);
   if (ambientCerebrasApiKey) registerRuntimeCredential(ambientCerebrasApiKey);
+  if (customApiKey) registerRuntimeCredential(customApiKey);
   captureSearchCredentials(environment);
   scrubSensitiveEnvironment(environment);
-  // The shared scrubber matches *_API_KEY, but the OPENROUTER_KEY and CEREBRAS_KEY
-  // aliases do not match its pattern. Delete them explicitly so no credential
-  // reaches the child tool environment.
   delete environment.OPENROUTER_KEY;
   delete environment.CEREBRAS_KEY;
   return {
     ...(profile.preset === "generalcompute" && ambientGeneralComputeApiKey ? { generalComputeApiKey: ambientGeneralComputeApiKey } : {}),
     ...(profile.preset === "openrouter" && ambientOpenRouterApiKey ? { openRouterApiKey: ambientOpenRouterApiKey } : {}),
     ...(profile.preset === "cerebras" && ambientCerebrasApiKey ? { cerebrasApiKey: ambientCerebrasApiKey } : {}),
+    ...(customApiKey ? { customApiKey } : {}),
   };
 }
 
@@ -831,7 +884,8 @@ async function runAuth(options: CliOptions): Promise<void> {
   process.chdir(workspace);
   process.env.PI_OFFLINE = "1";
   scrubSensitiveEnvironment(process.env);
-  process.stdout.write("LightningLoop starts the provider sign-in flow. Use /login, choose OpenAI Codex, Anthropic, or xAI, and complete the provider's browser/device flow. Use /logout to revoke a provider credential.\n");
+  process.stdout.write("LightningLoop starts the runtime sign-in flow. Use /login, choose OpenAI Codex, Anthropic, or xAI, and finish that provider's browser or device flow. Use /logout to revoke.\n");
+  process.stdout.write("LightningLoop-managed keys are not this path. Use 'lightningloop key set openrouter|generalcompute|custom|firecrawl|exa|brave' instead.\n");
   await runPi(["--session-dir", SESSION_DIR, "--tools", "read", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files"]);
 }
 

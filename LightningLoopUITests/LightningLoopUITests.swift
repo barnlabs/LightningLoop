@@ -52,7 +52,7 @@ final class LightningLoopUITests: XCTestCase {
         XCTAssertTrue(start.exists)
         XCTAssertTrue(artifactWorkspace.exists)
         XCTAssertFalse(artifactWorkspace.isEnabled, "The isolated no-harness UI test must not grant workspace writes.")
-        XCTAssertTrue(app.descendants(matching: .any)["pipeline.overview"].exists)
+        XCTAssertTrue(app.buttons["start.clarification"].exists)
 
         editor.click()
         editor.typeText("Create an accessible BarnLabs launch brief")

@@ -22,17 +22,17 @@ test("help remains a noninteractive command", () => {
   assert.equal(parse(["--help"]).command, "help");
   assert.match(usage(), /llp \| lloop \| lightningloop \[tui\]/u);
   assert.match(usage(), /RUNTIME_OPTIONS/u);
-  assert.match(usage(), /Provider sign-in uses the managed LightningLoop runtime/u);
+  assert.match(usage(), /Runtime-managed sign-in/u);
+  assert.match(usage(), /lightningloop key set NAME/u);
   assert.match(usage(), /agents select <researcher\|engineer\|verifier>/u);
   assert.match(usage(), /lightningloop browse URL/u);
   assert.match(usage(), /llp, lloop, and lightningloop are the same product/u);
-  assert.match(usage(), /llp help/u);
-  assert.match(usage(), /llp provider list/u);
-  assert.match(usage(), /llp key set openrouter/u);
-  assert.match(usage(), /llp free/u);
-  assert.match(usage(), /llp doctor/u);
+  assert.match(usage(), /llp provider select PRESET/u);
+  assert.match(usage(), /llp key set NAME/u);
   assert.match(usage(), /llp loop "your goal"/u);
+  assert.match(usage(), /skills list\|enable\|disable/u);
   assert.match(usage(), /never argv or a file/u);
+  assert.match(usage(), /stored\/missing/u);
   assert.doesNotMatch(usage(), /\bPi\b/u);
 });
 
@@ -57,6 +57,10 @@ test("provider and install-doctor commands parse as bounded first-run operations
   assert.throws(() => parse(["loop", "goal", "--fusion", "bad\nlist"]), /bounded comma-separated model list/);
   assert.equal(parse(["key", "set", "openrouter"]).keyAction, "set");
   assert.equal(parse(["key", "status", "openrouter"]).keyProvider, "openrouter");
+  assert.equal(parse(["key", "set", "firecrawl"]).keyProvider, "firecrawl");
+  assert.equal(parse(["key", "status", "exa"]).keyProvider, "exa");
+  assert.equal(parse(["key", "clear", "brave"]).keyProvider, "brave");
+  assert.equal(parse(["key", "set", "custom"]).keyProvider, "custom");
   assert.throws(() => parse(["key", "bogus", "openrouter"]), /set, status, or clear/);
   assert.equal(parse(["doctor", "--runtime-only"]).doctorRuntimeOnly, true);
   assert.equal(parse(["agents", "list"]).command, "agents");
@@ -187,13 +191,12 @@ test("clean cross-platform data flow requires selection, lists presets, and stor
     const firstRun = spawnSync(process.execPath, [cli], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(firstRun.status, 2);
     assert.match(firstRun.stdout, /first run: choose a provider/u);
-    assert.match(firstRun.stdout, /llp help/u);
-    assert.match(firstRun.stdout, /provider select PRESET/u);
-    assert.match(firstRun.stdout, /llp key set/u);
-    assert.match(firstRun.stdout, /llp free/u);
-    assert.match(firstRun.stdout, /llp doctor/u);
-    assert.match(firstRun.stdout, /agents select researcher\|engineer\|verifier/u);
-    assert.match(firstRun.stdout, /browse URL/u);
+    assert.match(firstRun.stdout, /Next: llp provider select PRESET/u);
+    assert.match(firstRun.stdout, /llp key set NAME/u);
+    assert.match(firstRun.stdout, /llp loop "your goal"/u);
+    assert.doesNotMatch(firstRun.stdout, /llp free/u);
+    assert.doesNotMatch(firstRun.stdout, /agents select/u);
+    assert.doesNotMatch(firstRun.stdout, /browse URL/u);
     assert.doesNotMatch(`${firstRun.stdout}${firstRun.stderr}`, /--provider\s+selection-required|--model\s*(?:\r?\n|$)/u);
 
     const list = spawnSync(process.execPath, [cli, "provider", "list"], { cwd: repositoryRoot, env, encoding: "utf8" });
@@ -201,6 +204,10 @@ test("clean cross-platform data flow requires selection, lists presets, and stor
     assert.match(list.stdout, /cerebras · Cerebras Inference/u);
     assert.match(list.stdout, /openai-codex/u);
     await assert.rejects(readFile(join(dataDirectory, "provider.json"), "utf8"), { code: "ENOENT" });
+
+    const modelsUnselected = spawnSync(process.execPath, [cli, "provider", "models"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.notEqual(modelsUnselected.status, 0);
+    assert.match(`${modelsUnselected.stderr}${modelsUnselected.stdout}`, /Provider selection is required/u);
 
     const select = spawnSync(process.execPath, [cli, "provider", "select", "cerebras"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(select.status, 0, select.stderr);
@@ -210,6 +217,15 @@ test("clean cross-platform data flow requires selection, lists presets, and stor
 
     const selectedDoctor = spawnSync(process.execPath, [cli, "doctor"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(selectedDoctor.status, 0, selectedDoctor.stderr);
+    assert.match(selectedDoctor.stdout, /Firecrawl research credential: missing/u);
+
+    const runtimeModels = spawnSync(process.execPath, [cli, "provider", "models"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    if (runtimeModels.status === 0) {
+      assert.match(runtimeModels.stdout, /installed runtime catalog/u);
+    }
+    const unknownModel = spawnSync(process.execPath, [cli, "provider", "select", "cerebras", "--model", "totally-made-up-model-xyz"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.notEqual(unknownModel.status, 0);
+    assert.match(`${unknownModel.stderr}${unknownModel.stdout}`, /not catalogued by the installed LightningLoop runtime/u);
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
   }
@@ -302,7 +318,41 @@ test("key status reports the secure store and never displays a value", async () 
     const status = spawnSync(process.execPath, [cli, "key", "status", "openrouter"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(status.status, 0, status.stderr);
     assert.match(status.stdout, /Secure store:/u);
-    assert.match(status.stdout, /Stored key: (?:PRESENT|none)/u);
+    assert.match(status.stdout, /Stored key: (?:stored|missing)/u);
+    const firecrawl = spawnSync(process.execPath, [cli, "key", "status", "firecrawl"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.equal(firecrawl.status, 0, firecrawl.stderr);
+    assert.match(firecrawl.stdout, /LightningLoop key · firecrawl/u);
+    assert.match(firecrawl.stdout, /Stored key: (?:stored|missing)/u);
+    assert.doesNotMatch(`${status.stdout}${firecrawl.stdout}`, /sk-|fc-|Bearer/u);
+    const unknown = spawnSync(process.execPath, [cli, "key", "status", "anthropic"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.notEqual(unknown.status, 0);
+    assert.match(`${unknown.stderr}${unknown.stdout}`, /firecrawl, exa, brave/u);
+  } finally {
+    await rm(dataDirectory, { recursive: true, force: true });
+  }
+});
+
+test("skills list enable disable covers the default pack and fails closed", async () => {
+  const dataDirectory = await mkdtemp(join(tmpdir(), "lightningloop-cli-skills-"));
+  const cli = resolve(repositoryRoot, "dist/cli/index.js");
+  const env: NodeJS.ProcessEnv = { ...process.env, LIGHTNINGLOOP_DATA_DIR: dataDirectory };
+  delete env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+  try {
+    const listed = spawnSync(process.execPath, [cli, "skills", "list"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.equal(listed.status, 0, listed.stderr);
+    assert.match(listed.stdout, /LightningLoop default skill pack/u);
+    assert.match(listed.stdout, /ENABLED  lloop-research/u);
+    assert.match(listed.stdout, /maintain-lightningloop/u);
+    assert.doesNotMatch(listed.stdout, /sk-|Bearer/u);
+    const disabled = spawnSync(process.execPath, [cli, "skills", "disable", "lloop-research"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.equal(disabled.status, 0, disabled.stderr);
+    assert.match(disabled.stdout, /DISABLED  lloop-research/u);
+    const packed = JSON.parse(await readFile(join(dataDirectory, "skill-pack.json"), "utf8")) as { disabled: string[] };
+    assert.deepEqual(packed.disabled, ["lloop-research"]);
+    assert.doesNotMatch(JSON.stringify(packed), /sk-|Bearer|api.?key/iu);
+    const unknown = spawnSync(process.execPath, [cli, "skills", "enable", "marketplace-plugin"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.notEqual(unknown.status, 0);
+    assert.match(`${unknown.stderr}${unknown.stdout}`, /Unknown skill|not installed|invalid/u);
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
   }
