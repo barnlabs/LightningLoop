@@ -461,3 +461,13 @@ npm run build:harness
 | Fix | Zoom label is `String(format: "%.1f", Double(scale))`. Viewer policy, hash gate, and credential boundaries unchanged. |
 | Proof (this Linux VM) | Source edit only. **Not run:** xcodebuild. GUI remains unproven until macos-app is green. |
 | Production rows | **Unchanged.** LL-010 and LL-011 remain REWORK. |
+
+### 2026-08-28 — OpenRouter XCTest contract (PR 15 follow-up)
+
+| Item | Detail |
+|------|--------|
+| Trigger | GitHub Actions run 33137802334 compiled. Isolated UI journey skipped. Native unit tests: 95 tests, 2 failures (`testEveryBuiltInPresetIsPiManagedAndOnlyCustomAllowsNativeConnectionTesting`). harness job passed. |
+| Cause | The test still required every non-exempt built-in preset to be Pi-managed. This PR already treats `openrouter` like `generalcompute`: LightningLoop-managed key, `usesPiAuthentication == false`, native connection testing allowed. |
+| Fix | Named Pi-managed loop is only cerebras/groq/fireworks/xai/openaiCodex/anthropic. OpenRouter now has the same LightningLoop-managed asserts as GeneralCompute. Gold / sandbox / credential boundaries unchanged. |
+| Proof (this Linux VM) | Source edit only. **Not run:** xcodebuild / XCTest. GUI remains unproven until macos-app is green. |
+| Production rows | **Unchanged.** LL-010 and LL-011 remain REWORK. |
