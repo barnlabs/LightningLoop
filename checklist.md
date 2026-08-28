@@ -443,6 +443,15 @@ npm run build:harness
 2. **Commands:** `check:harness`, `test:portable`, `build:harness`, isolated CLI list/add/unknown/missing-key probes.
 3. **Risk:** Live macOS Settings picker is source + XCTest, not a live click journey on this VM. CC-A9 fusion stays TODO.
 
+### 2026-08-28 — macos-app XCTest isolation (same PR)
+
+| Item | Detail |
+|------|--------|
+| Trigger | macos-app CI: App target compiled; LightningLoopTests failed at `ProviderClientTests.swift:116` — `mutation of captured var 'credentialReads' in concurrently-executing code`. Testing cancelled. |
+| Cause | Swift 6 isolation: OpenRouter catalog test counted credential reads with a captured `var` inside a `@Sendable` reader. |
+| Fix | Use the existing `LockedCounter` (same file as the Pi-managed no-read test). Assert still requires zero credential reads and no `Authorization`. PR 17 Keychain silence unchanged. |
+| Production rows | **Unchanged.** |
+
 ### 2026-08-28 — One-minute setup, obvious skills, no extra panels
 
 | Item | Detail |
