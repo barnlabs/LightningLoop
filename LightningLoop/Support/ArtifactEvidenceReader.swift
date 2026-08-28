@@ -111,6 +111,23 @@ struct ArtifactEvidenceReader {
         return ArtifactCurrentEvidence(state: .verified, data: data)
     }
 
+    /// Returns the workspace file URL only after the current bytes match the
+    /// reviewed hash. SceneKit and image viewers must call this instead of
+    /// constructing a path themselves.
+    func verifiedFileURL(
+        relativePath: String,
+        expectedSHA256: String,
+        expectedBytes: Int? = nil
+    ) -> URL? {
+        let evidence = inspect(
+            relativePath: relativePath,
+            expectedSHA256: expectedSHA256,
+            expectedBytes: expectedBytes
+        )
+        guard evidence.state == .verified else { return nil }
+        return resolvedURL(relativePath)
+    }
+
     private func resolvedURL(_ relativePath: String) -> URL? {
         guard let workspacePath,
               !relativePath.isEmpty,

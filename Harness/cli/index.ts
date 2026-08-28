@@ -115,6 +115,16 @@ export function usage(): string {
   return `LightningLoop — Fast models. Strict evidence.
 
 An independent BarnLabs open-source project.
+llp, lloop, and lightningloop are the same product.
+
+First commands:
+  llp help
+  llp provider list
+  llp provider select openrouter
+  llp key set openrouter          (reads the key from stdin; never argv or a file)
+  llp free
+  llp doctor
+  llp loop "your goal"
 
 Usage:
   llp | lloop | lightningloop [tui] [--workspace PATH] [--allow-execution] [-- RUNTIME_OPTIONS...]
@@ -720,8 +730,12 @@ async function runTUI(options: CliOptions): Promise<void> {
   const profile = loadProviderProfile();
   if (isProviderSelectionRequired(profile)) {
     process.stdout.write("LightningLoop first run: choose a provider before opening the TUI.\n");
-    process.stdout.write("  lightningloop provider list\n");
-    process.stdout.write("  lightningloop provider select PRESET\n");
+    process.stdout.write("  llp help\n");
+    process.stdout.write("  llp provider list\n");
+    process.stdout.write("  llp provider select PRESET\n");
+    process.stdout.write("  llp key set openrouter|generalcompute|cerebras   (stdin only)\n");
+    process.stdout.write("  llp free\n");
+    process.stdout.write("  llp doctor\n");
     process.stdout.write("Without a provider you can still pin the three agents and browse a reputable source:\n");
     process.stdout.write("  lightningloop agents list\n");
     process.stdout.write("  lightningloop agents select researcher|engineer|verifier --model ID\n");

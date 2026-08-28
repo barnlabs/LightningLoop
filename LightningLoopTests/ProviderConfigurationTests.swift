@@ -76,6 +76,40 @@ final class ProviderConfigurationTests: XCTestCase {
         XCTAssertThrowsError(try store.save(redirected)) { XCTAssertEqual($0 as? ProviderConfigurationError, .wrongPresetURL) }
     }
 
+    func testOpenRouterIsLightningLoopManagedWithFixedURLAndJustFreeDefault() throws {
+        let profile = ProviderConfiguration.preset(.openrouter)
+        XCTAssertEqual(profile.preset, .openrouter)
+        XCTAssertEqual(profile.displayName, "OpenRouter")
+        XCTAssertEqual(profile.baseURL, "https://openrouter.ai/api/v1")
+        XCTAssertEqual(profile.modelID, "deepseek/deepseek-chat-v3-0324:free")
+        XCTAssertEqual(profile.modelName, "DeepSeek V3 (free)")
+        XCTAssertFalse(profile.supportsImages)
+        XCTAssertEqual(profile.contextWindow, 131_072)
+        XCTAssertEqual(profile.maxOutputTokens, 32_768)
+        XCTAssertEqual(profile.freeOnly, true)
+        XCTAssertFalse(profile.usesPiAuthentication)
+        XCTAssertTrue(profile.allowsNativeConnectionTesting)
+        XCTAssertEqual(profile.credentialProvider, .openrouter)
+        XCTAssertEqual(profile.credentialService, "com.barnlabs.LightningLoop.provider.openrouter.apiKey")
+
+        let store = ProviderConfigurationStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        var redirected = profile
+        redirected.baseURL = "https://example.com/v1"
+        XCTAssertThrowsError(try store.save(redirected)) { XCTAssertEqual($0 as? ProviderConfigurationError, .wrongPresetURL) }
+
+        var paid = profile
+        paid.freeOnly = false
+        try store.save(paid)
+        XCTAssertEqual(store.load().freeOnly, false)
+        XCTAssertEqual(store.load().preset, .openrouter)
+
+        let encoder = JSONEncoder()
+        let openrouterJSON = String(data: try encoder.encode(profile), encoding: .utf8) ?? ""
+        XCTAssertTrue(openrouterJSON.contains("\"freeOnly\":true") || openrouterJSON.contains("\"freeOnly\" : true"))
+        let cerebrasJSON = String(data: try encoder.encode(ProviderConfiguration.preset(.cerebras)), encoding: .utf8) ?? ""
+        XCTAssertFalse(cerebrasJSON.contains("freeOnly"), "Harness parseProviderProfile rejects freeOnly: null on non-OpenRouter presets.")
+    }
+
     func testCerebrasStartsWithGuardedGemmaPreferenceAndPersistsASelectedRuntimeModel() throws {
         let preferred = ProviderConfiguration.preset(.cerebras)
         XCTAssertEqual(preferred.modelID, "gemma-4-31b")

@@ -154,7 +154,7 @@ struct SettingsView: View {
                         Text(model.settingsMessage).font(.caption).foregroundStyle(.secondary)
                     }
                     if let metrics = model.connectionMetrics { MetricsStrip(metrics: metrics) }
-                    Text("Clarification, execution, and Gold require the shared LightningLoop runtime. For GeneralCompute or Custom, Discover Models & Test is the only direct native provider operation.")
+                    Text("Clarification, execution, and Gold require the shared LightningLoop runtime. For OpenRouter, GeneralCompute, or Custom, Discover Models & Test is the only direct native provider operation.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -294,6 +294,16 @@ struct SettingsView: View {
                         Toggle("Model accepts image input", isOn: $draft.supportsImages)
                         Stepper("Context window: \(draft.contextWindow.formatted())", value: $draft.contextWindow, in: 1_024...2_000_000, step: 1_024)
                         Stepper("Maximum output: \(draft.maxOutputTokens.formatted())", value: $draft.maxOutputTokens, in: 256...131_072, step: 256)
+                    }
+                    if draft.preset == .openrouter {
+                        Toggle(DesignedCopy.justFreeLabel, isOn: Binding(
+                            get: { draft.freeOnly ?? false },
+                            set: { draft.freeOnly = $0 }
+                        ))
+                        .accessibilityIdentifier("openrouter.free.only")
+                        Text(DesignedCopy.justFreeDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     Button("Save Active Profile") { model.saveProviderConfiguration(draft); draft = model.providerProfile }
                         .buttonStyle(.borderedProminent)
@@ -502,11 +512,17 @@ private struct CredentialRow: View {
             HStack {
                 SecureField(configured ? "Paste to replace" : "Paste API key", text: $pendingValue)
                     .textContentType(.password)
+                    .accessibilityIdentifier("credential.secure.field")
+                    .accessibilityLabel("API key for \(provider.label)")
                 Button("Save") { save(pendingValue); pendingValue = "" }
                     .disabled(pendingValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("credential.save")
                 Button("Remove", role: .destructive) { confirmsRemoval = true }
                     .disabled(!configured)
             }
+            Text(DesignedCopy.keyNeverEchoed)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
         .confirmationDialog("Remove the \(provider.label) credential?", isPresented: $confirmsRemoval) {

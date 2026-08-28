@@ -6,6 +6,7 @@ enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
     case groq
     case fireworks
     case generalcompute
+    case openrouter
     case xai
     case openaiCodex = "openai-codex"
     case anthropic
@@ -20,6 +21,7 @@ enum ProviderPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .groq: "Groq"
         case .fireworks: "Fireworks"
         case .generalcompute: "GeneralCompute"
+        case .openrouter: "OpenRouter"
         case .xai: "xAI / Grok (LightningLoop runtime sign-in)"
         case .openaiCodex: "OpenAI Codex (LightningLoop runtime sign-in)"
         case .anthropic: "Anthropic Claude (LightningLoop runtime sign-in)"
@@ -62,6 +64,71 @@ struct ProviderConfiguration: Codable, Hashable, Sendable {
     var supportsImages: Bool
     var contextWindow: Int
     var maxOutputTokens: Int
+    /// OpenRouter just-free pin. Ignored for every other preset. Never invents pricing.
+    var freeOnly: Bool? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion, id, preset, displayName, baseURL, modelID, modelName
+        case supportsImages, contextWindow, maxOutputTokens, freeOnly
+    }
+
+    init(
+        schemaVersion: Int,
+        id: String,
+        preset: ProviderPreset,
+        displayName: String,
+        baseURL: String,
+        modelID: String,
+        modelName: String,
+        supportsImages: Bool,
+        contextWindow: Int,
+        maxOutputTokens: Int,
+        freeOnly: Bool? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.id = id
+        self.preset = preset
+        self.displayName = displayName
+        self.baseURL = baseURL
+        self.modelID = modelID
+        self.modelName = modelName
+        self.supportsImages = supportsImages
+        self.contextWindow = contextWindow
+        self.maxOutputTokens = maxOutputTokens
+        self.freeOnly = freeOnly
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        id = try container.decode(String.self, forKey: .id)
+        preset = try container.decode(ProviderPreset.self, forKey: .preset)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        baseURL = try container.decode(String.self, forKey: .baseURL)
+        modelID = try container.decode(String.self, forKey: .modelID)
+        modelName = try container.decode(String.self, forKey: .modelName)
+        supportsImages = try container.decode(Bool.self, forKey: .supportsImages)
+        contextWindow = try container.decode(Int.self, forKey: .contextWindow)
+        maxOutputTokens = try container.decode(Int.self, forKey: .maxOutputTokens)
+        freeOnly = try container.decodeIfPresent(Bool.self, forKey: .freeOnly)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(id, forKey: .id)
+        try container.encode(preset, forKey: .preset)
+        try container.encode(displayName, forKey: .displayName)
+        try container.encode(baseURL, forKey: .baseURL)
+        try container.encode(modelID, forKey: .modelID)
+        try container.encode(modelName, forKey: .modelName)
+        try container.encode(supportsImages, forKey: .supportsImages)
+        try container.encode(contextWindow, forKey: .contextWindow)
+        try container.encode(maxOutputTokens, forKey: .maxOutputTokens)
+        if preset == .openrouter, let freeOnly {
+            try container.encode(freeOnly, forKey: .freeOnly)
+        }
+    }
 
     static let onboarding = ProviderConfiguration(
         schemaVersion: schemaVersion,
@@ -88,6 +155,8 @@ struct ProviderConfiguration: Codable, Hashable, Sendable {
             .init(schemaVersion: schemaVersion, id: "fireworks", preset: .fireworks, displayName: "Fireworks", baseURL: "https://api.fireworks.ai/inference/v1", modelID: "accounts/fireworks/models/kimi-k2p6", modelName: "Kimi K2.6", supportsImages: true, contextWindow: 262_000, maxOutputTokens: 32_768)
         case .generalcompute:
             .init(schemaVersion: schemaVersion, id: "generalcompute", preset: .generalcompute, displayName: "GeneralCompute", baseURL: "https://api.generalcompute.com/v1", modelID: "minimax-m2.7", modelName: "MiniMax M2.7", supportsImages: false, contextWindow: 192_000, maxOutputTokens: 131_072)
+        case .openrouter:
+            .init(schemaVersion: schemaVersion, id: "openrouter", preset: .openrouter, displayName: "OpenRouter", baseURL: "https://openrouter.ai/api/v1", modelID: "deepseek/deepseek-chat-v3-0324:free", modelName: "DeepSeek V3 (free)", supportsImages: false, contextWindow: 131_072, maxOutputTokens: 32_768, freeOnly: true)
         case .xai:
             .init(schemaVersion: schemaVersion, id: "xai", preset: .xai, displayName: "xAI / Grok", baseURL: "https://api.x.ai/v1", modelID: "grok-4.5", modelName: "Grok 4.5", supportsImages: true, contextWindow: 256_000, maxOutputTokens: 32_768)
         case .openaiCodex:
@@ -129,28 +198,33 @@ struct ProviderConfiguration: Codable, Hashable, Sendable {
         case .groq: .groq
         case .fireworks: .fireworks
         case .generalcompute: .generalcompute
+        case .openrouter: .openrouter
         case .xai, .openaiCodex, .anthropic: .custom
         case .custom, .selectionRequired: .custom
-        }
+    }
     }
 
-    /// Pi-managed presets use the runtime /login path. GeneralCompute and custom
-    /// use LightningLoop-owned API keys (Keychain / env); never Pi /login.
+    /// Runtime-managed presets use the official /login path. OpenRouter,
+    /// GeneralCompute, and custom use LightningLoop-owned API keys
+    /// (Keychain / env); never the runtime /login store.
     var usesPiAuthentication: Bool {
         switch preset {
-        case .custom, .generalcompute, .selectionRequired: false
+        case .custom, .generalcompute, .openrouter, .selectionRequired: false
         default: true
         }
     }
 
     var allowsNativeConnectionTesting: Bool {
-        preset == .custom || preset == .generalcompute
+        preset == .custom || preset == .generalcompute || preset == .openrouter
     }
 
     var credentialService: String {
         if usesPiAuthentication { return "com.barnlabs.LightningLoop.pi-managed.\(id)" }
         if preset == .generalcompute {
             return CredentialProvider.generalcompute.service
+        }
+        if preset == .openrouter {
+            return CredentialProvider.openrouter.service
         }
         guard preset == .custom, let host = URLComponents(string: baseURL)?.host?.lowercased() else {
             return credentialProvider.service
@@ -407,6 +481,7 @@ struct ProviderConfigurationStore: Sendable {
         clean.baseURL = normalizedURL
         clean.modelID = modelID
         clean.modelName = modelName
+        clean.freeOnly = profile.preset == .openrouter ? (profile.freeOnly ?? false) : nil
         return clean
     }
 

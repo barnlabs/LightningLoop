@@ -25,6 +25,14 @@ test("help remains a noninteractive command", () => {
   assert.match(usage(), /Provider sign-in uses the managed LightningLoop runtime/u);
   assert.match(usage(), /agents select <researcher\|engineer\|verifier>/u);
   assert.match(usage(), /lightningloop browse URL/u);
+  assert.match(usage(), /llp, lloop, and lightningloop are the same product/u);
+  assert.match(usage(), /llp help/u);
+  assert.match(usage(), /llp provider list/u);
+  assert.match(usage(), /llp key set openrouter/u);
+  assert.match(usage(), /llp free/u);
+  assert.match(usage(), /llp doctor/u);
+  assert.match(usage(), /llp loop "your goal"/u);
+  assert.match(usage(), /never argv or a file/u);
   assert.doesNotMatch(usage(), /\bPi\b/u);
 });
 
@@ -179,7 +187,11 @@ test("clean cross-platform data flow requires selection, lists presets, and stor
     const firstRun = spawnSync(process.execPath, [cli], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(firstRun.status, 2);
     assert.match(firstRun.stdout, /first run: choose a provider/u);
+    assert.match(firstRun.stdout, /llp help/u);
     assert.match(firstRun.stdout, /provider select PRESET/u);
+    assert.match(firstRun.stdout, /llp key set/u);
+    assert.match(firstRun.stdout, /llp free/u);
+    assert.match(firstRun.stdout, /llp doctor/u);
     assert.match(firstRun.stdout, /agents select researcher\|engineer\|verifier/u);
     assert.match(firstRun.stdout, /browse URL/u);
     assert.doesNotMatch(`${firstRun.stdout}${firstRun.stderr}`, /--provider\s+selection-required|--model\s*(?:\r?\n|$)/u);

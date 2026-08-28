@@ -30,8 +30,12 @@ private struct GoalHeroView: View {
                 Text("LightningLoop")
                     .font(.system(size: 34, weight: .bold, design: .rounded))
                     .accessibilityIdentifier("lightningloop.hero.title")
-                Text("Fast inference, disciplined into a gold-standard result.")
+                Text(DesignedCopy.tagline)
                     .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("lightningloop.hero.tagline")
+                Text("Clarify, challenge, implement, and review until Gold — or pause honestly.")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
                 BarnLabsWordmark()
                     .padding(.top, 3)
@@ -82,34 +86,7 @@ private struct GoalInputCard: View {
 
     private var actions: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let readinessMessage = model.loopReadinessMessage {
-                HStack(alignment: .center, spacing: 12) {
-                    Image(systemName: "bolt.slash.fill")
-                        .font(.title3)
-                        .foregroundStyle(.orange)
-                        .frame(width: 24)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Setup needed before this loop can run")
-                            .font(.subheadline.weight(.semibold))
-                        Text(readinessMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 12)
-                    SettingsLink {
-                        Text("Open Settings")
-                    }
-                    .controlSize(.large)
-                    .accessibilityIdentifier("open.settings.readiness")
-                }
-                .padding(12)
-                .background(.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(.orange.opacity(0.22))
-                }
-            }
+            ProviderStatusBanner(model: model)
 
             HStack {
                 if !session.attachments.isEmpty && !model.providerProfile.supportsImages {

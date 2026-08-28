@@ -6,6 +6,7 @@ enum CredentialProvider: String, CaseIterable, Identifiable, Sendable {
     case groq
     case fireworks
     case generalcompute
+    case openrouter
     case custom
     case exa
     case brave
@@ -19,6 +20,7 @@ enum CredentialProvider: String, CaseIterable, Identifiable, Sendable {
         case .groq: "Groq Inference"
         case .fireworks: "Fireworks Inference"
         case .generalcompute: "GeneralCompute"
+        case .openrouter: "OpenRouter"
         case .custom: "Custom Inference"
         case .exa: "Exa Search"
         case .brave: "Brave Search"
@@ -32,6 +34,7 @@ enum CredentialProvider: String, CaseIterable, Identifiable, Sendable {
         case .groq: "Groq-hosted models"
         case .fireworks: "Fireworks-hosted models"
         case .generalcompute: "GeneralCompute OpenAI-compatible models"
+        case .openrouter: "OpenRouter models, including just-free discovery"
         case .custom: "Your OpenAI-compatible endpoint"
         case .exa: "Neural and research-oriented search"
         case .brave: "Independent-index web search"
@@ -45,6 +48,7 @@ enum CredentialProvider: String, CaseIterable, Identifiable, Sendable {
         case .groq: "com.barnlabs.LightningLoop.provider.groq.apiKey"
         case .fireworks: "com.barnlabs.LightningLoop.provider.fireworks.apiKey"
         case .generalcompute: "com.barnlabs.LightningLoop.provider.generalcompute.apiKey"
+        case .openrouter: "com.barnlabs.LightningLoop.provider.openrouter.apiKey"
         case .custom: "com.barnlabs.LightningLoop.provider.custom.apiKey"
         case .exa: "com.barnlabs.LightningLoop.search.exa"
         case .brave: "com.barnlabs.LightningLoop.search.brave"
@@ -52,7 +56,7 @@ enum CredentialProvider: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    static var inferenceCases: [CredentialProvider] { [.cerebras, .groq, .fireworks, .generalcompute, .custom] }
+    static var inferenceCases: [CredentialProvider] { [.cerebras, .groq, .fireworks, .generalcompute, .openrouter, .custom] }
     static var searchCases: [CredentialProvider] { [.exa, .brave, .firecrawl] }
 }
 

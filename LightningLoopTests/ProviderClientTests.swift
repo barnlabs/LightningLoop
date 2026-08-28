@@ -32,7 +32,7 @@ final class ProviderClientTests: XCTestCase {
 
     func testEveryPiManagedBuiltInIsRejectedBeforeCredentialLookupOrNetwork() async throws {
         for preset in ProviderPreset.allCases
-        where preset != .custom && preset != .generalcompute && preset != .selectionRequired {
+        where preset != .custom && preset != .generalcompute && preset != .openrouter && preset != .selectionRequired {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
             let store = ProviderConfigurationStore(fileURL: root.appendingPathComponent("provider.json"))
             try store.save(.preset(preset))
@@ -90,6 +90,32 @@ final class ProviderClientTests: XCTestCase {
         )
         let models = try await client.listModels()
         XCTAssertEqual(models, ["minimax-m2.7"])
+    }
+
+    func testOpenRouterNativeListModelsIsAllowedWithFixedEndpoint() async throws {
+        let credential = "synthetic-openrouter-credential"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = ProviderConfigurationStore(fileURL: root.appendingPathComponent("provider.json"))
+        try store.save(.preset(.openrouter))
+        XCTAssertTrue(ProviderConfiguration.preset(.openrouter).allowsNativeConnectionTesting)
+        XCTAssertFalse(ProviderConfiguration.preset(.openrouter).usesPiAuthentication)
+        XCTAssertEqual(ProviderConfiguration.preset(.openrouter).freeOnly, true)
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ProviderURLProtocol.self]
+        ProviderURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://openrouter.ai/api/v1/models")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(credential)")
+            let body = #"{"object":"list","data":[{"id":"deepseek/deepseek-chat-v3-0324:free","object":"model"}]}"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(body.utf8))
+        }
+        let client = ProviderClient(
+            profileStore: store,
+            session: URLSession(configuration: configuration),
+            credentialReader: { _ in credential }
+        )
+        let models = try await client.listModels()
+        XCTAssertEqual(models, ["deepseek/deepseek-chat-v3-0324:free"])
     }
 
     func testCustomSuccessRedactsExactCredentialBeforeReplyLeavesProviderClient() async throws {
