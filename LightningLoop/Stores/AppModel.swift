@@ -106,6 +106,7 @@ final class AppModel {
         } else {
             refreshCredentialState()
         }
+        refreshSkillPack()
     }
 
     static func live() -> AppModel {
@@ -180,21 +181,23 @@ final class AppModel {
     var supportsAutomaticResearch: Bool { runtimeLabel == "Shared LightningLoop runtime" }
     var supportsWorkspaceArtifacts: Bool { runtimeLabel == "Shared LightningLoop runtime" }
 
+    var skillPack: [DefaultSkillPackItem] = []
+
     var loopReadinessMessage: String? {
         guard runtimeLabel == "Shared LightningLoop runtime" else {
-            return "The shared LightningLoop runtime is unavailable. You can draft a goal, but running the loop is blocked."
+            return "Next: install the shared LightningLoop runtime. The runtime is unavailable, so running the loop is blocked."
         }
         if providerProfile.requiresProviderSelection {
-            return "Choose an inference provider and model before running this loop."
+            return "Next: pick a provider and one catalogued model in Settings."
         }
         if let activeRuntimeModelSelectionBlocker {
             return activeRuntimeModelSelectionBlocker
         }
         guard hasAPIKey else {
             if providerProfile.allowsNativeConnectionTesting {
-                return "Save a LightningLoop-managed API key in Settings. The key stays in Keychain and is never written to provider.json."
+                return "Next: save the LightningLoop-managed key in Settings. Status is stored/missing. The value never enters provider.json, logs, or argv."
             }
-            return "Provider access is not ready. Use the provider's official sign-in flow before running this loop."
+            return "Next: lightningloop auth, then /login. LightningLoop does not copy those credentials."
         }
         return nil
     }
@@ -979,6 +982,27 @@ final class AppModel {
     func selectProviderPreset(_ preset: ProviderPreset) {
         let candidate = ProviderConfiguration.preset(preset)
         saveProviderConfiguration(candidate)
+    }
+
+    var skillPackURL: URL {
+        providerStore.fileURL.deletingLastPathComponent().appendingPathComponent("skill-pack.json")
+    }
+
+    func refreshSkillPack() {
+        skillPack = DefaultSkillPack.items(fileURL: skillPackURL)
+    }
+
+    func setSkillEnabled(_ enabled: Bool, id: String) {
+        do {
+            try DefaultSkillPack.setEnabled(enabled, id: id, fileURL: skillPackURL)
+            refreshSkillPack()
+            settingsMessage = enabled
+                ? "Enabled \(id). Drafts were not activated."
+                : "Disabled \(id)."
+        } catch {
+            refreshSkillPack()
+            settingsMessage = sanitizeSensitiveText(error.localizedDescription)
+        }
     }
 
     func manageHarness(_ action: String, approveReset: Bool = false, approveRestore: Bool = false) {

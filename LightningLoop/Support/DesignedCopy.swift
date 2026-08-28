@@ -9,7 +9,8 @@ enum DesignedCopy {
 
     static let noLoopSelectedTitle = "Start a loop"
     static let noLoopSelectedDetail = "LightningLoop clarifies, challenges, implements, and reviews until Gold — or pauses honestly."
-    static let noLoopSelectedGuidance = "⌘N opens a new draft. Settings holds the provider and any LightningLoop-managed key."
+    static let noLoopSelectedGuidance = "⌘N opens a draft. Settings: provider, key or login, one model. Then start a loop."
+    static let setupNextAction = "Next: provider → key or /login → one model → start a loop."
 
     static let emptyLoopsTitle = "No loops yet"
     static let emptyLoopsDetail = "History stays on this Mac. ⌘N starts a draft."

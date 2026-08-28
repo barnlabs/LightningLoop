@@ -1,5 +1,7 @@
 import { createBashTool, type ExtensionAPI, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { invokedProductBin, renderBrandHeaderLines, renderDiscoverableHelp, renderStatusFooterLines } from "./lightningloop-theme.js";
+import { formatDefaultSkillPack, isDefaultSkillId, setDefaultSkillEnabled } from "../core/default-skill-pack.js";
+import { ManagedOverlay } from "../governance/managed-overlay.js";
 import { basename } from "node:path";
 import { resolve } from "node:path";
 import { WorkspaceBoundary, evaluateToolRequest } from "../core/capability-policy.js";
@@ -867,8 +869,33 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
     },
   });
 
+  pi.registerCommand("skills", {
+    description: "List, enable, or disable the shipped skill pack",
+    handler: async (args, ctx) => {
+      const [verb, id] = args.trim().split(/\s+/u);
+      try {
+        if (!verb || verb === "list") {
+          ctx.ui.notify(formatDefaultSkillPack(), "info");
+          return;
+        }
+        if (verb !== "enable" && verb !== "disable") {
+          throw new Error("Next: /skills list  or  /skills enable|disable ID");
+        }
+        if (!id) throw new Error(`Skill ${verb} requires a skill ID.`);
+        if (isDefaultSkillId(id)) {
+          setDefaultSkillEnabled(id, verb === "enable");
+        } else {
+          new ManagedOverlay().setSkillEnabled(id, verb === "enable", "");
+        }
+        ctx.ui.notify(formatDefaultSkillPack(), "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Skill command failed.", "error");
+      }
+    },
+  });
+
   pi.registerCommand("help", {
-    description: "Show LightningLoop commands (help, provider, key, free, doctor, loop)",
+    description: "Show LightningLoop commands (help, provider, key, skills, loop)",
     handler: async (_args, ctx) => {
       ctx.ui.notify(renderDiscoverableHelp(), "info");
     },

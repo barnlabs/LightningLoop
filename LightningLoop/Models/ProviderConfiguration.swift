@@ -496,3 +496,52 @@ struct ProviderConfigurationStore: Sendable {
         } && !labels.allSatisfy { $0.allSatisfy(\.isNumber) }
     }
 }
+
+struct DefaultSkillPackItem: Identifiable, Equatable, Sendable {
+    let id: String
+    let title: String
+    var enabled: Bool
+}
+
+enum DefaultSkillPack {
+    static let shipped: [(id: String, title: String)] = [
+        ("lloop-research", "Researcher"),
+        ("lloop-engineer", "Engineer"),
+        ("lloop-verify", "Verifier"),
+        ("lloop-sources", "Source trust"),
+        ("lloop-browse", "Browse"),
+        ("maintain-lightningloop", "Maintainer"),
+    ]
+
+    static func items(fileURL: URL) -> [DefaultSkillPackItem] {
+        let disabled = Set(loadDisabled(fileURL: fileURL))
+        return shipped.map { DefaultSkillPackItem(id: $0.id, title: $0.title, enabled: !disabled.contains($0.id)) }
+    }
+
+    static func setEnabled(_ enabled: Bool, id: String, fileURL: URL) throws {
+        guard shipped.contains(where: { $0.id == id }) else {
+            throw ProviderConfigurationError.unreadableConfiguration
+        }
+        var disabled = Set(loadDisabled(fileURL: fileURL))
+        if enabled { disabled.remove(id) } else { disabled.insert(id) }
+        let payload: [String: Any] = [
+            "schemaVersion": 1,
+            "disabled": disabled.sorted(),
+        ]
+        let directory = fileURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: fileURL, options: .atomic)
+    }
+
+    private static func loadDisabled(fileURL: URL) -> [String] {
+        guard FileManager.default.fileExists(atPath: fileURL.path),
+              let data = try? Data(contentsOf: fileURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["schemaVersion"] as? Int == 1,
+              let disabled = object["disabled"] as? [String],
+              disabled.allSatisfy({ id in shipped.contains(where: { $0.id == id }) })
+        else { return [] }
+        return disabled
+    }
+}

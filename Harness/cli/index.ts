@@ -63,6 +63,13 @@ import {
   type LoopAgent,
 } from "../core/loop-roster.js";
 import { SHIPPED_SKILLS } from "../core/skill-disclosure.js";
+import { doctorNextAction, firstRunMessage } from "../core/first-run.js";
+import {
+  enabledDefaultSkillDirectories,
+  formatDefaultSkillPack,
+  isDefaultSkillId,
+  setDefaultSkillEnabled,
+} from "../core/default-skill-pack.js";
 import { executeBrowseCommand } from "../core/terminal-browser.js";
 import { loadActiveGuidance } from "../core/evolution-store.js";
 
@@ -119,54 +126,29 @@ interface CliOptions {
 export function usage(): string {
   return `LightningLoop — Fast models. Strict evidence.
 
-An independent BarnLabs open-source project.
 llp, lloop, and lightningloop are the same product.
 
-First commands:
-  llp help
-  llp provider list
-  llp provider select openrouter
-  llp key set openrouter          (reads the key from stdin; never argv or a file)
-  llp free
-  llp doctor
-  llp loop "your goal"
+1. llp provider select PRESET
+2. printf %s "$KEY" | llp key set NAME     (stdin, never argv or a file)
+   or: llp auth  then /login
+3. llp provider models                     (optional: pick one catalogued ID)
+4. llp loop "your goal"
 
-Usage:
+Also:
   llp | lloop | lightningloop [tui] [--workspace PATH] [--allow-execution] [-- RUNTIME_OPTIONS...]
-  lightningloop auth
-  lightningloop provider list
-  lightningloop provider select <cerebras|groq|fireworks|generalcompute|openrouter|xai|openai-codex|anthropic> [--model ID] [--free]
-  lightningloop provider models [--free]
-  lightningloop free [--model ID]
+  lightningloop provider list|select|models
   lightningloop key set|status|clear <openrouter|generalcompute|custom|cerebras|firecrawl|exa|brave>
-  lightningloop loop [GOAL] [--cycles 1-8] [--image PATH] [--research exa|brave|firecrawl|free]
-    [--fusion "openrouter/id1,openrouter/id2"] (openrouter, non-free; runs 2-4 models per turn, longest reply wins)
-    [--objective-file contract.json] (owner completion oracle: harness-evidence checks required for Gold)
-    [--self-improve] (records INERT draft evolution proposals from the run; activation still requires the full reviewed lifecycle)
-    [--workspace EMPTY_DIR --approve-artifact-writes [--approve-verification-commands]]
-  lightningloop search <exa|brave|firecrawl|free> QUERY [--limit 1-20]  (free = keyless DuckDuckGo HTML)
-  lightningloop mcp verify MANIFEST.json --workspace PATH --approve-manifest
-  lightningloop mcp call MANIFEST.json TOOL --input PARAMS.json --workspace PATH --approve-manifest
-  lightningloop harness status|backup|restore|reset [--slot 0-2] [--approve-restore|--approve-reset]
-  lightningloop skills list|install|enable|disable [SOURCE_OR_ID] [--approve-skill-install|--approve-skill-enable HASH]
-  lightningloop agents list
+  lightningloop skills list|enable|disable|install
+  lightningloop doctor [--runtime-only]
+  lightningloop free [--model ID]
+  lightningloop auth
   lightningloop agents select <researcher|engineer|verifier> --model ID
   lightningloop browse URL
-  lightningloop update check
-  lightningloop artifact serve --workspace PATH --source RELATIVE.html --sha256 HASH [--manifest-json JSON]
-  lightningloop serve
-  lightningloop doctor [--runtime-only]
   lightningloop help
 
-The TUI starts read-only. --allow-execution only makes mutation and shell requests eligible for an additional per-call confirmation.
-Running llp or lloop with no arguments opens the interactive TUI.
-The loop command is text-only by default. Artifact writes require an explicit empty directory and approval flag.
-Verification commands additionally require --approve-verification-commands and run allowlisted programs in the network-denied OS sandbox.
-MCP verification requires a versioned integrity manifest and an explicit approval flag for that exact invocation.
-Runtime-managed sign-in (Codex, Anthropic, xAI, Groq, Fireworks, Cerebras without a manual key): run 'lightningloop auth', then /login or /logout. LightningLoop does not implement a parallel OAuth client.
-LightningLoop-managed keys (OpenRouter, GeneralCompute, Custom, Firecrawl, Exa, Brave, optional Cerebras): 'lightningloop key set NAME' reads stdin only.
-Choose a first-run provider with 'lightningloop provider list' and 'lightningloop provider select PRESET [--model ID]'.
-LightningLoop never copies OAuth credentials into its own settings or managed overlay.`;
+Runtime-managed sign-in: lightningloop auth, then /login. lightningloop key set NAME reads stdin only.
+Status is stored/missing. Keys never enter argv, files, provider.json, or logs.
+Drafts never auto-enable.`;
 }
 
 export function parse(args: string[]): CliOptions {
@@ -458,13 +440,18 @@ function runSkillGovernance(options: CliOptions): void {
     if (!options.skillArgument) throw new Error("Skill install requires a local source directory.");
     overlay.installSkill(resolve(options.skillArgument), options.approveSkillInstall ? "INSTALL-MANAGED-SKILL" : "");
   } else if (action === "enable" || action === "disable") {
-    if (!options.skillArgument) throw new Error(`Skill ${action} requires an installed skill ID.`);
-    overlay.setSkillEnabled(options.skillArgument, action === "enable", options.approveSkillEnableHash ?? "");
+    if (!options.skillArgument) throw new Error(`Skill ${action} requires a skill ID.`);
+    if (isDefaultSkillId(options.skillArgument)) {
+      setDefaultSkillEnabled(options.skillArgument, action === "enable");
+    } else {
+      overlay.setSkillEnabled(options.skillArgument, action === "enable", options.approveSkillEnableHash ?? "");
+    }
   }
+  process.stdout.write(`${formatDefaultSkillPack()}\n`);
   const skills = overlay.listSkills();
-  process.stdout.write("LightningLoop managed skills\n");
+  process.stdout.write("Managed extras\n");
   for (const skill of skills) process.stdout.write(`  ${skill.enabled ? "ENABLED" : "DISABLED"} ${terminalSafe(skill.id)} · sha256 ${skill.sha256}\n`);
-  if (skills.length === 0) process.stdout.write("  No managed skills installed. Shipped project skills are unchanged.\n");
+  if (skills.length === 0) process.stdout.write("  None. Overlay imports stay disabled until enable + hash.\n");
   process.stdout.write("  Provider runtime packages/settings changed: NO\n");
 }
 
@@ -606,6 +593,15 @@ export async function doctor(runtimeOnly = false): Promise<number> {
   process.stdout.write("  Default workspace-tool policy: READ-ONLY\n");
   process.stdout.write("  Credential values displayed: NEVER\n");
   if (runtimeOnly) process.stdout.write("  Install/runtime-only health: provider onboarding is reported but does not fail installation\n");
+  const managedKeyName = profile.preset === "generalcompute" || profile.preset === "custom" || profile.preset === "openrouter"
+    ? profile.preset
+    : "openrouter";
+  process.stdout.write(`  ${doctorNextAction({
+    selectionRequired,
+    piManaged,
+    managedKeyReady: managedApiKeyReady,
+    managedKeyName,
+  })}\n`);
   // `doctor` verifies local prerequisites. It never probes Pi credentials;
   // Pi owns their status and reports an auth failure only during its own run.
   return runtimeOnly ? (nodeOK ? 0 : 1) : (nodeOK && !selectionRequired && (piManaged || managedApiKeyReady) ? 0 : 1);
@@ -793,18 +789,7 @@ async function runSearch(options: CliOptions): Promise<void> {
 async function runTUI(options: CliOptions): Promise<void> {
   const profile = loadProviderProfile();
   if (isProviderSelectionRequired(profile)) {
-    process.stdout.write("LightningLoop first run: choose a provider before opening the TUI.\n");
-    process.stdout.write("  llp help\n");
-    process.stdout.write("  llp provider list\n");
-    process.stdout.write("  llp provider select PRESET\n");
-    process.stdout.write("  llp key set openrouter|generalcompute|custom|cerebras|firecrawl|exa|brave   (stdin only)\n");
-    process.stdout.write("  llp free\n");
-    process.stdout.write("  llp doctor\n");
-    process.stdout.write("Without a provider you can still pin the three agents and browse a reputable source:\n");
-    process.stdout.write("  lightningloop agents list\n");
-    process.stdout.write("  lightningloop agents select researcher|engineer|verifier --model ID\n");
-    process.stdout.write("  lightningloop browse URL\n");
-    process.stdout.write("No credential has been read or stored. After selection, run llp again.\n");
+    process.stdout.write(`${firstRunMessage()}\n`);
     process.exitCode = 2;
     return;
   }
@@ -849,7 +834,7 @@ async function runTUI(options: CliOptions): Promise<void> {
     tools,
     "--no-extensions",
     "--no-skills",
-    ...(existsSync(SHIPPED_SKILLS_DIR) ? ["--skill", SHIPPED_SKILLS_DIR] : []),
+    ...enabledDefaultSkillDirectories(SHIPPED_SKILLS_DIR).flatMap((directory) => ["--skill", directory]),
     ...(existsSync(MANAGED_SKILLS_DIR) ? ["--skill", MANAGED_SKILLS_DIR] : []),
     "--no-prompt-templates",
     ...(options.allowExecution ? ["--lightningloop-execution"] : []),

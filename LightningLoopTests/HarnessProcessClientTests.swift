@@ -99,7 +99,7 @@ final class HarnessProcessClientTests: XCTestCase {
             runtimeLabel: "Shared LightningLoop runtime",
             skipCredentialRefresh: true
         )
-        XCTAssertEqual(onboarding.loopReadinessMessage, "Choose an inference provider and model before running this loop.")
+        XCTAssertEqual(onboarding.loopReadinessMessage, "Next: pick a provider and one catalogued model in Settings.")
 
         try providerStore.save(.preset(.cerebras))
         let catalogBlocked = AppModel(

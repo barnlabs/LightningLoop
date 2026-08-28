@@ -27,13 +27,12 @@ test("help remains a noninteractive command", () => {
   assert.match(usage(), /agents select <researcher\|engineer\|verifier>/u);
   assert.match(usage(), /lightningloop browse URL/u);
   assert.match(usage(), /llp, lloop, and lightningloop are the same product/u);
-  assert.match(usage(), /llp help/u);
-  assert.match(usage(), /llp provider list/u);
-  assert.match(usage(), /llp key set openrouter/u);
-  assert.match(usage(), /llp free/u);
-  assert.match(usage(), /llp doctor/u);
+  assert.match(usage(), /llp provider select PRESET/u);
+  assert.match(usage(), /llp key set NAME/u);
   assert.match(usage(), /llp loop "your goal"/u);
+  assert.match(usage(), /skills list\|enable\|disable/u);
   assert.match(usage(), /never argv or a file/u);
+  assert.match(usage(), /stored\/missing/u);
   assert.doesNotMatch(usage(), /\bPi\b/u);
 });
 
@@ -192,13 +191,12 @@ test("clean cross-platform data flow requires selection, lists presets, and stor
     const firstRun = spawnSync(process.execPath, [cli], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(firstRun.status, 2);
     assert.match(firstRun.stdout, /first run: choose a provider/u);
-    assert.match(firstRun.stdout, /llp help/u);
-    assert.match(firstRun.stdout, /provider select PRESET/u);
-    assert.match(firstRun.stdout, /llp key set/u);
-    assert.match(firstRun.stdout, /llp free/u);
-    assert.match(firstRun.stdout, /llp doctor/u);
-    assert.match(firstRun.stdout, /agents select researcher\|engineer\|verifier/u);
-    assert.match(firstRun.stdout, /browse URL/u);
+    assert.match(firstRun.stdout, /Next: llp provider select PRESET/u);
+    assert.match(firstRun.stdout, /llp key set NAME/u);
+    assert.match(firstRun.stdout, /llp loop "your goal"/u);
+    assert.doesNotMatch(firstRun.stdout, /llp free/u);
+    assert.doesNotMatch(firstRun.stdout, /agents select/u);
+    assert.doesNotMatch(firstRun.stdout, /browse URL/u);
     assert.doesNotMatch(`${firstRun.stdout}${firstRun.stderr}`, /--provider\s+selection-required|--model\s*(?:\r?\n|$)/u);
 
     const list = spawnSync(process.execPath, [cli, "provider", "list"], { cwd: repositoryRoot, env, encoding: "utf8" });
@@ -329,6 +327,32 @@ test("key status reports the secure store and never displays a value", async () 
     const unknown = spawnSync(process.execPath, [cli, "key", "status", "anthropic"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.notEqual(unknown.status, 0);
     assert.match(`${unknown.stderr}${unknown.stdout}`, /firecrawl, exa, brave/u);
+  } finally {
+    await rm(dataDirectory, { recursive: true, force: true });
+  }
+});
+
+test("skills list enable disable covers the default pack and fails closed", async () => {
+  const dataDirectory = await mkdtemp(join(tmpdir(), "lightningloop-cli-skills-"));
+  const cli = resolve(repositoryRoot, "dist/cli/index.js");
+  const env: NodeJS.ProcessEnv = { ...process.env, LIGHTNINGLOOP_DATA_DIR: dataDirectory };
+  delete env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+  try {
+    const listed = spawnSync(process.execPath, [cli, "skills", "list"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.equal(listed.status, 0, listed.stderr);
+    assert.match(listed.stdout, /LightningLoop default skill pack/u);
+    assert.match(listed.stdout, /ENABLED  lloop-research/u);
+    assert.match(listed.stdout, /maintain-lightningloop/u);
+    assert.doesNotMatch(listed.stdout, /sk-|Bearer/u);
+    const disabled = spawnSync(process.execPath, [cli, "skills", "disable", "lloop-research"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.equal(disabled.status, 0, disabled.stderr);
+    assert.match(disabled.stdout, /DISABLED  lloop-research/u);
+    const packed = JSON.parse(await readFile(join(dataDirectory, "skill-pack.json"), "utf8")) as { disabled: string[] };
+    assert.deepEqual(packed.disabled, ["lloop-research"]);
+    assert.doesNotMatch(JSON.stringify(packed), /sk-|Bearer|api.?key/iu);
+    const unknown = spawnSync(process.execPath, [cli, "skills", "enable", "marketplace-plugin"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.notEqual(unknown.status, 0);
+    assert.match(`${unknown.stderr}${unknown.stdout}`, /Unknown skill|not installed|invalid/u);
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
   }

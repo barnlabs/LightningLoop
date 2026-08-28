@@ -11,7 +11,6 @@ struct GoalComposerView: View {
                 GoalHeroView()
                 GoalInputCard(model: model, session: session)
                 ArtifactModeCard(model: model, session: session)
-                PipelineOverviewView()
             }
             .frame(maxWidth: 880)
             .padding(.horizontal, 36)
@@ -34,9 +33,6 @@ private struct GoalHeroView: View {
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("lightningloop.hero.tagline")
-                Text("Clarify, challenge, implement, and review until Gold — or pause honestly.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
                 BarnLabsWordmark()
                     .padding(.top, 3)
             }
@@ -233,69 +229,5 @@ private struct AttachmentChip: View {
         }
         .padding(7)
         .background(.background.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
-    }
-}
-
-private struct PipelineOverviewView: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("THE LOOP")
-                .font(.caption.weight(.bold))
-                .tracking(1.6)
-                .foregroundStyle(.secondary)
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 10) {
-                    steps(showArrows: true)
-                }
-                VStack(spacing: 8) {
-                    steps(showArrows: false)
-                }
-            }
-        }
-        .accessibilityIdentifier("pipeline.overview")
-    }
-
-    @ViewBuilder private func steps(showArrows: Bool) -> some View {
-        PipelineStep(number: 1, title: "Clarify", detail: "Turn intent into criteria", role: .orchestrator)
-        if showArrows { PipelineArrow() }
-        PipelineStep(number: 2, title: "Challenge", detail: "Reject weak plans", role: .reviewer)
-        if showArrows { PipelineArrow() }
-        PipelineStep(number: 3, title: "Implement", detail: "Produce the artifact", role: .implementer)
-        if showArrows { PipelineArrow() }
-        PipelineStep(number: 4, title: "Loop", detail: "Fix until gold", role: .reviewer)
-    }
-}
-
-private struct PipelineStep: View {
-    let number: Int
-    let title: String
-    let detail: String
-    let role: AgentRole
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("\(number)")
-                    .font(.caption.bold())
-                    .frame(width: 22, height: 22)
-                    .background(LoopBrand.blue.opacity(0.14), in: Circle())
-                Image(systemName: role.symbol)
-                    .foregroundStyle(role == .reviewer ? LoopBrand.gold : LoopBrand.blue)
-            }
-            Text(title).font(.headline)
-            Text(detail).font(.caption).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: 86, alignment: .topLeading)
-        .padding(14)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
-    }
-}
-
-private struct PipelineArrow: View {
-    var body: some View {
-        Image(systemName: "chevron.right")
-            .foregroundStyle(.tertiary)
-            .padding(.top, 34)
     }
 }

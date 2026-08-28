@@ -422,7 +422,25 @@ npm run build:harness
 | Contribute | `CONTRIBUTING.md` |
 | Local deploy honesty | § Local deploy vs public release |
 
-**Last checklist structure update:** 2026-08-28 (model/key/OAuth/engine path delivery log). Re-verify LL statuses against `PRODUCTION_READINESS_CHECKLIST.md` before claiming a row green.
+**Last checklist structure update:** 2026-08-28 (one-minute setup / skills pack / no-bloat delivery log). Re-verify LL statuses against `PRODUCTION_READINESS_CHECKLIST.md` before claiming a row green.
+
+### 2026-08-28 — One-minute setup, obvious skills, no extra panels
+
+| Item | Detail |
+|------|--------|
+| Intent | Same PR 16. First-run is four steps: provider → key or /login → one model → loop. doctor/help name the next action. Settings is Setup / Skills / Harness. Default skill pack list/enable/disable in CLI, TUI, and Settings. No marketplace. No leaks. |
+| Branch | `cursor/e2e-models-keys-oauth-pi-1b7b` |
+| First-run | `llp` with no provider prints Next/Then only. Cut help/free/doctor/agents/browse from the required path. Windows still matches `provider select PRESET`. |
+| Skills | Shipped pack: lloop-research, lloop-engineer, lloop-verify, lloop-sources, lloop-browse, maintain-lightningloop. `llp skills list\|enable\|disable`. TUI `/skills`. Settings Skills tab. `skill-pack.json` is IDs only. Drafts never auto-enable. |
+| No bloat | Removed Settings General/Memory/Evolution tabs and agent-handoff cards. Removed goal-composer pipeline cards. Footer is help · provider · key · skills · /loop. |
+| Proof (this Linux VM) | Recorded after gates. **Not run:** xcodebuild, XCTest, XCUITest, live TTY, live inference. |
+| Production rows | **Unchanged.** LL-013–017, LL-021, LL-022 remain MISSING. LL-010 and LL-011 remain REWORK. No production row faked. |
+
+**Phase exit bullets:**
+
+1. **Changed:** Four-step first-run, next-action doctor/help, default skill pack enable/disable, slimmer Settings and goal composer.
+2. **Commands:** `check:harness`, `test:portable`, `build:harness`, isolated CLI first-run/skills probes.
+3. **Risk:** Live macOS Settings/Keychain journey still unproven. LL-010/011 stay REWORK.
 
 ### 2026-08-28 — Model selection, keys, tool auth, shared engine state
 

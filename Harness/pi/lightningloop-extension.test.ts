@@ -44,6 +44,7 @@ test("first-run TUI registers agents and browse without a selected provider", as
     assert.ok(commands.get("key"));
     assert.ok(commands.get("free"));
     assert.ok(commands.get("doctor"));
+    assert.ok(commands.get("skills"));
     assert.ok(commands.get("agents"));
     assert.ok(commands.get("browse"));
     await commands.get("help")!.handler("", {
@@ -51,6 +52,7 @@ test("first-run TUI registers agents and browse without a selected provider", as
     });
     assert.equal(notifications.some((message) => /llp, lloop, and lightningloop/u.test(message)), true);
     assert.equal(notifications.some((message) => /never invents a dollar amount/u.test(message)), true);
+    assert.equal(notifications.some((message) => /skills list\|enable\|disable/u.test(message)), true);
     assert.equal(notifications.some((message) => /\bPi\b/u.test(message)), false);
     await commands.get("agents")!.handler("", {
       ui: { notify: (message: string) => notifications.push(message) },

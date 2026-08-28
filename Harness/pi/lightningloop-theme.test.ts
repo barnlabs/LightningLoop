@@ -81,6 +81,7 @@ test("discoverable help lists the first-run commands and refuses invented pricin
   assert.match(help, /llp, lloop, and lightningloop/u);
   assert.match(help, /stdin, never argv/u);
   assert.match(help, /never invents a dollar amount/u);
+  assert.match(help, /skills list\|enable\|disable/u);
   assert.doesNotMatch(help, /\bPi\b/u);
   assert.doesNotMatch(help, /\$\d/u);
 });
@@ -156,7 +157,7 @@ test("footer layout is color-independent (ANSI-stripped equals plain snapshot)",
 });
 
 test("footer help names the discoverable first commands", () => {
-  assert.equal(FOOTER_HELP, "llp help · provider · key · free · doctor · /loop <goal>");
+  assert.equal(FOOTER_HELP, "llp help · provider · key · skills · /loop <goal>");
   const lines = renderStatusFooterLines(plain, footerModel, 100);
   assert.equal(lines[1], FOOTER_HELP);
 });
