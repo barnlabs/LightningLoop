@@ -451,3 +451,13 @@ npm run build:harness
 | Fix | Added `DesignedCopy.swift`, `DesignedStateViews.swift`, `ArtifactViewerPolicy.swift`, `ArtifactImageViewer.swift`, `ArtifactModelViewer.swift`, `LoopHistoryFilter.swift` to the app target, and `ArtifactViewerPolicyTests.swift` to the unit-test target. Tightened `ArtifactEvidenceView` viewer types. Gold / sandbox / credential boundaries unchanged. |
 | Proof (this Linux VM) | Membership verified by reading `LightningLoop.xcodeproj/project.pbxproj` (file refs + Sources phases). **Not run:** xcodebuild, XCTest, XCUITest. Do not treat this follow-up as a green macos-app row. |
 | Production rows | **Unchanged.** LL-010 and LL-011 remain REWORK. No production row faked. |
+
+### 2026-08-28 — ArtifactImageViewer FormatStyle disambiguation (PR 15 follow-up)
+
+| Item | Detail |
+|------|--------|
+| Trigger | GitHub Actions run 33137697643, job 98741320318, step "Build and test", exit 65. Isolated UI journey skipped. Target membership worked; new files compiled. |
+| Cause | `ArtifactImageViewer.swift:67` `scale.formatted(.number.precision(.fractionLength(1)))` — ambiguous use of `number` on `CGFloat` under Swift 6 / Xcode 16.4. |
+| Fix | Zoom label is `String(format: "%.1f", Double(scale))`. Viewer policy, hash gate, and credential boundaries unchanged. |
+| Proof (this Linux VM) | Source edit only. **Not run:** xcodebuild. GUI remains unproven until macos-app is green. |
+| Production rows | **Unchanged.** LL-010 and LL-011 remain REWORK. |

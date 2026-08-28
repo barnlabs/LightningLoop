@@ -64,7 +64,7 @@ struct ArtifactImageViewer: View {
             }
             .frame(minHeight: 180, maxHeight: 540)
             HStack {
-                Text("Zoom \(scale.formatted(.number.precision(.fractionLength(1))))×")
+                Text("Zoom \(String(format: "%.1f", Double(scale)))×")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
                 Spacer()
