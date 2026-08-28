@@ -23,15 +23,17 @@ struct ArtifactEvidenceView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     overview(report)
                     if !previews.isEmpty { previewGallery }
+                    viewers(report)
                     scriptRunner(report)
                     materializedFiles(report)
                     workspaceAudit(report)
                 }
             } else {
-                ContentUnavailableView(
-                    "No workspace evidence",
-                    systemImage: "viewfinder",
-                    description: Text("Choose a dedicated artifact directory and enable verification to receive static picture evidence, script output, and reviewed files that open in their default apps.")
+                DesignedEmptyState(
+                    title: "No workspace evidence",
+                    detail: "Choose a dedicated artifact directory and enable verification to receive static picture evidence, script output, and reviewed files that open in their default apps.",
+                    symbol: "viewfinder",
+                    identifier: "evidence.empty"
                 )
             }
         }
@@ -133,6 +135,61 @@ struct ArtifactEvidenceView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func viewers(_ report: ArtifactExecutionReport) -> some View {
+        let viewable: [ArtifactFileEvidence] = report.files.filter { file in
+            ArtifactViewerPolicy.kind(forRelativePath: file.path) != .none
+        }
+        if !viewable.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Bound viewers", systemImage: "eye")
+                    .font(.headline)
+                Text(DesignedCopy.unverifiedBytes)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(viewable, id: \.path) { file in
+                    boundViewerCard(for: file, in: report)
+                }
+            }
+            .accessibilityIdentifier("evidence.bound.viewers")
+        }
+    }
+
+    @ViewBuilder
+    private func boundViewerCard(for file: ArtifactFileEvidence, in report: ArtifactExecutionReport) -> some View {
+        let current = currentFileEvidence(file, maximumBytes: ArtifactEvidenceReader.maximumEvidenceBytes)
+        let kind = ArtifactViewerPolicy.kind(forRelativePath: file.path)
+        SurfaceCard {
+            switch kind {
+            case .image:
+                ArtifactImageViewer(
+                    title: file.path,
+                    evidence: current,
+                    compare: compareEvidence(for: file, in: report)
+                )
+            case .sceneKitModel, .glbOrGltf:
+                ArtifactModelViewer(
+                    title: file.path,
+                    relativePath: file.path,
+                    evidence: current,
+                    fileURL: evidenceReader.verifiedFileURL(
+                        relativePath: file.path,
+                        expectedSHA256: file.sha256,
+                        expectedBytes: file.bytes
+                    )
+                )
+            case .none:
+                EmptyView()
+            }
+        }
+    }
+
+    private func compareEvidence(for file: ArtifactFileEvidence, in report: ArtifactExecutionReport) -> ArtifactCurrentEvidence? {
+        let images = report.files.filter { ArtifactViewerPolicy.kind(forRelativePath: $0.path) == .image && $0.path != file.path }
+        guard let other = images.first else { return nil }
+        return currentFileEvidence(other, maximumBytes: ArtifactEvidenceReader.maximumEvidenceBytes)
     }
 
     private func scriptRunner(_ report: ArtifactExecutionReport) -> some View {

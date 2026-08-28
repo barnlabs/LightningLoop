@@ -191,6 +191,9 @@ final class AppModel {
             return activeRuntimeModelSelectionBlocker
         }
         guard hasAPIKey else {
+            if providerProfile.allowsNativeConnectionTesting {
+                return "Save a LightningLoop-managed API key in Settings. The key stays in Keychain and is never written to provider.json."
+            }
             return "Provider access is not ready. Use the provider's official sign-in flow before running this loop."
         }
         return nil

@@ -475,7 +475,8 @@ final class MemoryEvolutionTests: XCTestCase {
     }
 
     func testEveryBuiltInPresetIsPiManagedAndOnlyCustomAllowsNativeConnectionTesting() {
-        for preset in ProviderPreset.allCases where preset != .custom && preset != .generalcompute && preset != .selectionRequired {
+        let piManaged: [ProviderPreset] = [.cerebras, .groq, .fireworks, .xai, .openaiCodex, .anthropic]
+        for preset in piManaged {
             let profile = ProviderConfiguration.preset(preset)
             XCTAssertTrue(profile.usesPiAuthentication, "\(preset.rawValue) must be Pi-managed")
             XCTAssertFalse(profile.allowsNativeConnectionTesting)
@@ -484,6 +485,10 @@ final class MemoryEvolutionTests: XCTestCase {
         XCTAssertFalse(generalCompute.usesPiAuthentication, "generalcompute is LightningLoop-managed, not Pi")
         XCTAssertTrue(generalCompute.allowsNativeConnectionTesting)
         XCTAssertEqual(generalCompute.credentialService, CredentialProvider.generalcompute.service)
+        let openrouter = ProviderConfiguration.preset(.openrouter)
+        XCTAssertFalse(openrouter.usesPiAuthentication, "openrouter is LightningLoop-managed, not Pi")
+        XCTAssertTrue(openrouter.allowsNativeConnectionTesting)
+        XCTAssertEqual(openrouter.credentialService, CredentialProvider.openrouter.service)
         XCTAssertTrue(ProviderConfiguration.preset(.custom).allowsNativeConnectionTesting)
         for provider in [CredentialProvider.cerebras, .groq, .fireworks] {
             XCTAssertThrowsError(try KeychainStore(account: "lightningloop-test").saveCredential("must-not-save", for: provider)) { error in

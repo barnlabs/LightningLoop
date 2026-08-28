@@ -3,13 +3,17 @@ import test from "node:test";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
   BRAND_OWNER,
+  BRAND_TAGLINE,
   BRAND_WORDMARK,
+  DISCOVERABLE_COMMANDS,
   FOOTER_HELP,
   PIPELINE_TAGLINE,
   brandIdentityLine,
   footerArtifactSegment,
   footerResearchSegment,
+  invokedProductBin,
   renderBrandHeaderLines,
+  renderDiscoverableHelp,
   renderStatusFooterLines,
   type BrandTheme,
   type FooterModel,
@@ -49,6 +53,7 @@ test("header renders the coherent LightningLoop / BarnLabs brand band (plain-tex
   assert.deepEqual(lines, [
     "━".repeat(120),
     "ϟ  LIGHTNINGLOOP  /  BARNLABS",
+    BRAND_TAGLINE,
     "OpenAI Codex · GPT-5.6 Terra  research → engineer → verify",
     "Provider-neutral · authentication and model catalog managed by the LightningLoop runtime",
     "",
@@ -56,7 +61,28 @@ test("header renders the coherent LightningLoop / BarnLabs brand band (plain-tex
   // Branding coherence: wordmark + owner present; never leaks the "Pi" runtime name.
   assert.ok(lines[1]?.includes(BRAND_WORDMARK) && lines[1]?.includes(BRAND_OWNER.trim()));
   assert.doesNotMatch(lines.join("\n"), /\bPi\b/u);
-  assert.ok(lines[2]?.endsWith(PIPELINE_TAGLINE));
+  assert.ok(lines[3]?.endsWith(PIPELINE_TAGLINE));
+});
+
+test("header names the invoked short bin without treating unknown argv as branding", () => {
+  const lines = renderBrandHeaderLines(plain, { ...headerModel, invokedBin: "llp" }, 120);
+  assert.match(lines[1]!, /LIGHTNINGLOOP  \/  BARNLABS  ·  llp$/u);
+  assert.equal(invokedProductBin("/usr/local/bin/llp"), "llp");
+  assert.equal(invokedProductBin("/opt/lloop"), "lloop");
+  assert.equal(invokedProductBin("/tmp/dist/cli/index.js"), "lightningloop");
+  assert.equal(invokedProductBin(undefined), "lightningloop");
+});
+
+test("discoverable help lists the first-run commands and refuses invented pricing", () => {
+  const help = renderDiscoverableHelp();
+  for (const command of DISCOVERABLE_COMMANDS) {
+    assert.match(help, new RegExp(`^  ${command}\\b`, "mu"));
+  }
+  assert.match(help, /llp, lloop, and lightningloop/u);
+  assert.match(help, /stdin, never argv/u);
+  assert.match(help, /never invents a dollar amount/u);
+  assert.doesNotMatch(help, /\bPi\b/u);
+  assert.doesNotMatch(help, /\$\d/u);
 });
 
 test("header accent rule exactly fills the terminal width and truncates cleanly when narrow", () => {
@@ -127,4 +153,22 @@ test("footer layout is color-independent (ANSI-stripped equals plain snapshot)",
   const plainLines = renderStatusFooterLines(plain, footerModel, 100);
   const ansiLines = renderStatusFooterLines(ansi, footerModel, 100).map(stripAnsi);
   assert.deepEqual(ansiLines, plainLines);
+});
+
+test("footer help names the discoverable first commands", () => {
+  assert.equal(FOOTER_HELP, "llp help · provider · key · free · doctor · /loop <goal>");
+  const lines = renderStatusFooterLines(plain, footerModel, 100);
+  assert.equal(lines[1], FOOTER_HELP);
+});
+
+test("footer appends provider-reported usage and credit lines only when supplied", () => {
+  const withUsage = renderStatusFooterLines(plain, {
+    ...footerModel,
+    usageLine: "ϟ 1,536 tok · ↑1,024 ↓512 · —",
+    creditLine: "OpenRouter credit remaining: $6.50 · used $3.50",
+  }, 100);
+  assert.equal(withUsage.at(-2), "ϟ 1,536 tok · ↑1,024 ↓512 · —");
+  assert.equal(withUsage.at(-1), "OpenRouter credit remaining: $6.50 · used $3.50");
+  const without = renderStatusFooterLines(plain, footerModel, 100);
+  assert.equal(without.some((line) => line.includes("$") || line.includes("tok")), false);
 });

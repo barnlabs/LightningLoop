@@ -145,6 +145,26 @@ final class ArtifactEvidenceReaderTests: XCTestCase {
         XCTAssertEqual(stale.state, .tampered)
         XCTAssertNil(stale.data, "Post-review source bytes must not be returned for display.")
         XCTAssertEqual(reader.reportState(report, sourcePaths: [path]), .tampered)
+        XCTAssertNil(
+            reader.verifiedFileURL(relativePath: path, expectedSHA256: sha256(reviewed)),
+            "A tampered mesh must not receive a SceneKit URL."
+        )
+    }
+
+    func testVerifiedFileURLIsNilUntilBytesMatch() throws {
+        let workspace = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let path = "model.obj"
+        let url = workspace.appendingPathComponent(path)
+        let reviewed = Data("v 0 0 0\n".utf8)
+        try reviewed.write(to: url)
+        let reader = ArtifactEvidenceReader(workspacePath: workspace.path)
+        XCTAssertEqual(
+            reader.verifiedFileURL(relativePath: path, expectedSHA256: sha256(reviewed)),
+            url.standardizedFileURL
+        )
+        try Data("v 1 0 0\n".utf8).write(to: url)
+        XCTAssertNil(reader.verifiedFileURL(relativePath: path, expectedSHA256: sha256(reviewed)))
     }
 
     private func makeWorkspace() throws -> URL {

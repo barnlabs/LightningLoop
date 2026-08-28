@@ -422,4 +422,52 @@ npm run build:harness
 | Contribute | `CONTRIBUTING.md` |
 | Local deploy honesty | § Local deploy vs public release |
 
-**Last checklist structure update:** 2026-07-25 (providers map + GeneralCompute delivery log + deploy honesty). Re-verify LL statuses against `PRODUCTION_READINESS_CHECKLIST.md` before claiming a row green.
+**Last checklist structure update:** 2026-08-28 (GUI/TUI product-feel delivery log). Re-verify LL statuses against `PRODUCTION_READINESS_CHECKLIST.md` before claiming a row green.
+
+### 2026-08-28 — GUI + TUI product feel (owner-assigned one PR)
+
+| Item | Detail |
+|------|--------|
+| Intent | Finish native GUI source and TUI feel so both surfaces read as one LightningLoop product. Not a signed release. |
+| Branch | `cursor/gui-tui-product-feel-b678` |
+| GUI | OpenRouter preset + Keychain key entry (lockstep with harness); designed empty/error/offline/long-history states; evidence-bound image zoom/compare and SceneKit mesh viewers (hash-verified only); Browser pane empty/refused/offline; Settings just-free toggle; brand tagline on the goal hero |
+| TUI | Header tagline + invoked bin; footer lists `help · provider · key · free · doctor · /loop`; `/help` and TUI aliases; honest usage line only when the provider reported tokens/cost |
+| Proof (this Linux VM) | Node v22.22.2. `npm run check:harness` exit 0. `npm run test:portable` **188 tests, 187 pass, 1 skipped, 0 fail**. `npm run build:harness` exit 0. `node dist/cli/index.js help` shows first commands. Isolated `LIGHTNINGLOOP_DATA_DIR`: no-arg first-run exit 2 lists help/provider/key/free/doctor; `provider list` includes openrouter; `doctor --runtime-only` PASS; `key status openrouter` reports store none and never a value. **Not run:** xcodebuild, XCTest, XCUITest, live TTY chrome, any live inference |
+| Production rows | **Unchanged.** LL-013–017, LL-021, LL-022 remain MISSING. LL-010 and LL-011 remain REWORK. No cost figures invented. No screenshots taken. |
+| Remaining risk | Swift compiles only on macOS 14+ / Xcode 16. SceneKit GLB load may fall back to a verified placeholder. Live key-entry journey and VoiceOver remain unproven. |
+
+**Phase exit bullets:**
+
+1. **Changed:** GUI product source (OpenRouter, designed states, bound viewers) and TUI discoverability/branding. Honest checklist/criteria only.
+2. **Commands:** see proof row. Seatbelt/sandbox tests were not edited to pass on Linux.
+3. **Risk:** native GUI is source-complete, not live-proven. Do not merge as a production ship.
+
+### 2026-08-28 — macos-app target membership (PR 15 follow-up)
+
+| Item | Detail |
+|------|--------|
+| Trigger | GitHub Actions run 33137383836, job 98740296269, step "Build and test", exit 65. Isolated UI journey skipped. |
+| Cause (verified) | CI runs `xcodebuild -project LightningLoop.xcodeproj` and does **not** run `xcodegen generate`. New Swift files were on disk and listed by `project.yml`, but absent from the committed `project.pbxproj`, so `DesignedEmptyState`, `DesignedCopy`, `ProviderIdentityChip`, `ArtifactViewerPolicy`, `ArtifactImageViewer`, and `ArtifactModelViewer` were never compiled. The generic `R` error was a cascade from those missing types. |
+| Fix | Added `DesignedCopy.swift`, `DesignedStateViews.swift`, `ArtifactViewerPolicy.swift`, `ArtifactImageViewer.swift`, `ArtifactModelViewer.swift`, `LoopHistoryFilter.swift` to the app target, and `ArtifactViewerPolicyTests.swift` to the unit-test target. Tightened `ArtifactEvidenceView` viewer types. Gold / sandbox / credential boundaries unchanged. |
+| Proof (this Linux VM) | Membership verified by reading `LightningLoop.xcodeproj/project.pbxproj` (file refs + Sources phases). **Not run:** xcodebuild, XCTest, XCUITest. Do not treat this follow-up as a green macos-app row. |
+| Production rows | **Unchanged.** LL-010 and LL-011 remain REWORK. No production row faked. |
+
+### 2026-08-28 — ArtifactImageViewer FormatStyle disambiguation (PR 15 follow-up)
+
+| Item | Detail |
+|------|--------|
+| Trigger | GitHub Actions run 33137697643, job 98741320318, step "Build and test", exit 65. Isolated UI journey skipped. Target membership worked; new files compiled. |
+| Cause | `ArtifactImageViewer.swift:67` `scale.formatted(.number.precision(.fractionLength(1)))` — ambiguous use of `number` on `CGFloat` under Swift 6 / Xcode 16.4. |
+| Fix | Zoom label is `String(format: "%.1f", Double(scale))`. Viewer policy, hash gate, and credential boundaries unchanged. |
+| Proof (this Linux VM) | Source edit only. **Not run:** xcodebuild. GUI remains unproven until macos-app is green. |
+| Production rows | **Unchanged.** LL-010 and LL-011 remain REWORK. |
+
+### 2026-08-28 — OpenRouter XCTest contract (PR 15 follow-up)
+
+| Item | Detail |
+|------|--------|
+| Trigger | GitHub Actions run 33137802334 compiled. Isolated UI journey skipped. Native unit tests: 95 tests, 2 failures (`testEveryBuiltInPresetIsPiManagedAndOnlyCustomAllowsNativeConnectionTesting`). harness job passed. |
+| Cause | The test still required every non-exempt built-in preset to be Pi-managed. This PR already treats `openrouter` like `generalcompute`: LightningLoop-managed key, `usesPiAuthentication == false`, native connection testing allowed. |
+| Fix | Named Pi-managed loop is only cerebras/groq/fireworks/xai/openaiCodex/anthropic. OpenRouter now has the same LightningLoop-managed asserts as GeneralCompute. Gold / sandbox / credential boundaries unchanged. |
+| Proof (this Linux VM) | Source edit only. **Not run:** xcodebuild / XCTest. GUI remains unproven until macos-app is green. |
+| Production rows | **Unchanged.** LL-010 and LL-011 remain REWORK. |

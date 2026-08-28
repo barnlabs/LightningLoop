@@ -43,10 +43,10 @@ This document is authoritative for scope. It is deliberately harsh: partial work
 | CC-A1 | **OpenRouter provider** (OpenAI-compatible, LL-managed) selectable | `provider list` includes `openrouter`; `provider select openrouter` persists a valid credential-free `provider.json`; profile parses/round-trips | HARNESS | unit | DONE (critic PASS `e76fca3`) |
 | CC-A2 | **OpenRouter key entry** via `OPENROUTER_API_KEY`/`OPENROUTER_KEY` env (+ macOS Keychain) | key resolves for inference registration; key never written to `provider.json`/logs; `doctor` reports presence only | CROSS | unit + live | HARNESS-DONE (critic PASS; live inference + GUI pending) |
 | CC-A3 | **Free-models-only** discovery for OpenRouter | pure `isFreeModel`/`selectFreeModels` unit-proven; live `/models` fetch returns only pricing==0 models when `--free`; bounded (size/time/HTTPS/no-redirect) | HARNESS | unit + integration | DONE (critic PASS `e76fca3`; DNS-pin follow-up) |
-| CC-A4 | **Model selection** for OpenRouter (choose a discovered free model, persist it) | `provider select openrouter --model <id>` validates the id against discovery and persists it; invalid/non-free id rejected under `--free` | CROSS | unit + integration | HARNESS-DONE (critic PASS; GUI pending) |
+| CC-A4 | **Model selection** for OpenRouter (choose a discovered free model, persist it) | `provider select openrouter --model <id>` validates the id against discovery and persists it; invalid/non-free id rejected under `--free` | CROSS | unit + integration | HARNESS-DONE (critic PASS; GUI source now has OpenRouter picker + just-free toggle; live macOS pending) |
 | CC-A5 | **Cerebras manual key entry** (in addition to Pi `/login`) | with `CEREBRAS_KEY` set, a Cerebras run authenticates via the manual key path without Pi OAuth; Keychain/env only; no key in `provider.json` | CROSS | live | TODO |
 | CC-A6 | **Cerebras model selection works** | selecting a Cerebras model that exists in the catalog launches; a non-catalogued id fails closed with a clear message | CROSS | integration + live | TODO |
-| CC-A7 | **Easy secure key entry in the GUI** (masked field, Keychain-only, never echoed) | Settings accepts OpenRouter/Cerebras keys into Keychain; value never rendered or exported; unit test asserts redaction | GUI | manual-macos | TODO |
+| CC-A7 | **Easy secure key entry in the GUI** (masked field, Keychain-only, never echoed) | Settings accepts OpenRouter/Cerebras keys into Keychain; value never rendered or exported; unit test asserts redaction | GUI | manual-macos | WIP (source: OpenRouter preset + SecureField + DesignedCopy.keyNeverEchoed; macOS journey unproven) |
 | CC-A8 | **Login-provider onboarding** (Codex, Grok/xAI, others) is one-click from GUI/CLI | `auth` launches Pi `/login`; GUI surfaces sign-in state per provider without copying credentials | CROSS | manual-macos + integration | TODO |
 | CC-A9 | **Model fusion** (combine free + paid models in one run) | a run can route/aggregate ≥2 models with a defined strategy; result records which model produced which contribution; deterministic gates unchanged | HARNESS | unit + integration + live | TODO |
 | CC-A10 | **Just-free mode** | `lightningloop free` / `provider select openrouter --free` pins a zero-cost model (free router preferred), persists `freeOnly`, and runs re-verify the model is still free (fail-closed on paid); `doctor` shows Free mode | HARNESS | unit + integration | DONE (critic PASS `4964a40`) |
@@ -86,9 +86,9 @@ completion" mechanism the owner asked for, designed as an explicit oracle.
 
 | ID | Requirement | Proof predicate | Surface | Test | Status |
 |----|-------------|-----------------|---------|------|--------|
-| CC-D1 | **3D model viewer** for generated models (GLB/OBJ) in the GUI | GUI renders a produced `.glb`/`.obj` interactively (SceneKit/RealityKit), with hash-verified load | GUI | manual-macos | TODO |
-| CC-D2 | **Image viewer/editor** for image work | GUI shows the working image with zoom/compare (before/after); edits are hash-tracked | GUI | manual-macos | TODO |
-| CC-D3 | Viewers bound to Evidence Lab provenance | every viewed artifact is the exact hash-verified run output; no unverified bytes rendered | CROSS | unit + manual-macos | TODO |
+| CC-D1 | **3D model viewer** for generated models (GLB/OBJ) in the GUI | GUI renders a produced `.glb`/`.obj` interactively (SceneKit/RealityKit), with hash-verified load | GUI | manual-macos | WIP (source: SceneKit viewer + verifiedFileURL; macOS render unproven) |
+| CC-D2 | **Image viewer/editor** for image work | GUI shows the working image with zoom/compare (before/after); edits are hash-tracked | GUI | manual-macos | WIP (source: zoom/compare viewer; hash-bound; macOS render unproven) |
+| CC-D3 | Viewers bound to Evidence Lab provenance | every viewed artifact is the exact hash-verified run output; no unverified bytes rendered | CROSS | unit + manual-macos | WIP (Swift unit tests for policy + verifiedFileURL; live GUI unproven) |
 
 Note: today there is no SceneKit/RealityKit 3D viewer and no image editor in the app;
 `Tools/photo_to_relief.mjs` produces GLB/OBJ/preview.png harness-side only.
@@ -97,7 +97,7 @@ Note: today there is no SceneKit/RealityKit 3D viewer and no image editor in the
 
 | ID | Requirement | Proof predicate | Surface | Test | Status |
 |----|-------------|-----------------|---------|------|--------|
-| CC-E1 | **Beautiful, consistent design** across primary flows | design pass applied; captured UI evidence bound to a build; palette/typography match `docs/BRAND.md` | GUI | manual-macos | TODO |
+| CC-E1 | **Beautiful, consistent design** across primary flows | design pass applied; captured UI evidence bound to a build; palette/typography match `docs/BRAND.md` | GUI | manual-macos | WIP (designed empty/error/offline/long-history states + brand tagline; no macOS capture this run) |
 | CC-E2 | **LLoop branding** consistent (name, icon, palette, copy) | brand audit checklist all-green; no stray vendor branding on UX surfaces | CROSS | unit + manual-macos | PARTIAL (assets exist) |
 | CC-E3 | **Update system that "just works"** | signed channel + platform installer downloads, verifies (Ed25519 + byte hash), and applies an update end-to-end on a test channel; fail-closed otherwise | CROSS | integration + manual-macos | TODO |
 | CC-E4 | **README + docs humanized** (potetostack "humanizer" skill) | humanizer skill is present/identified; README + key docs rewritten and reviewed for clarity; links valid | HARNESS | unit (link/format) + review | BLOCKED (skill not in repo — see note) |
@@ -111,7 +111,7 @@ then runs against it.
 | ID | Requirement | Proof predicate | Surface | Test | Status |
 |----|-------------|-----------------|---------|------|--------|
 | CC-G1 | **Easy + secure install via bun**, then `llp` works | `script/install_bun.sh` runs `bun install --ignore-scripts` (locked from `package-lock.json`), builds the harness, and `bun link`s `llp`/`lloop`/`lightningloop`; `llp help` runs from PATH | HARNESS | integration | DONE (critic PASS `e1ac6db`) |
-| CC-G2 | **Custom-themed `llp` experience** | the TUI shows the LightningLoop-branded header/footer/status; `llp free` + `llp key set` are discoverable | CROSS | manual-macos + integration | PARTIAL (TUI theme exists; deeper theming TODO) |
+| CC-G2 | **Custom-themed `llp` experience** | the TUI shows the LightningLoop-branded header/footer/status; `llp free` + `llp key set` are discoverable | CROSS | manual-macos + integration | PARTIAL (header tagline + bin identity, discoverable help/provider/key/free/doctor/loop, honest usage footer; live TTY chrome still needs a human terminal) |
 
 ## H. Three-agent loop, sources, browser, skills
 
@@ -120,7 +120,7 @@ then runs against it.
 | CC-H1 | **Three selectable agents** (Researcher, Engineer, Verifier) | `agents list` shows all three; `agents select ROLE --model ID` persists credential-free `agents.json`; `RosterAdapter` routes orchestrator→researcher, implementer→engineer, reviewer→verifier; invalid role/id fail closed | HARNESS | unit + integration | DONE (harness; critic pending) |
 | CC-H2 | **Strict reputable-source rule for every agent** | `classifySourceUrl` allows only `.gov/.edu/.mil/.int` and the committed documentation-host allowlist; search/open/browse drop everything else; loop research ignores non-reputable hits | HARNESS | unit | DONE (harness; critic pending) |
 | CC-H3 | **Terminal browser** | `llp browse URL` and `/browse URL` render a bounded text snapshot of one reputable HTTPS page (no-redirect, size/time/type gated); non-reputable URL fails closed | HARNESS | unit + integration | DONE (harness; critic PARTIAL on live command success / DNS pin) |
-| CC-H4 | **GUI browser** | Workspace Browser pane uses WKWebView; navigation allowlist is loopback artifacts + reputable HTTPS; Settings expose the three agent model fields | GUI | manual-macos | WIP (source present; macOS proof pending) |
+| CC-H4 | **GUI browser** | Workspace Browser pane uses WKWebView; navigation allowlist is loopback artifacts + reputable HTTPS; Settings expose the three agent model fields | GUI | manual-macos | WIP (designed empty/refused/offline states; macOS XCTest / UI proof pending) |
 | CC-H5 | **Shipped skills + tools with progressive disclosure** | five shipped skills exist; `discloseSkills(role)` returns the full catalog as one-liners and loads only matching bodies + that role's tools; recursive skill improvement remains inert drafts | HARNESS | unit | DONE (harness; critic pending) |
 
 ## F. Governance (this request's explicit deliverables)
@@ -147,6 +147,7 @@ then runs against it.
   Non-blocking follow-ups: `enforceFreeMode` tolerates all fetch errors (best-effort
   runtime re-check); no committed libsecret/bun *integration* tests (logic covered
   by unit tests + injected backends); GUI surfaces still pending (macOS).
+- **Increment GUI/TUI feel (this run):** Implementer added OpenRouter to the Swift GUI, designed empty/error/offline/long-history states, evidence-bound image/3D viewers, and TUI discoverability (help/provider/key/free/doctor/loop + honest usage footer). **No GUI row is DONE** — this VM cannot run xcodebuild or XCUITest. CC-G2 remains PARTIAL. LL-013–017, LL-021, LL-022 stay MISSING. LL-010/LL-011 stay REWORK.
 - **Increment H — three-agent loop (CC-H1..H5):** Independent critic at `ed2be9a`
   returned **PASS for CC-H1, CC-H2, CC-H5** (harness). **CC-H3 PARTIAL** (command
   success is proven via `executeBrowseCommand` + injected fetch; live `llp browse`

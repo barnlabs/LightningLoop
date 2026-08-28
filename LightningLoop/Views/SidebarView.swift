@@ -6,6 +6,7 @@ struct SidebarView: View {
     @State private var pendingDeletionID: UUID?
     @State private var renameSessionID: UUID?
     @State private var renameDraft = ""
+    @State private var historyFilter = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,12 +29,32 @@ struct SidebarView: View {
 
             Divider()
 
+            if model.sessions.count >= 8 {
+                TextField(DesignedCopy.longHistoryFilterLabel, text: $historyFilter)
+                    .textFieldStyle(.roundedBorder)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("loops.filter")
+            }
+
             List(selection: Binding(
                 get: { model.selectedSessionID },
                 set: { model.selectedSessionID = $0 }
             )) {
                 Section {
-                    ForEach(model.sessions) { session in
+                    if visibleSessions.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(model.sessions.isEmpty ? DesignedCopy.emptyLoopsTitle : DesignedCopy.longHistoryEmptyTitle)
+                                .font(.callout.weight(.semibold))
+                            Text(model.sessions.isEmpty ? DesignedCopy.emptyLoopsDetail : DesignedCopy.longHistoryEmptyDetail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 10)
+                        .listRowSeparator(.hidden)
+                        .accessibilityIdentifier("loops.empty")
+                    }
+                    ForEach(visibleSessions) { session in
                         SidebarRow(session: session)
                             .tag(session.id)
                             .listRowInsets(.init(top: 6, leading: 10, bottom: 6, trailing: 10))
@@ -83,6 +104,12 @@ struct SidebarView: View {
 
             VStack(alignment: .leading, spacing: 7) {
                 Divider()
+                ProviderIdentityChip(model: model)
+                if !filteredHint.isEmpty {
+                    Text(filteredHint)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 BarnLabsWordmark()
                 Text("An independent BarnLabs open-source project.")
                     .font(.caption2)
@@ -167,5 +194,17 @@ private struct SidebarRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+private extension SidebarView {
+    var visibleSessions: [LoopSession] {
+        LoopHistoryFilter.visible(sessions: model.sessions, query: historyFilter)
+    }
+
+    var filteredHint: String {
+        let query = historyFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return "" }
+        return "\(visibleSessions.count) of \(model.sessions.count) loops"
     }
 }

@@ -19,6 +19,8 @@ export interface HeaderModel {
   /** True when the provider is LightningLoop-runtime managed (Pi `/login` path). */
   runtimeManaged: boolean;
   preset: ProviderPreset;
+  /** Invoked bin (`llp` / `lloop` / `lightningloop`). Same product, one identity. */
+  invokedBin?: "llp" | "lloop" | "lightningloop";
 }
 
 export interface FooterModel {
@@ -29,16 +31,51 @@ export interface FooterModel {
   researchProvider?: string | undefined;
   artifactWorkspace: boolean;
   artifactCommands: boolean;
+  /** Provider-reported usage meter only. Never invent a dollar amount. */
+  usageLine?: string | undefined;
+  /** Provider-reported credit line only. Omit when no balance was resolved. */
+  creditLine?: string | undefined;
 }
 
 /** The wordmark shown on the header's brand line (single source of truth). */
 export const BRAND_WORDMARK = "ϟ  LIGHTNINGLOOP";
 export const BRAND_OWNER = "  /  BARNLABS";
+export const BRAND_TAGLINE = "Fast models. Strict evidence.";
 /** The fixed pipeline shown next to the active model. */
 export const PIPELINE_TAGLINE = "research → engineer → verify";
-export const FOOTER_HELP = "Attach /image · set /research or /artifacts · run /loop <goal>";
+/** First-run / status-bar command list. Same product on every bin. */
+export const FOOTER_HELP = "llp help · provider · key · free · doctor · /loop <goal>";
 /** Below this width the footer stacks its segments instead of justifying them. */
 export const FOOTER_JUSTIFY_MIN_WIDTH = 68;
+
+export const DISCOVERABLE_COMMANDS = ["help", "provider", "key", "free", "doctor", "loop"] as const;
+
+/** Resolve the product bin from argv[1] without treating unknown names as branding. */
+export function invokedProductBin(argv1: string | undefined): "llp" | "lloop" | "lightningloop" {
+  const base = (argv1 ?? "lightningloop").split(/[/\\]/u).pop()?.toLowerCase() ?? "lightningloop";
+  if (base === "llp" || base === "lloop" || base === "lightningloop") return base;
+  return "lightningloop";
+}
+
+/** The commands a new operator should find first. Pure text; no ANSI. */
+export function renderDiscoverableHelp(): string {
+  return [
+    `LightningLoop — ${BRAND_TAGLINE}`,
+    "",
+    "Same product on llp, lloop, and lightningloop.",
+    "",
+    "  help                 this list",
+    "  provider list        show selectable presets",
+    "  provider select …    persist credential-free provider.json",
+    "  key set|status|clear LightningLoop-managed key (stdin, never argv or a file)",
+    "  free                 pin OpenRouter just-free mode",
+    "  doctor               environment and credential presence (never values)",
+    "  loop <goal>          run the strict loop",
+    "  /loop <goal>         same loop from inside the TUI",
+    "",
+    "Cost is provider-reported evidence only. When a provider sends no price, LightningLoop says unavailable — it never invents a dollar amount.",
+  ].join("\n");
+}
 
 /** The one-line provider identity/credential-ownership statement. */
 export function brandIdentityLine(model: Pick<HeaderModel, "runtimeManaged" | "preset">): string {
@@ -57,15 +94,18 @@ export function brandIdentityLine(model: Pick<HeaderModel, "runtimeManaged" | "p
   return "Custom provider · credential stays in macOS Keychain";
 }
 
-/** Build the header band lines (accent rule, wordmark, model+pipeline, identity, spacer). */
+/** Build the header band lines (accent rule, wordmark, tagline, model+pipeline, identity, spacer). */
 export function renderBrandHeaderLines(theme: BrandTheme, model: HeaderModel, width: number): string[] {
   const rule = theme.fg("accent", "━".repeat(Math.max(1, width)));
-  const brand = `${theme.bold(theme.fg("accent", BRAND_WORDMARK))}${theme.fg("dim", BRAND_OWNER)}`;
+  const bin = model.invokedBin && model.invokedBin !== "lightningloop" ? theme.fg("dim", `  ·  ${model.invokedBin}`) : "";
+  const brand = `${theme.bold(theme.fg("accent", BRAND_WORDMARK))}${theme.fg("dim", BRAND_OWNER)}${bin}`;
+  const tagline = theme.fg("muted", BRAND_TAGLINE);
   const loop = `${theme.fg("muted", `${model.displayName} · ${model.modelName}`)}  ${theme.fg("dim", PIPELINE_TAGLINE)}`;
   const identity = theme.fg("dim", brandIdentityLine(model));
   return [
     truncateToWidth(rule, width),
     truncateToWidth(brand, width),
+    truncateToWidth(tagline, width),
     truncateToWidth(loop, width),
     truncateToWidth(identity, width),
     "",
@@ -82,16 +122,19 @@ export function footerArtifactSegment(workspace: boolean, commands: boolean): st
   return workspace ? (commands ? "artifacts+verify" : "artifacts") : "text-only";
 }
 
-/** Build the status footer lines (policy + workspace on the left, run state on the right, help). */
+/** Build the status footer lines (policy + workspace on the left, run state on the right, help, honest usage). */
 export function renderStatusFooterLines(theme: BrandTheme, model: FooterModel, width: number): string[] {
   const left = `${theme.fg(model.executionEnabled ? "warning" : "success", `● ${model.policyLabel}`)}${theme.fg("dim", `  ·  ${model.workspaceLabel}`)}`;
   const research = footerResearchSegment(model.researchProvider);
   const artifacts = footerArtifactSegment(model.artifactWorkspace, model.artifactCommands);
   const right = theme.fg("muted", `${model.displayName}  ·  ${research}  ·  ${artifacts}  ·  /loop`);
   const help = theme.fg("dim", FOOTER_HELP);
+  const extras: string[] = [];
+  if (model.usageLine) extras.push(truncateToWidth(theme.fg("muted", model.usageLine), width));
+  if (model.creditLine) extras.push(truncateToWidth(theme.fg("dim", model.creditLine), width));
   if (width >= FOOTER_JUSTIFY_MIN_WIDTH) {
     const padding = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
-    return [truncateToWidth(left + padding + right, width), truncateToWidth(help, width)];
+    return [truncateToWidth(left + padding + right, width), truncateToWidth(help, width), ...extras];
   }
-  return [truncateToWidth(left, width), truncateToWidth(right, width), truncateToWidth(help, width)];
+  return [truncateToWidth(left, width), truncateToWidth(right, width), truncateToWidth(help, width), ...extras];
 }

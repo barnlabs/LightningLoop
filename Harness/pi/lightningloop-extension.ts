@@ -1,5 +1,5 @@
 import { createBashTool, type ExtensionAPI, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { renderBrandHeaderLines, renderStatusFooterLines } from "./lightningloop-theme.js";
+import { invokedProductBin, renderBrandHeaderLines, renderDiscoverableHelp, renderStatusFooterLines } from "./lightningloop-theme.js";
 import { basename } from "node:path";
 import { resolve } from "node:path";
 import { WorkspaceBoundary, evaluateToolRequest } from "../core/capability-policy.js";
@@ -162,6 +162,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
   let activeLoopController: AbortController | undefined;
   let activeArtifactWorkspace: string | undefined;
   let activeArtifactCommands = false;
+  let lastUsageLine: string | undefined;
 
   pi.on("session_start", async (_event, ctx) => {
     boundaryPromise = WorkspaceBoundary.create(ctx.cwd);
@@ -178,6 +179,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
             modelName: profile.modelName,
             runtimeManaged: Boolean(profile.piProviderID),
             preset: profile.preset,
+            invokedBin: invokedProductBin(process.argv[1]),
           }, width);
         },
         invalidate() {},
@@ -192,6 +194,7 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
             researchProvider: activeResearchProvider,
             artifactWorkspace: Boolean(activeArtifactWorkspace),
             artifactCommands: activeArtifactCommands,
+            usageLine: lastUsageLine,
           }, width);
         },
         invalidate() {},
@@ -379,7 +382,8 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
           async (event) => {
             ctx.ui.setStatus("lightningloop-run", event.message);
             if (event.usage && event.usage.total > 0) {
-              ctx.ui.setStatus("lightningloop-usage", formatLiveUsageMeter(event.usage));
+              lastUsageLine = formatLiveUsageMeter(event.usage);
+              ctx.ui.setStatus("lightningloop-usage", lastUsageLine);
             }
           },
           controller.signal,
@@ -863,13 +867,45 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
     },
   });
 
+  pi.registerCommand("help", {
+    description: "Show LightningLoop commands (help, provider, key, free, doctor, loop)",
+    handler: async (_args, ctx) => {
+      ctx.ui.notify(renderDiscoverableHelp(), "info");
+    },
+  });
+
   pi.registerCommand("loop-help", {
     description: "Show the LightningLoop quick start",
     handler: async (_args, ctx) => {
-      ctx.ui.notify(
-        "Pin /agents select researcher|engineer|verifier MODEL. Browse a reputable page with /browse URL. Queue images with /image, choose /research free, and use /artifacts /empty/output [--verify] for run-owned files. Run /loop <goal>. Capture /desire. Govern /memory and /evolution. /loop-cancel stops the run.",
-        "info",
-      );
+      ctx.ui.notify(renderDiscoverableHelp(), "info");
+    },
+  });
+
+  pi.registerCommand("provider", {
+    description: "Show how to list and select a LightningLoop provider",
+    handler: async (_args, ctx) => {
+      ctx.ui.notify("Use `llp provider list` then `llp provider select PRESET`. Keys stay in the OS store; provider.json never holds secrets.", "info");
+    },
+  });
+
+  pi.registerCommand("key", {
+    description: "Show how to store a LightningLoop-managed API key",
+    handler: async (_args, ctx) => {
+      ctx.ui.notify("Use `llp key set openrouter|generalcompute|cerebras`. The key is read from stdin only — never argv, a file, or this TUI prompt.", "info");
+    },
+  });
+
+  pi.registerCommand("free", {
+    description: "Show how to pin OpenRouter just-free mode",
+    handler: async (_args, ctx) => {
+      ctx.ui.notify("Use `llp free` (or `llp provider select openrouter --free`) to pin a zero-cost OpenRouter model. A later paid model fails closed.", "info");
+    },
+  });
+
+  pi.registerCommand("doctor", {
+    description: "Show how to check the LightningLoop environment",
+    handler: async (_args, ctx) => {
+      ctx.ui.notify("Use `llp doctor` for Node, provider, and credential presence. It never prints a key or invents cost.", "info");
     },
   });
 

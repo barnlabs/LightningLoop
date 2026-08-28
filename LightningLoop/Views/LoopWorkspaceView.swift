@@ -88,8 +88,13 @@ struct LoopWorkspaceView: View {
                 Spacer()
                 StatusPill(stage: session.stage)
             }
+            ProviderStatusBanner(model: model)
             HStack {
+                ProviderIdentityChip(model: model)
+                Spacer()
                 MetricsStrip(metrics: session.metrics)
+            }
+            HStack {
                 Spacer()
                 if model.isRunning {
                     ProgressView().controlSize(.small)
@@ -237,6 +242,14 @@ struct LoopWorkspaceView: View {
     private var criteria: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Acceptance contract").font(.title2.bold())
+            if session.criteria.isEmpty {
+                DesignedEmptyState(
+                    title: DesignedCopy.emptyCriteriaTitle,
+                    detail: DesignedCopy.emptyCriteriaDetail,
+                    symbol: "scope",
+                    identifier: "criteria.empty"
+                )
+            }
             ForEach(session.criteria) { criterion in
                 SurfaceCard {
                     HStack(alignment: .top, spacing: 13) {
@@ -270,6 +283,14 @@ struct LoopWorkspaceView: View {
     private var plan: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Reviewed execution plan").font(.title2.bold())
+            if session.plan.isEmpty {
+                DesignedEmptyState(
+                    title: DesignedCopy.emptyPlanTitle,
+                    detail: DesignedCopy.emptyPlanDetail,
+                    symbol: "list.number",
+                    identifier: "plan.empty"
+                )
+            }
             ForEach(Array(session.plan.enumerated()), id: \.element.id) { index, step in
                 HStack(alignment: .top, spacing: 14) {
                     Text("\(index + 1)")
@@ -304,7 +325,12 @@ struct LoopWorkspaceView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Harsh review record").font(.title2.bold())
             if session.reviews.isEmpty {
-                ContentUnavailableView("No reviews yet", systemImage: "checkmark.seal")
+                DesignedEmptyState(
+                    title: DesignedCopy.emptyReviewsTitle,
+                    detail: DesignedCopy.emptyReviewsDetail,
+                    symbol: "checkmark.seal",
+                    identifier: "reviews.empty"
+                )
             }
             ForEach(session.reviews.reversed()) { review in
                 SurfaceCard {
@@ -342,7 +368,16 @@ struct LoopWorkspaceView: View {
     private var trace: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Agent trace").font(.title2.bold()).padding(.bottom, 18)
-            ForEach(session.timeline) { entry in
+            if session.timeline.isEmpty {
+                DesignedEmptyState(
+                    title: DesignedCopy.emptyTraceTitle,
+                    detail: DesignedCopy.emptyTraceDetail,
+                    symbol: "point.3.connected.trianglepath.dotted",
+                    identifier: "trace.empty"
+                )
+                .padding(.bottom, 18)
+            }
+            ForEach(visibleTimeline) { entry in
                 HStack(alignment: .top, spacing: 12) {
                     VStack(spacing: 0) {
                         Image(systemName: entry.role.symbol)
@@ -365,6 +400,13 @@ struct LoopWorkspaceView: View {
                     .padding(.bottom, 18)
                 }
             }
+            if session.timeline.count > 20 {
+                Text("\(DesignedCopy.collapsedTracePrefix) (\(session.timeline.count - visibleTimeline.count) hidden)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 8)
+                    .accessibilityIdentifier("trace.collapsed")
+            }
             if model.isRunning {
                 HStack(spacing: 12) {
                     ProgressView().controlSize(.small)
@@ -373,6 +415,11 @@ struct LoopWorkspaceView: View {
             }
         }
     }
+
+    private var visibleTimeline: [TimelineEntry] {
+        guard session.timeline.count > 20 else { return session.timeline }
+        return Array(session.timeline.suffix(20))
+    }
 }
 
 private struct LoopBrowserView: View {
@@ -380,17 +427,20 @@ private struct LoopBrowserView: View {
     @State private var address = "https://www.rfc-editor.org/rfc/rfc9110"
     @State private var destination: URL?
     @State private var refusal = ""
+    @State private var loadError = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Browser").font(.title2.bold())
-            Text("Opens hash-verified Evidence Lab pages on 127.0.0.1, or one reputable HTTPS primary source. Everything else is refused.")
+            Text(DesignedCopy.browserEmptyDetail)
                 .foregroundStyle(.secondary)
             HStack {
                 TextField("https://…", text: $address)
                     .textFieldStyle(.roundedBorder)
                     .font(.body.monospaced())
+                    .accessibilityIdentifier("browser.address")
                 Button("Open", action: open)
+                    .accessibilityIdentifier("browser.open")
             }
             if session.artifactReport != nil {
                 Text("Paste a reviewed 127.0.0.1 Evidence Lab URL from the Evidence tab to inspect it here.")
@@ -398,33 +448,51 @@ private struct LoopBrowserView: View {
                     .foregroundStyle(.secondary)
             }
             if !refusal.isEmpty {
-                Text(refusal).foregroundStyle(.orange)
+                Label(refusal, systemImage: "hand.raised")
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("browser.refused")
             }
-            LoopWebView(url: destination)
-                .frame(minHeight: 420)
-                .background(LoopBrand.raisedSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            if !loadError.isEmpty {
+                Label(loadError, systemImage: "wifi.slash")
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("browser.offline")
+            }
+            if destination == nil && refusal.isEmpty {
+                DesignedEmptyState(
+                    title: DesignedCopy.browserEmptyTitle,
+                    detail: DesignedCopy.browserEmptyDetail,
+                    symbol: "safari",
+                    identifier: "browser.empty"
+                )
+            } else {
+                LoopWebView(url: destination, loadError: $loadError)
+                    .frame(minHeight: 420)
+                    .background(LoopBrand.raisedSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
         }
         .accessibilityIdentifier("loop.browser")
     }
 
     private func open() {
         guard let url = URL(string: address.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-            refusal = "Enter a valid URL."
+            refusal = DesignedCopy.browserInvalidURL
             destination = nil
             return
         }
         guard SourceTrust.isReputable(url) else {
-            refusal = "Refused: not a reputable primary source or reviewed artifact."
+            refusal = DesignedCopy.browserNotReputable
             destination = nil
             return
         }
         refusal = ""
+        loadError = ""
         destination = url
     }
 }
 
 private struct LoopWebView: NSViewRepresentable {
     let url: URL?
+    @Binding var loadError: String
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -437,8 +505,12 @@ private struct LoopWebView: NSViewRepresentable {
 
     func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.allowed = url
+        context.coordinator.onFailure = { message in
+            loadError = message
+        }
         guard let url else { return }
         if view.url != url {
+            loadError = ""
             view.load(URLRequest(url: url))
         }
     }
@@ -447,6 +519,7 @@ private struct LoopWebView: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var allowed: URL?
+        var onFailure: ((String) -> Void)?
 
         func webView(
             _ webView: WKWebView,
@@ -458,6 +531,14 @@ private struct LoopWebView: NSViewRepresentable {
                 return
             }
             decisionHandler(.allow)
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            onFailure?("This page could not be loaded. LightningLoop does not invent a substitute.")
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            onFailure?("This page could not be loaded. LightningLoop does not invent a substitute.")
         }
     }
 }

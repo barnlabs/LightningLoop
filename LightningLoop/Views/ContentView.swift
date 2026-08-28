@@ -12,15 +12,30 @@ struct ContentView: View {
                 SessionDetailView(model: model, session: session)
                     .id(session.id)
             } else {
-                ContentUnavailableView("No loop selected", systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
+                VStack(spacing: 22) {
+                    LoopLogo(size: 72)
+                    DesignedEmptyState(
+                        title: DesignedCopy.noLoopSelectedTitle,
+                        detail: DesignedCopy.noLoopSelectedDetail,
+                        guidance: DesignedCopy.noLoopSelectedGuidance,
+                        identifier: "no.loop.selected"
+                    )
+                    .frame(maxWidth: 640)
+                }
+                .padding(36)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                ProviderIdentityChip(model: model)
+            }
             ToolbarItem(placement: .primaryAction) {
                 SettingsLink {
                     Image(systemName: "gearshape")
                 }
                 .help("LightningLoop Settings")
+                .accessibilityIdentifier("toolbar.settings")
             }
         }
     }
