@@ -218,6 +218,14 @@ test("clean cross-platform data flow requires selection, lists presets, and stor
     const selectedDoctor = spawnSync(process.execPath, [cli, "doctor"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(selectedDoctor.status, 0, selectedDoctor.stderr);
     assert.match(selectedDoctor.stdout, /Firecrawl research credential: missing/u);
+    const envDoctor = spawnSync(process.execPath, [cli, "doctor"], {
+      cwd: repositoryRoot,
+      env: { ...env, FIRECRAWL_API_KEY: "fc-doctor-must-not-print-this-value" },
+      encoding: "utf8",
+    });
+    assert.equal(envDoctor.status, 0, envDoctor.stderr);
+    assert.match(envDoctor.stdout, /Firecrawl research credential: stored/u);
+    assert.doesNotMatch(`${envDoctor.stdout}${envDoctor.stderr}`, /fc-doctor-must-not-print-this-value/u);
 
     const runtimeModels = spawnSync(process.execPath, [cli, "provider", "models"], { cwd: repositoryRoot, env, encoding: "utf8" });
     if (runtimeModels.status === 0) {
@@ -323,7 +331,17 @@ test("key status reports the secure store and never displays a value", async () 
     assert.equal(firecrawl.status, 0, firecrawl.stderr);
     assert.match(firecrawl.stdout, /LightningLoop key · firecrawl/u);
     assert.match(firecrawl.stdout, /Stored key: (?:stored|missing)/u);
+    assert.match(firecrawl.stdout, /Stored key: missing/u);
     assert.doesNotMatch(`${status.stdout}${firecrawl.stdout}`, /sk-|fc-|Bearer/u);
+    const envPresent = spawnSync(process.execPath, [cli, "key", "status", "firecrawl"], {
+      cwd: repositoryRoot,
+      env: { ...env, FIRECRAWL_API_KEY: "fc-status-must-not-print-this-value" },
+      encoding: "utf8",
+    });
+    assert.equal(envPresent.status, 0, envPresent.stderr);
+    assert.match(envPresent.stdout, /Stored key: stored/u);
+    assert.doesNotMatch(`${envPresent.stdout}${envPresent.stderr}`, /fc-status-must-not-print-this-value/u);
+
     const unknown = spawnSync(process.execPath, [cli, "key", "status", "anthropic"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.notEqual(unknown.status, 0);
     assert.match(`${unknown.stderr}${unknown.stdout}`, /firecrawl, exa, brave/u);

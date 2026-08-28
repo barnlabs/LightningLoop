@@ -102,17 +102,11 @@ struct KeychainStore: Sendable {
     func readCredential(service: String) throws -> String? {
         guard try CredentialServiceCatalog.services(activeProfile: .onboarding).contains(service)
                 || CustomCredentialServiceRegistry.isValidService(service) else { throw KeychainStoreError.invalidService }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
+        let query = Self.nonInteractiveQuery(service: service, account: account, returnData: true)
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        if status == errSecItemNotFound { return nil }
+        if status == errSecItemNotFound || Self.isNonInteractiveDenial(status) { return nil }
         guard status == errSecSuccess else { throw KeychainStoreError.unexpectedStatus(status) }
         guard let data = item as? Data, let value = String(data: data, encoding: .utf8) else {
             throw KeychainStoreError.invalidData
@@ -135,16 +129,29 @@ struct KeychainStore: Sendable {
     func hasCredential(service: String) throws -> Bool {
         guard try CredentialServiceCatalog.services(activeProfile: .onboarding).contains(service)
                 || CustomCredentialServiceRegistry.isValidService(service) else { throw KeychainStoreError.invalidService }
-        let query: [String: Any] = [
+        let query = Self.nonInteractiveQuery(service: service, account: account, returnData: false)
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        if status == errSecItemNotFound || Self.isNonInteractiveDenial(status) { return false }
+        guard status == errSecSuccess else { throw KeychainStoreError.unexpectedStatus(status) }
+        return true
+    }
+
+    /// Presence and read fail instead of showing a Keychain password dialog.
+    /// Writes (`saveCredential`) keep the default UI because the user is storing a key.
+    static func nonInteractiveQuery(service: String, account: String, returnData: Bool) -> [String: Any] {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail
         ]
-        let status = SecItemCopyMatching(query as CFDictionary, nil)
-        if status == errSecItemNotFound { return false }
-        guard status == errSecSuccess else { throw KeychainStoreError.unexpectedStatus(status) }
-        return true
+        if returnData { query[kSecReturnData as String] = true }
+        return query
+    }
+
+    static func isNonInteractiveDenial(_ status: OSStatus) -> Bool {
+        status == errSecInteractionNotAllowed || status == errSecUserCanceled || status == errSecAuthFailed
     }
 
     func saveCredential(_ value: String, for provider: CredentialProvider) throws {

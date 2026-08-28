@@ -11,7 +11,7 @@ import { builtinWorkflowGuidance } from "../core/workflow-catalog.js";
 import { terminalSafe } from "../core/terminal-output.js";
 import { formatLiveUsageMeter } from "../core/usage-format.js";
 import { validateImagePaths } from "../core/image-input.js";
-import { isProviderSelectionRequired, loadProviderProfile, providerCredentialService, providerHeaders } from "../core/provider-profile.js";
+import { isProviderSelectionRequired, loadProviderProfile, providerHeaders } from "../core/provider-profile.js";
 import { LoopEngine } from "../core/loop-engine.js";
 import { PiProviderAdapter } from "./model-adapter.js";
 import { enforceFreeMode } from "../core/openrouter.js";
@@ -40,13 +40,6 @@ import { RosterAdapter, buildRosterMembers, formatRosterLines, isLoopAgent, load
 import { executeBrowseCommand } from "../core/terminal-browser.js";
 import type { ProviderProfile } from "../core/provider-profile.js";
 import type { AgentAdapter } from "../core/loop-types.js";
-
-function keychainCommand(services: string[]): string {
-  if (services.length < 1 || services.some((service) => !/^[A-Za-z0-9.-]+$/.test(service))) {
-    throw new Error("Invalid Keychain service identifier.");
-  }
-  return `!/bin/sh -c '${services.map((service) => `/usr/bin/security find-generic-password -s ${service} -w`).join(" || ")}'`;
-}
 
 export interface LightningLoopExtensionOptions {
   /** Captured before TUI environment scrubbing; never read from ambient env here. */
@@ -139,14 +132,10 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
           ? options.customApiKey?.trim()
           : undefined;
     if (!resolvedApiKey) {
-      if (process.platform === "darwin") {
-        pi.registerProvider(providerID, managedOpenAiProviderRegistration(profile, keychainCommand([providerCredentialService(profile)])));
-      } else {
-        const name = profile.preset === "generalcompute" ? "generalcompute" : profile.preset === "openrouter" ? "openrouter" : "custom";
-        throw new Error(
-          `${profile.displayName} requires a LightningLoop-managed API key. Pipe it with 'printf %s "$KEY" | lightningloop key set ${name}' or set the provider environment variable. It is not managed by runtime /login.`,
-        );
-      }
+      const name = profile.preset === "generalcompute" ? "generalcompute" : profile.preset === "openrouter" ? "openrouter" : "custom";
+      throw new Error(
+        `${profile.displayName} requires a LightningLoop-managed API key. Pipe it with 'printf %s "$KEY" | lightningloop key set ${name}' or set the provider environment variable. It is not managed by runtime /login.`,
+      );
     } else {
       pi.registerProvider(providerID, managedOpenAiProviderRegistration(profile, encodePiApiKey(resolvedApiKey)));
     }

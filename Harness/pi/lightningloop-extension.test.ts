@@ -125,6 +125,32 @@ test("extension rejects a credential-bearing goal before session naming, UI resu
   }
 });
 
+test("managed OpenRouter registration fails closed without env or a just-written key", () => {
+  const previousConfig = process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+  const directory = mkdtempSync(join(tmpdir(), "lightningloop-extension-nokey-"));
+  const config = join(directory, "provider.json");
+  writeFileSync(config, `${JSON.stringify(profileForPreset("openrouter"))}\n`);
+  process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH = config;
+  try {
+    const fakePi = {
+      registerTool: () => undefined,
+      registerFlag: () => undefined,
+      registerProvider: () => assert.fail("must not register a Keychain find-generic-password command"),
+      on: () => undefined,
+      getFlag: () => false,
+      registerCommand: () => undefined,
+    };
+    assert.throws(
+      () => createLightningLoopExtension({})(fakePi as unknown as ExtensionAPI),
+      /key set openrouter|OPENROUTER_API_KEY/u,
+    );
+  } finally {
+    if (previousConfig === undefined) delete process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+    else process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH = previousConfig;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("TUI preparation scrubs the OPENROUTER_KEY alias from the child tool environment", () => {
   // The shared scrubber matches *_API_KEY but not the bare OPENROUTER_KEY alias,
   // so prepareTuiRuntimeCredentials must delete it explicitly. This pins that guard.

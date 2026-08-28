@@ -1,4 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { envCredentialForService } from "./key-catalog.js";
+import { readSecret } from "./key-store.js";
 import { lightningLoopCredentialServices, loadProviderProfile, type ProviderProfile } from "./provider-profile.js";
 import { SecretRedactor } from "./redaction.js";
 
@@ -70,7 +71,7 @@ function canonicalInspectionForms(value: string): readonly string[] {
 export function assertCredentialSafeInput<T>(
   value: T,
   profile: ProviderProfile = loadProviderProfile(),
-  readCredential: CredentialReader = keychainCredential,
+  readCredential: CredentialReader = processOwnedCredential,
   registryPath?: string,
 ): T {
   const values: string[] = [];
@@ -97,7 +98,7 @@ export function assertCredentialSafeInput<T>(
 export function assertNoConfiguredCredential(
   values: readonly string[],
   profile: ProviderProfile = loadProviderProfile(),
-  readCredential: CredentialReader = keychainCredential,
+  readCredential: CredentialReader = processOwnedCredential,
   registryPath?: string,
 ): void {
   try {
@@ -110,15 +111,7 @@ export function assertNoConfiguredCredential(
   }
 }
 
-function keychainCredential(service: string): string | undefined {
-  const result = spawnSync("/usr/bin/security", ["find-generic-password", "-s", service, "-w"], {
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: 5_000,
-    maxBuffer: 16_384,
-    encoding: "buffer",
-  });
-  if (result.status !== 0 || !Buffer.isBuffer(result.stdout)) return undefined;
-  const value = result.stdout.toString("utf8").trim();
-  result.stdout.fill(0);
-  return value;
+/** Env or a key written in this process. Never `security find-generic-password`. */
+function processOwnedCredential(service: string): string | undefined {
+  return envCredentialForService(service) ?? readSecret(service);
 }

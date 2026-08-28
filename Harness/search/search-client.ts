@@ -7,7 +7,7 @@ import type { IncomingHttpHeaders } from "node:http";
 import { registerRuntimeCredential, runtimeCredentialValuesForFiltering } from "../core/credential-safety.js";
 import { lightningLoopCredentialServices, loadProviderProfile } from "../core/provider-profile.js";
 import { isReputableSourceUrl } from "../core/source-policy.js";
-import { defaultSecretBackend, readSecret } from "../core/key-store.js";
+import { readSecret } from "../core/key-store.js";
 import { missingKeyNextAction } from "../core/key-catalog.js";
 
 export type SearchProvider = "exa" | "brave" | "firecrawl" | "free";
@@ -89,10 +89,9 @@ const runtimeSearchCredentials = new Map<KeyedSearchProvider, string>();
 /** Capture search-only environment credentials before the TUI scrubs its tool environment. */
 export function captureSearchCredentials(environment: NodeJS.ProcessEnv): void {
   const names: Record<KeyedSearchProvider, string> = { exa: "EXA_API_KEY", brave: "BRAVE_SEARCH_API_KEY", firecrawl: "FIRECRAWL_API_KEY" };
-  const backend = defaultSecretBackend();
   for (const provider of Object.keys(names) as KeyedSearchProvider[]) {
     const name = names[provider];
-    const value = environment[name]?.trim() || readSecret(services[provider], backend);
+    const value = environment[name]?.trim();
     if (value) {
       runtimeSearchCredentials.set(provider, value);
       registerRuntimeCredential(value);

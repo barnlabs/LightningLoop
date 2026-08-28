@@ -38,7 +38,7 @@ import { formatCreditLine, formatLiveUsageMeter, formatRunSummaryLine } from "..
 import { recordSelfImprovementProposals } from "../core/self-improvement.js";
 import type { ProviderModelOverride } from "../core/provider-profile.js";
 import { clearSecret, defaultSecretBackend, readSecret, readStoredProviderCredential, storeSecret } from "../core/key-store.js";
-import { managedKeyService, managedKeySlot, missingKeyNextAction, parseManagedKeyName } from "../core/key-catalog.js";
+import { envCredential, managedKeyService, managedKeySlot, missingKeyNextAction, parseManagedKeyName } from "../core/key-catalog.js";
 import { fetchHostModels, resolveHostModel } from "../core/host-catalog.js";
 import { loadInstalledRuntimeCatalog, resolveRuntimeModel } from "../core/runtime-catalog.js";
 import { readLightningLoopManagedCredential } from "../pi/model-adapter.js";
@@ -695,7 +695,7 @@ async function runKeyCommand(options: CliOptions): Promise<void> {
   const service = managedKeyService(name, profile);
   const backend = defaultSecretBackend();
   if (action === "status") {
-    const present = readSecret(service, backend) !== undefined;
+    const present = envCredential(name) !== undefined || readSecret(service, backend) !== undefined;
     process.stdout.write(`LightningLoop key · ${name}\n`);
     process.stdout.write(`  Secure store: ${terminalSafe(backend.name)}\n`);
     process.stdout.write(`  Stored key: ${present ? "stored" : "missing"} · value never displayed\n`);
@@ -713,6 +713,7 @@ async function runKeyCommand(options: CliOptions): Promise<void> {
   for await (const chunk of process.stdin) input += String(chunk);
   const secret = input.trim();
   storeSecret(service, secret, backend);
+  registerRuntimeCredential(secret);
   process.stdout.write(`Stored ${name} key in ${terminalSafe(backend.name)}. It is never written to provider.json or logs.\n`);
 }
 
@@ -802,8 +803,8 @@ async function runTUI(options: CliOptions): Promise<void> {
   process.env.PI_OFFLINE = "1";
   const { generalComputeApiKey, openRouterApiKey, cerebrasApiKey: cerebrasEnvApiKey, customApiKey } = prepareTuiRuntimeCredentials(profile, process.env);
 
-  // Cerebras optionally runs via a manual key (env or OS secret store) instead of
-  // Pi /login. The env key is captured above; fall back to the OS secret store.
+  // Cerebras optionally runs via a manual key (env or a key written in this process)
+  // instead of Pi /login. The env key is captured above; then the session write cache.
   let cerebrasApiKey = cerebrasEnvApiKey;
   if (profile.preset === "cerebras" && !cerebrasApiKey) {
     const stored = readStoredProviderCredential(profile);

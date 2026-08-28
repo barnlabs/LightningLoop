@@ -42,6 +42,21 @@ test("search input is bounded before credentials or network are touched", async 
   assert.equal(credentialReads, 0);
 });
 
+test("captureSearchCredentials ignores Keychain and only registers env values", async () => {
+  const previous = process.env.FIRECRAWL_API_KEY;
+  try {
+    delete process.env.FIRECRAWL_API_KEY;
+    captureSearchCredentials({});
+    const client = new SearchClient(async () => {
+      throw new Error("must not search without an env key");
+    });
+    await assert.rejects(client.search("firecrawl", "status must be env-or-missing", 1), /not configured|FIRECRAWL_API_KEY|key set firecrawl/i);
+  } finally {
+    if (previous === undefined) delete process.env.FIRECRAWL_API_KEY;
+    else process.env.FIRECRAWL_API_KEY = previous;
+  }
+});
+
 test("captured environment research credentials are registered with durable-record safety", () => {
   const directory = mkdtempSync(join(tmpdir(), "lightningloop-search-credential-"));
   const credential = "plain-captured-research-credential-86420";
