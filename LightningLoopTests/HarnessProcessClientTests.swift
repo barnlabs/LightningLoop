@@ -224,6 +224,82 @@ final class HarnessProcessClientTests: XCTestCase {
         ))
     }
 
+    @MainActor
+    func testCataloguedPickerPersistsAListedIDAndFailClosesUnknownAndMissingKeys() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let providerStore = ProviderConfigurationStore(fileURL: root.appendingPathComponent("provider.json"))
+        try providerStore.save(.preset(.cerebras))
+        let model = AppModel(
+            engine: CatalogRaceLoopService(),
+            archive: SessionArchive(fileURL: root.appendingPathComponent("sessions.json")),
+            providerStore: providerStore,
+            runtimeLabel: "Shared LightningLoop runtime",
+            skipCredentialRefresh: true
+        )
+        model.applyRuntimeModelCatalog(
+            .init(
+                providerID: "cerebras",
+                models: [
+                    ProviderConfiguration.cerebrasGemma4_31B,
+                    .init(modelID: "gpt-oss-120b", modelName: "GPT-OSS 120B", supportsImages: false, contextWindow: 131_072, maxOutputTokens: 32_768)
+                ],
+                selectedModelID: "gemma-4-31b",
+                selectedModelCatalogued: true,
+                catalogScope: "Test catalog",
+                selectionNotice: nil
+            ),
+            requestedProviderID: "cerebras",
+            requestedModelID: "gemma-4-31b"
+        )
+        XCTAssertTrue(model.canSaveProviderConfiguration(model.providerProfile))
+        var draft = model.providerProfile
+        draft.modelID = "totally-made-up-model-xyz"
+        XCTAssertFalse(model.canSaveProviderConfiguration(draft))
+        XCTAssertTrue(model.runtimeModelSelectionMessage(for: draft)?.contains("model_unavailable") == true)
+
+        model.persistCataloguedModel("gpt-oss-120b", to: &draft)
+        XCTAssertEqual(model.providerProfile.modelID, "gpt-oss-120b")
+        XCTAssertEqual(draft.modelID, "gpt-oss-120b")
+        XCTAssertFalse((try String(contentsOf: providerStore.fileURL)).contains("apiKey"))
+
+        try providerStore.save(.preset(.openrouter))
+        let openrouter = AppModel(
+            engine: CatalogRaceLoopService(),
+            archive: SessionArchive(fileURL: root.appendingPathComponent("sessions-or.json")),
+            providerStore: providerStore,
+            runtimeLabel: "Shared LightningLoop runtime",
+            skipCredentialRefresh: true
+        )
+        openrouter.availableModels = ["openrouter/free", "vendor/model-1:free"]
+        openrouter.discoveredCustomModels = openrouter.availableModels.map {
+            ProviderModelOption(modelID: $0, modelName: $0, supportsImages: false, contextWindow: 131_072, maxOutputTokens: 8_192)
+        }
+        var stolen = openrouter.providerProfile
+        stolen.modelID = "openrouter/free"
+        var unknown = stolen
+        unknown.modelID = "totally/made-up-model-xyz:free"
+        XCTAssertFalse(openrouter.canSaveProviderConfiguration(unknown))
+        openrouter.applyDiscoveredCustomModel("totally/made-up-model-xyz:free", to: &stolen)
+        XCTAssertTrue(openrouter.settingsMessage.contains("model_unavailable"))
+        XCTAssertEqual(stolen.modelID, "openrouter/free")
+
+        try providerStore.save(.preset(.generalcompute))
+        let gc = AppModel(
+            engine: CatalogRaceLoopService(),
+            archive: SessionArchive(fileURL: root.appendingPathComponent("sessions-gc.json")),
+            providerStore: providerStore,
+            runtimeLabel: "Shared LightningLoop runtime",
+            skipCredentialRefresh: true
+        )
+        XCTAssertTrue(gc.canLoadModelCatalog)
+        XCTAssertFalse(gc.hasCredential(gc.providerProfile))
+        await gc.discoverHostModels()
+        XCTAssertTrue(gc.settingsMessage.contains("API key"))
+        XCTAssertTrue(gc.availableModels.isEmpty)
+    }
+
     func testBoundedRunnerDrainsBothPipesAndFailsClosedOnFiniteAndEndlessOverflow() throws {
         let environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
         let root = FileManager.default.temporaryDirectory

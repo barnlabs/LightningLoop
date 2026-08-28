@@ -8,7 +8,7 @@ import { missingKeyNextAction, type ManagedKeyName } from "./key-catalog.js";
 export const FIRST_RUN_STEPS = [
   "llp provider select PRESET",
   "printf %s \"$KEY\" | llp key set NAME   or   llp auth then /login",
-  "llp provider models   (optional: pick one catalogued ID)",
+  "llp provider models   then   llp provider pick N",
   "llp loop \"your goal\"",
 ] as const;
 
@@ -17,6 +17,7 @@ export function firstRunMessage(): string {
     "LightningLoop first run: choose a provider before opening the TUI.",
     `Next: ${FIRST_RUN_STEPS[0]}`,
     `Then: ${FIRST_RUN_STEPS[1]}`,
+    `Then: ${FIRST_RUN_STEPS[2]}`,
     `Then: ${FIRST_RUN_STEPS[3]}`,
   ].join("\n");
 }

@@ -132,10 +132,15 @@ struct ProviderClient: AgentServing, Sendable {
         let profile = try profileStore.loadValidated()
         guard profile.allowsNativeConnectionTesting else { throw ProviderClientError.piManagedProfile }
         guard let endpoint = profile.modelsEndpoint else { throw ProviderClientError.invalidConfiguration }
-        let apiKey = (try credentialReader(profile))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        // OpenRouter's public /models catalog is credential-free. Other hosts need a key.
-        if apiKey.isEmpty && profile.preset != .openrouter {
-            throw ProviderClientError.missingAPIKey(profile.displayName)
+        // OpenRouter's public /models catalog is credential-free. Never read a key for it.
+        let apiKey: String
+        if profile.preset == .openrouter {
+            apiKey = ""
+        } else {
+            apiKey = (try credentialReader(profile))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if apiKey.isEmpty {
+                throw ProviderClientError.missingAPIKey(profile.displayName)
+            }
         }
         var request = URLRequest(url: endpoint)
         if !apiKey.isEmpty {

@@ -31,6 +31,8 @@ final class DesignedCopyTests: XCTestCase {
         XCTAssertTrue(DesignedCopy.keyNeverEchoed.localizedCaseInsensitiveContains("never shown"))
         XCTAssertTrue(DesignedCopy.keyNeverEchoed.contains("provider.json"))
         XCTAssertTrue(DesignedCopy.justFreeDetail.localizedCaseInsensitiveContains("never invents"))
+        XCTAssertEqual(DesignedCopy.modelUnavailablePrefix, "model_unavailable")
+        XCTAssertTrue(DesignedCopy.catalogNotLoaded.contains("Load models"))
         for sample in [
             DesignedCopy.noLoopSelectedTitle,
             DesignedCopy.emptyLoopsTitle,

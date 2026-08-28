@@ -424,6 +424,25 @@ npm run build:harness
 
 **Last checklist structure update:** 2026-08-28 (one-minute setup / skills pack / no-bloat delivery log). Re-verify LL statuses against `PRODUCTION_READINESS_CHECKLIST.md` before claiming a row green.
 
+### 2026-08-28 — Model pick on the installed app (list / add / pull / select)
+
+| Item | Detail |
+|------|--------|
+| Intent | Same PR. Model pick must work on the installed app (macOS GUI and TUI `llp`/`lloop`), not docs-only: list, add, pull/load from the site or installed runtime catalog, select and persist. Fail closed if the model is not catalogued or the key is missing. Clear error. No silent fallback. No invented models. Ads stay off. PR 17 Keychain silence kept. No fusion. No new providers. |
+| Branch | `cursor/model-pick-catalog-1c7d` |
+| CLI | `llp provider models` pulls and numbers the active catalog. `llp provider pick N\|ID` and `llp provider add ID` persist only a listed ID. |
+| TUI | `/models` lists; `/models N` or `/models add ID` persists. `/provider PRESET` can also pick. |
+| GUI | Setup is one Provider and model section: Load catalog / Load models, catalogued picker, immediate persist. OpenRouter catalog never reads a key. |
+| Fail-closed | Unknown ID → `model_unavailable`. Missing host key → `key set NAME` / Settings API-key message. No invented catalog. |
+| Proof (this Linux VM) | Node v22.22.2. `npm run check:harness`, `npm run test:portable`, `npm run build:harness` recorded after the commit. Isolated CLI/TUI: list + add persist a Cerebras runtime ID; unknown pick fail-closes; GeneralCompute models/pick without a key fail-closes. **Not run:** xcodebuild, XCTest, XCUITest, live TTY, live inference. macos-app / harness / windows-tui must stay green in CI. |
+| Production rows | **Unchanged.** LL-013–017, LL-021, LL-022 remain MISSING. LL-010 and LL-011 remain REWORK. LL-027 stays REWORK until independent review. No production row faked. |
+
+**Phase exit bullets:**
+
+1. **Changed:** One pick path for CLI, TUI, and GUI. Catalog load is an obvious action. Both fail-closed paths have tests.
+2. **Commands:** `check:harness`, `test:portable`, `build:harness`, isolated CLI list/add/unknown/missing-key probes.
+3. **Risk:** Live macOS Settings picker is source + XCTest, not a live click journey on this VM. CC-A9 fusion stays TODO.
+
 ### 2026-08-28 — One-minute setup, obvious skills, no extra panels
 
 | Item | Detail |

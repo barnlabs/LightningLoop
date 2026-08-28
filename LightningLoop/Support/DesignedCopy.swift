@@ -10,7 +10,12 @@ enum DesignedCopy {
     static let noLoopSelectedTitle = "Start a loop"
     static let noLoopSelectedDetail = "LightningLoop clarifies, challenges, implements, and reviews until Gold — or pauses honestly."
     static let noLoopSelectedGuidance = "⌘N opens a draft. Settings: provider, key or login, one model. Then start a loop."
-    static let setupNextAction = "Next: provider → key or /login → one model → start a loop."
+    static let setupNextAction = "Next: provider → load models → pick a listed ID → start a loop."
+    static let loadRuntimeCatalog = "Load catalog"
+    static let discoverHostModels = "Load models"
+    static let pickCataloguedModel = "Catalogued model"
+    static let catalogNotLoaded = "Load models, then pick a listed ID. Unknown IDs are rejected."
+    static let modelUnavailablePrefix = "model_unavailable"
 
     static let emptyLoopsTitle = "No loops yet"
     static let emptyLoopsDetail = "History stays on this Mac. ⌘N starts a draft."

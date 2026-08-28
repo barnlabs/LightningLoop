@@ -10,6 +10,17 @@ import { doctor, isSupportedNodeVersion, parse, usage } from "./index.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
+function cataloguedIds(stdout: string): string[] {
+  return stdout.split(/\r?\n/u).flatMap((line) => {
+    const id = line.trim().match(/^\d+\.\s+(\S+)/u)?.[1];
+    return id ? [id] : [];
+  });
+}
+
+function firstCataloguedId(stdout: string): string | undefined {
+  return cataloguedIds(stdout)[0];
+}
+
 test("no arguments select the read-only interactive TUI without launching it", () => {
   const options = parse([]);
   assert.equal(options.command, "tui");
@@ -73,7 +84,12 @@ test("provider and install-doctor commands parse as bounded first-run operations
   assert.throws(() => parse(["browse", "https://a.example/", "https://b.example/"]), /one URL/);
   assert.throws(() => parse(["provider", "select", "custom"]), /must be one of/);
   assert.throws(() => parse(["provider", "list", "cerebras"]), /too many/);
-  assert.throws(() => parse(["provider", "action-x"]), /list, select, or models/);
+  assert.equal(parse(["provider", "pick", "cerebras", "2"]).providerAction, "pick");
+  assert.equal(parse(["provider", "pick", "cerebras", "2"]).providerArgument, "cerebras");
+  assert.equal(parse(["provider", "pick", "cerebras", "2"]).providerPickToken, "2");
+  assert.equal(parse(["provider", "add", "gpt-oss-120b"]).providerAction, "pick");
+  assert.equal(parse(["provider", "add", "gpt-oss-120b"]).providerPickToken, "gpt-oss-120b");
+  assert.throws(() => parse(["provider", "action-x"]), /list, select, models, pick, or add/);
   assert.throws(() => parse(["provider", "select", "openrouter", "--model", "bad\nid"]), /bounded model ID/);
   assert.throws(() => parse(["tui", "--runtime-only"]), /valid only with doctor/);
 });
@@ -194,6 +210,7 @@ test("clean cross-platform data flow requires selection, lists presets, and stor
     assert.match(firstRun.stdout, /Next: llp provider select PRESET/u);
     assert.match(firstRun.stdout, /llp key set NAME/u);
     assert.match(firstRun.stdout, /llp loop "your goal"/u);
+    assert.match(firstRun.stdout, /llp provider pick N/u);
     assert.doesNotMatch(firstRun.stdout, /llp free/u);
     assert.doesNotMatch(firstRun.stdout, /agents select/u);
     assert.doesNotMatch(firstRun.stdout, /browse URL/u);
@@ -228,12 +245,33 @@ test("clean cross-platform data flow requires selection, lists presets, and stor
     assert.doesNotMatch(`${envDoctor.stdout}${envDoctor.stderr}`, /fc-doctor-must-not-print-this-value/u);
 
     const runtimeModels = spawnSync(process.execPath, [cli, "provider", "models"], { cwd: repositoryRoot, env, encoding: "utf8" });
-    if (runtimeModels.status === 0) {
-      assert.match(runtimeModels.stdout, /installed runtime catalog/u);
-    }
+    assert.equal(runtimeModels.status, 0, runtimeModels.stderr);
+    assert.match(runtimeModels.stdout, /installed runtime catalog/u);
+    assert.match(runtimeModels.stdout, /  1\. /u);
+    const listedId = firstCataloguedId(runtimeModels.stdout);
+    assert.ok(listedId, "expected a numbered catalog ID");
+    const picked = spawnSync(process.execPath, [cli, "provider", "add", listedId!], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.equal(picked.status, 0, picked.stderr);
+    assert.match(picked.stdout, /Picked /u);
+    const pickedProfile = JSON.parse(await readFile(join(dataDirectory, "provider.json"), "utf8")) as { modelID: string };
+    assert.equal(pickedProfile.modelID, listedId);
+    assert.doesNotMatch(await readFile(join(dataDirectory, "provider.json"), "utf8"), /(?:api.?key|authorization|bearer\s|(?:csk|sk)-)/iu);
+
     const unknownModel = spawnSync(process.execPath, [cli, "provider", "select", "cerebras", "--model", "totally-made-up-model-xyz"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.notEqual(unknownModel.status, 0);
-    assert.match(`${unknownModel.stderr}${unknownModel.stdout}`, /not catalogued by the installed LightningLoop runtime/u);
+    assert.match(`${unknownModel.stderr}${unknownModel.stdout}`, /model_unavailable/u);
+    const unknownPick = spawnSync(process.execPath, [cli, "provider", "pick", "totally-made-up-model-xyz"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.notEqual(unknownPick.status, 0);
+    assert.match(`${unknownPick.stderr}${unknownPick.stdout}`, /model_unavailable/u);
+
+    const gc = spawnSync(process.execPath, [cli, "provider", "select", "generalcompute"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.equal(gc.status, 0, gc.stderr);
+    const missingKey = spawnSync(process.execPath, [cli, "provider", "models"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.notEqual(missingKey.status, 0);
+    assert.match(`${missingKey.stderr}${missingKey.stdout}`, /key set generalcompute/u);
+    const missingKeyPick = spawnSync(process.execPath, [cli, "provider", "pick", "minimax-m2.7"], { cwd: repositoryRoot, env, encoding: "utf8" });
+    assert.notEqual(missingKeyPick.status, 0);
+    assert.match(`${missingKeyPick.stderr}${missingKeyPick.stdout}`, /key set generalcompute/u);
   } finally {
     await rm(dataDirectory, { recursive: true, force: true });
   }
@@ -253,7 +291,7 @@ test("OpenRouter is listed and selectable with the free default without a runtim
     const select = spawnSync(process.execPath, [cli, "provider", "select", "openrouter"], { cwd: repositoryRoot, env, encoding: "utf8" });
     assert.equal(select.status, 0, select.stderr);
     assert.match(select.stdout, /OPENROUTER_API_KEY/u);
-    assert.match(select.stdout, /provider models --free/u);
+    assert.match(select.stdout, /provider models/u);
 
     const encoded = await readFile(join(dataDirectory, "provider.json"), "utf8");
     const parsed = JSON.parse(encoded) as { preset: string; modelID: string; piProviderID?: string };
@@ -278,7 +316,7 @@ test("OpenRouter --model select validates against the live catalog when egress i
       // resolveSelectableModel unit tests instead.
       return;
     }
-    const freeId = models.stdout.split(/\r?\n/u).map((line) => line.trim().split(" ")[0]).find((id) => id?.endsWith(":free"));
+    const freeId = cataloguedIds(models.stdout).find((id) => id.endsWith(":free"));
     assert.ok(freeId, "expected at least one free model id from discovery");
 
     // A real free id is accepted under --free and persisted.

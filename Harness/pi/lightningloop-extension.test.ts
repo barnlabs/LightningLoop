@@ -9,7 +9,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { assertCredentialSafeInput, registerRuntimeCredential } from "../core/credential-safety.js";
 import { createLightningLoopExtension, lightningLoopExtension } from "./lightningloop-extension.js";
 import { encodePiApiKey } from "../core/pi-options.js";
-import { loadProviderProfile, profileForPreset } from "../core/provider-profile.js";
+import { loadProviderProfile, profileForPreset, saveProviderPreset } from "../core/provider-profile.js";
 import { prepareTuiRuntimeCredentials } from "../cli/index.js";
 import { resolveConfigValueUncached } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/resolve-config-value.js";
 
@@ -41,6 +41,7 @@ test("first-run TUI registers agents and browse without a selected provider", as
     assert.ok(commands.get("loop"));
     assert.ok(commands.get("help"));
     assert.ok(commands.get("provider"));
+    assert.ok(commands.get("models"));
     assert.ok(commands.get("key"));
     assert.ok(commands.get("free"));
     assert.ok(commands.get("doctor"));
@@ -60,6 +61,10 @@ test("first-run TUI registers agents and browse without a selected provider", as
     await commands.get("browse")!.handler("https://example.com/", {
       ui: { notify: (message: string) => notifications.push(message) },
     });
+    await commands.get("models")!.handler("", {
+      ui: { notify: (message: string) => notifications.push(message) },
+    });
+    assert.equal(notifications.some((message) => /Provider selection is required/u.test(message)), true);
     assert.equal(notifications.some((message) => /researcher/u.test(message)), true);
     assert.equal(notifications.some((message) => /engineer/u.test(message)), true);
     assert.equal(notifications.some((message) => /verifier/u.test(message)), true);
@@ -340,5 +345,66 @@ console.log("tui-identity-ok");
     assert.match(result.stdout, /tui-identity-ok/u);
   } finally {
     rmSync(directory, { force: true, recursive: true });
+  }
+});
+
+test("TUI /models lists, adds a catalogued ID, and fail-closes an unknown ID", async () => {
+  const previousConfig = process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+  const previousData = process.env.LIGHTNINGLOOP_DATA_DIR;
+  const directory = mkdtempSync(join(tmpdir(), "lightningloop-extension-models-"));
+  process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH = join(directory, "provider.json");
+  process.env.LIGHTNINGLOOP_DATA_DIR = directory;
+  const commands = new Map<string, { handler: (args: string, context: unknown) => Promise<void> | void }>();
+  const notifications: { message: string; kind?: string | undefined }[] = [];
+  try {
+    saveProviderPreset("cerebras");
+    lightningLoopExtension({
+      registerTool: () => undefined,
+      registerFlag: () => undefined,
+      registerProvider: () => undefined,
+      on: () => undefined,
+      getFlag: () => false,
+      registerCommand: (name: string, command: { handler: (args: string, context: unknown) => Promise<void> | void }) => commands.set(name, command),
+      setSessionName: () => undefined,
+      sendMessage: () => undefined,
+      appendEntry: () => undefined,
+    } as unknown as ExtensionAPI);
+    const models = commands.get("models");
+    assert.ok(models);
+    await models.handler("", {
+      ui: { notify: (message: string, kind?: string) => notifications.push({ message, kind }) },
+    });
+    const listed = notifications.find((item) => /installed runtime catalog/u.test(item.message));
+    assert.ok(listed);
+    const id = listed.message.split(/\r?\n/u).map((line) => line.trim().match(/^1\.\s+(\S+)/u)?.[1]).find(Boolean);
+    assert.ok(id);
+    await models.handler("totally-made-up-model-xyz", {
+      ui: { notify: (message: string, kind?: string) => notifications.push({ message, kind }) },
+    });
+    assert.equal(notifications.some((item) => item.kind === "error" && /model_unavailable/u.test(item.message)), true);
+    await models.handler(`add ${id}`, {
+      ui: { notify: (message: string, kind?: string) => notifications.push({ message, kind }) },
+    });
+    assert.equal(notifications.some((item) => /Picked /u.test(item.message) && item.message.includes(id)), true);
+    const saved = JSON.parse(readFileSync(join(directory, "provider.json"), "utf8")) as { modelID: string };
+    assert.equal(saved.modelID, id);
+    assert.doesNotMatch(readFileSync(join(directory, "provider.json"), "utf8"), /(?:api.?key|authorization|bearer\s|(?:csk|sk)-)/iu);
+
+    const provider = commands.get("provider");
+    assert.ok(provider);
+    await provider.handler("generalcompute", {
+      ui: { notify: (message: string, kind?: string) => notifications.push({ message, kind }) },
+    });
+    assert.equal(notifications.some((item) => /save the LightningLoop-managed key/u.test(item.message)), true);
+    await models.handler("", {
+      ui: { notify: (message: string, kind?: string) => notifications.push({ message, kind }) },
+    });
+    assert.equal(notifications.some((item) => item.kind === "error" && /key set generalcompute/u.test(item.message)), true);
+  } finally {
+    if (previousConfig === undefined) delete process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH;
+    else process.env.LIGHTNINGLOOP_PROVIDER_CONFIG_PATH = previousConfig;
+    if (previousData === undefined) delete process.env.LIGHTNINGLOOP_DATA_DIR;
+    else process.env.LIGHTNINGLOOP_DATA_DIR = previousData;
+    rmSync(directory, { recursive: true, force: true });
   }
 });
