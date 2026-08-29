@@ -10,6 +10,7 @@ test("first-run is four steps and names the next action", () => {
   assert.match(message, /llp key set NAME/u);
   assert.match(message, /llp auth then \/login/u);
   assert.match(message, /llp loop "your goal"/u);
+  assert.match(message, /llp provider pick N/u);
   assert.doesNotMatch(message, /llp help/u);
   assert.doesNotMatch(message, /llp free/u);
   assert.doesNotMatch(message, /agents select/u);

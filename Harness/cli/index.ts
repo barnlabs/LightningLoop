@@ -33,7 +33,7 @@ import {
   type SelectableProviderPreset,
   type ProviderProfile,
 } from "../core/provider-profile.js";
-import { enforceFreeMode, fetchOpenRouterKeyCredits, fetchOpenRouterModels, pickFreeModeModel, resolveSelectableModel, selectFreeModels, type OpenRouterKeyCredits } from "../core/openrouter.js";
+import { enforceFreeMode, fetchOpenRouterKeyCredits, fetchOpenRouterModels, pickFreeModeModel, resolveSelectableModel, type OpenRouterKeyCredits } from "../core/openrouter.js";
 import { formatCreditLine, formatLiveUsageMeter, formatRunSummaryLine } from "../core/usage-format.js";
 import { recordSelfImprovementProposals } from "../core/self-improvement.js";
 import type { ProviderModelOverride } from "../core/provider-profile.js";
@@ -41,6 +41,12 @@ import { clearSecret, defaultSecretBackend, readSecret, readStoredProviderCreden
 import { envCredential, managedKeyService, managedKeySlot, missingKeyNextAction, parseManagedKeyName } from "../core/key-catalog.js";
 import { fetchHostModels, resolveHostModel } from "../core/host-catalog.js";
 import { loadInstalledRuntimeCatalog, resolveRuntimeModel } from "../core/runtime-catalog.js";
+import {
+  applyProviderPick,
+  catalogPickHint,
+  discoverActiveCatalog,
+  formatCatalogList,
+} from "../core/model-pick.js";
 import { readLightningLoopManagedCredential } from "../pi/model-adapter.js";
 import { validateImagePaths } from "../core/image-input.js";
 import { loadEligibleMemoryContext } from "../core/memory-store.js";
@@ -110,9 +116,10 @@ interface CliOptions {
   skillArgument?: string;
   approveSkillInstall: boolean;
   approveSkillEnableHash?: string;
-  providerAction?: "list" | "select" | "models";
+  providerAction?: "list" | "select" | "models" | "pick";
   providerArgument?: SelectableProviderPreset;
   providerModel?: string;
+  providerPickToken?: string;
   providerFreeOnly: boolean;
   fusionModels?: string;
   keyAction?: "set" | "status" | "clear";
@@ -131,12 +138,12 @@ llp, lloop, and lightningloop are the same product.
 1. llp provider select PRESET
 2. printf %s "$KEY" | llp key set NAME     (stdin, never argv or a file)
    or: llp auth  then /login
-3. llp provider models                     (optional: pick one catalogued ID)
+3. llp provider models   then   llp provider pick N
 4. llp loop "your goal"
 
 Also:
   llp | lloop | lightningloop [tui] [--workspace PATH] [--allow-execution] [-- RUNTIME_OPTIONS...]
-  lightningloop provider list|select|models
+  lightningloop provider list|select|models|pick|add
   lightningloop key set|status|clear <openrouter|generalcompute|custom|cerebras|firecrawl|exa|brave>
   lightningloop skills list|enable|disable|install
   lightningloop doctor [--runtime-only]
@@ -187,6 +194,7 @@ export function parse(args: string[]): CliOptions {
   let providerAction: CliOptions["providerAction"];
   let providerArgument: SelectableProviderPreset | undefined;
   let providerModel: string | undefined;
+  let providerPickToken: string | undefined;
   let providerFreeOnly = false;
   let fusionModels: string | undefined;
   let keyAction: CliOptions["keyAction"];
@@ -342,13 +350,17 @@ export function parse(args: string[]): CliOptions {
       } else throw new Error("Skill command contains too many positional arguments.");
     } else if (command === "provider" && !arg.startsWith("--")) {
       if (!providerAction) {
-        if (arg !== "list" && arg !== "select" && arg !== "models") throw new Error("Provider action must be list, select, or models.");
-        providerAction = arg;
-      } else if (providerAction === "select" && !providerArgument) {
-        if (!selectableProviderPresets.includes(arg as SelectableProviderPreset)) {
-          throw new Error(`Provider preset must be one of: ${selectableProviderPresets.join(", ")}.`);
+        if (arg !== "list" && arg !== "select" && arg !== "models" && arg !== "pick" && arg !== "add") {
+          throw new Error("Provider action must be list, select, models, pick, or add.");
         }
+        providerAction = arg === "add" ? "pick" : arg;
+      } else if ((providerAction === "select" || providerAction === "pick") && !providerArgument && selectableProviderPresets.includes(arg as SelectableProviderPreset)) {
         providerArgument = arg as SelectableProviderPreset;
+      } else if (providerAction === "pick" && !providerPickToken) {
+        if (!arg || arg.length > 200 || /[\r\n\0]/u.test(arg)) throw new Error("provider pick/add requires a catalog index or a catalogued model ID.");
+        providerPickToken = arg;
+      } else if (providerAction === "select" && !providerArgument) {
+        throw new Error(`Provider preset must be one of: ${selectableProviderPresets.join(", ")}.`);
       } else {
         throw new Error("Provider command contains too many positional arguments.");
       }
@@ -422,6 +434,7 @@ export function parse(args: string[]): CliOptions {
     ...(providerAction ? { providerAction } : {}),
     ...(providerArgument ? { providerArgument } : {}),
     ...(providerModel ? { providerModel } : {}),
+    ...(providerPickToken ? { providerPickToken } : {}),
     providerFreeOnly,
     ...(fusionModels ? { fusionModels } : {}),
     ...(keyAction ? { keyAction } : {}),
@@ -613,19 +626,24 @@ async function runProviderCommand(options: CliOptions): Promise<void> {
     await runProviderModels(options);
     return;
   }
+  if (action === "pick") {
+    await runProviderPick(options);
+    return;
+  }
   if (action === "select") {
     if (!options.providerArgument) throw new Error("Provider select requires a reviewed preset.");
     const selected = await persistSelectedProvider(options.providerArgument, options.providerModel, options.providerFreeOnly);
     process.stdout.write(`Selected ${terminalSafe(selected.displayName)} · ${terminalSafe(selected.modelName)}${selected.freeOnly ? " · FREE MODE" : ""}\n`);
     if (selected.preset === "generalcompute") {
       process.stdout.write("Credential: LightningLoop-managed API key. Store it with 'lightningloop key set generalcompute' or GENERALCOMPUTE_API_KEY. Not runtime /login.\n");
-      process.stdout.write("Discover host models with: lightningloop provider models\n");
+      process.stdout.write("Load host models with: lightningloop provider models\n");
     } else if (selected.preset === "openrouter") {
       process.stdout.write("Credential: LightningLoop-managed API key. Store it with 'lightningloop key set openrouter', or set OPENROUTER_API_KEY / OPENROUTER_KEY. Not runtime /login.\n");
-      process.stdout.write("Discover free models with: lightningloop provider models --free\n");
+      process.stdout.write("Load the public catalog with: lightningloop provider models\n");
     } else {
-      process.stdout.write("Credential stored by LightningLoop: NO. Use 'lightningloop auth' then /login. Runtime catalog: lightningloop provider models\n");
+      process.stdout.write("Credential stored by LightningLoop: NO. Use 'lightningloop auth' then /login.\n");
     }
+    if (!options.providerModel) await writeActiveCatalog(selected, options.providerFreeOnly);
     return;
   }
   process.stdout.write("LightningLoop provider presets\n");
@@ -681,7 +699,7 @@ async function persistSelectedProvider(
     }));
   }
   const credential = readLightningLoopManagedCredential(base);
-  if (!credential) throw new Error(missingKeyNextAction(preset === "generalcompute" ? "generalcompute" : "openrouter"));
+  if (!credential) throw new Error(missingKeyNextAction(preset === "generalcompute" ? "generalcompute" : "custom"));
   const catalog = await fetchHostModels(base, credential);
   const selected = resolveHostModel(catalog, model, base.displayName);
   return saveProviderPreset(preset, providerConfigPath(), { modelID: selected.id, modelName: selected.name });
@@ -726,54 +744,49 @@ async function runFreeMode(options: CliOptions): Promise<void> {
   process.stdout.write("Add your key with 'lightningloop key set openrouter' (or set OPENROUTER_API_KEY / OPENROUTER_KEY), then run llp.\n");
 }
 
-/** Discover models for the active profile: public OpenRouter, host catalog, or installed runtime. */
+/** Pull and list the active catalog. OpenRouter public catalog needs no key. */
 async function runProviderModels(options: CliOptions): Promise<void> {
-  if (options.providerFreeOnly) {
-    const models = await fetchOpenRouterModels();
-    const shown = selectFreeModels(models);
-    process.stdout.write(`OpenRouter models · free · ${shown.length} of ${models.length}\n`);
-    for (const model of shown) {
-      process.stdout.write(`  ${terminalSafe(model.id)} · ${terminalSafe(model.name)} · ctx ${model.contextWindow} · free\n`);
-    }
-    process.stdout.write("Select one with: lightningloop provider select openrouter --model <id> --free\n");
-    return;
+  const profile = loadProviderProfile();
+  const catalog = await discoverActiveCatalog(profile, {
+    freeOnly: options.providerFreeOnly,
+    credential: isProviderSelectionRequired(profile) ? undefined : readLightningLoopManagedCredential(profile),
+  });
+  process.stdout.write(`${formatCatalogList(catalog)}\n`);
+  process.stdout.write(`${catalogPickHint(catalog)}\n`);
+}
+
+/** Persist one catalogued model. Unknown IDs and missing host keys fail closed. */
+async function runProviderPick(options: CliOptions): Promise<void> {
+  if (options.providerArgument) {
+    await persistSelectedProvider(options.providerArgument, undefined, options.providerFreeOnly);
   }
   const profile = loadProviderProfile();
-  if (isProviderSelectionRequired(profile)) {
-    throw new Error("Provider selection is required. Run 'lightningloop provider list' then 'lightningloop provider select PRESET' before 'provider models'.");
-  }
-  if (profile.preset === "openrouter") {
-    const models = await fetchOpenRouterModels();
-    process.stdout.write(`OpenRouter models · all · ${models.length}\n`);
-    for (const model of models.slice().sort((left, right) => left.id.localeCompare(right.id))) {
-      const price = model.free ? "free" : `in ${model.promptPrice} · out ${model.completionPrice} (USD/token)`;
-      process.stdout.write(`  ${terminalSafe(model.id)} · ${terminalSafe(model.name)} · ctx ${model.contextWindow} · ${price}\n`);
-    }
-    process.stdout.write("Select one with: lightningloop provider select openrouter --model <id>\n");
+  const token = options.providerModel ?? options.providerPickToken;
+  if (!token) {
+    const catalog = await discoverActiveCatalog(profile, {
+      freeOnly: options.providerFreeOnly,
+      credential: readLightningLoopManagedCredential(profile),
+    });
+    process.stdout.write(`${formatCatalogList(catalog)}\n`);
+    process.stdout.write(`${catalogPickHint(catalog)}\n`);
     return;
   }
-  if (profile.piProviderID) {
-    const catalog = await loadInstalledRuntimeCatalog(profile);
-    process.stdout.write(`${terminalSafe(profile.displayName)} models · installed runtime catalog · ${catalog.models.length}\n`);
-    for (const model of catalog.models) {
-      process.stdout.write(`  ${terminalSafe(model.modelID)} · ${terminalSafe(model.modelName)} · ctx ${model.contextWindow} · ${model.supportsImages ? "image+text" : "text"}\n`);
-    }
-    process.stdout.write(`Select one with: lightningloop provider select ${profile.preset} --model <id>\n`);
+  const { saved } = await applyProviderPick(profile, token, {
+    freeOnly: options.providerFreeOnly,
+    credential: readLightningLoopManagedCredential(profile),
+  });
+  process.stdout.write(`Picked ${terminalSafe(saved.displayName)} · ${terminalSafe(saved.modelName)} (${terminalSafe(saved.modelID)})${saved.freeOnly ? " · FREE MODE" : ""}\n`);
+}
+
+async function writeActiveCatalog(profile: ProviderProfile, freeOnly: boolean): Promise<void> {
+  if (isProviderSelectionRequired(profile) || !profile.piProviderID) {
+    process.stdout.write("Load models with: lightningloop provider models\n");
+    process.stdout.write("Add one with: lightningloop provider pick <n|id>\n");
     return;
   }
-  const credential = readLightningLoopManagedCredential(profile);
-  if (!credential) {
-    throw new Error(missingKeyNextAction(profile.preset === "generalcompute" ? "generalcompute" : "custom"));
-  }
-  const models = await fetchHostModels(profile, credential);
-  process.stdout.write(`${terminalSafe(profile.displayName)} models · live host catalog · ${models.length}\n`);
-  for (const model of models) {
-    process.stdout.write(`  ${terminalSafe(model.id)} · ${terminalSafe(model.name)}\n`);
-  }
-  process.stdout.write(`Select one with: lightningloop provider select ${profile.preset === "custom" ? "openrouter" : profile.preset} --model <id>\n`);
-  if (profile.preset === "custom") {
-    process.stdout.write("Custom hosts keep the saved profile; copy a discovered ID into Settings or re-save the custom model ID.\n");
-  }
+  const catalog = await discoverActiveCatalog(profile, { freeOnly });
+  process.stdout.write(`${formatCatalogList(catalog)}\n`);
+  process.stdout.write(`${catalogPickHint(catalog)}\n`);
 }
 
 async function runSearch(options: CliOptions): Promise<void> {

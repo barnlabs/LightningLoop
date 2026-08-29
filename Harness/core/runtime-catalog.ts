@@ -66,7 +66,7 @@ export function resolveRuntimeModel(catalog: RuntimeModelCatalog, modelID: strin
   const selected = catalog.models.find((model) => model.modelID === modelID);
   if (!selected) {
     throw new Error(
-      `Model '${modelID}' is not catalogued by the installed LightningLoop runtime for ${displayName}. Run 'lightningloop provider models' and pick a listed ID.`,
+      `model_unavailable: Model '${modelID}' is not catalogued by the installed LightningLoop runtime for ${displayName}. Run 'lightningloop provider models' and pick a listed ID.`,
     );
   }
   return selected;

@@ -11,7 +11,9 @@ import { builtinWorkflowGuidance } from "../core/workflow-catalog.js";
 import { terminalSafe } from "../core/terminal-output.js";
 import { formatLiveUsageMeter } from "../core/usage-format.js";
 import { validateImagePaths } from "../core/image-input.js";
-import { isProviderSelectionRequired, loadProviderProfile, providerHeaders } from "../core/provider-profile.js";
+import { isProviderSelectionRequired, loadProviderProfile, providerHeaders, saveProviderPreset } from "../core/provider-profile.js";
+import { applyProviderPick, catalogPickHint, discoverActiveCatalog, formatCatalogList, splitProviderPickTokens } from "../core/model-pick.js";
+import { readLightningLoopManagedCredential } from "./model-adapter.js";
 import { LoopEngine } from "../core/loop-engine.js";
 import { PiProviderAdapter } from "./model-adapter.js";
 import { enforceFreeMode } from "../core/openrouter.js";
@@ -94,7 +96,7 @@ function managedOpenAiProviderRegistration(
 
 export function createLightningLoopExtension(options: LightningLoopExtensionOptions = {}): ExtensionFactory {
   return (pi: ExtensionAPI) => {
-    const profile = loadProviderProfile();
+    let profile = loadProviderProfile();
   const providerID = `lightningloop-${profile.id}`;
   const workspace = process.cwd();
   const sandbox = new SandboxedBashRuntime(workspace);
@@ -898,9 +900,63 @@ export function createLightningLoopExtension(options: LightningLoopExtensionOpti
   });
 
   pi.registerCommand("provider", {
-    description: "Show how to list and select a LightningLoop provider",
-    handler: async (_args, ctx) => {
-      ctx.ui.notify("Use `llp provider list` then `llp provider select PRESET`. Keys stay in the OS store; provider.json never holds secrets.", "info");
+    description: "Select a provider preset, or show the current catalog",
+    handler: async (args, ctx) => {
+      try {
+        const parsed = splitProviderPickTokens(args.trim().split(/\s+/u).filter(Boolean));
+        if (parsed.preset) {
+          profile = saveProviderPreset(parsed.preset);
+          ctx.ui.notify(`Selected ${profile.displayName}. Keys stay in the OS store; provider.json never holds secrets.`, "info");
+        } else if (isProviderSelectionRequired(profile)) {
+          ctx.ui.notify("Next: /provider PRESET   then /models   then /models N", "warning");
+          return;
+        }
+        if (parsed.pick) {
+          const result = await applyProviderPick(profile, parsed.pick, {
+            credential: readLightningLoopManagedCredential(profile),
+          });
+          profile = result.saved;
+          ctx.ui.notify(`Picked ${result.saved.modelName} (${result.saved.modelID}). /loop uses this model.`, "info");
+          return;
+        }
+        if (!profile.piProviderID && profile.preset !== "openrouter" && !readLightningLoopManagedCredential(profile)) {
+          ctx.ui.notify("Next: save the LightningLoop-managed key, then /models.", "warning");
+          return;
+        }
+        const catalog = await discoverActiveCatalog(profile, {
+          credential: readLightningLoopManagedCredential(profile),
+        });
+        ctx.ui.notify(`${formatCatalogList(catalog)}\n${catalogPickHint(catalog)}`, "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Provider command failed.", "error");
+      }
+    },
+  });
+
+  pi.registerCommand("models", {
+    description: "Pull the catalog and pick a catalogued model",
+    handler: async (args, ctx) => {
+      try {
+        const tokens = args.trim().split(/\s+/u).filter(Boolean);
+        const verb = tokens[0] === "add" || tokens[0] === "pick" ? tokens[1] : tokens[0];
+        if (isProviderSelectionRequired(profile)) {
+          throw new Error("Provider selection is required. Run /provider PRESET first.");
+        }
+        if (!verb) {
+          const catalog = await discoverActiveCatalog(profile, {
+            credential: readLightningLoopManagedCredential(profile),
+          });
+          ctx.ui.notify(`${formatCatalogList(catalog)}\nAdd one with: /models N   or   /models add ID`, "info");
+          return;
+        }
+        const result = await applyProviderPick(profile, verb, {
+          credential: readLightningLoopManagedCredential(profile),
+        });
+        profile = result.saved;
+        ctx.ui.notify(`Picked ${result.saved.modelName} (${result.saved.modelID}). /loop uses this model.`, "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? terminalSafe(error.message) : "Model command failed.", "error");
+      }
     },
   });
 

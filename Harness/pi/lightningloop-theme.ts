@@ -44,11 +44,11 @@ export const BRAND_TAGLINE = "Fast models. Strict evidence.";
 /** The fixed pipeline shown next to the active model. */
 export const PIPELINE_TAGLINE = "research → engineer → verify";
 /** First-run / status-bar command list. Same product on every bin. */
-export const FOOTER_HELP = "llp help · provider · key · skills · /loop <goal>";
+export const FOOTER_HELP = "llp help · provider · models · key · skills · /loop <goal>";
 /** Below this width the footer stacks its segments instead of justifying them. */
 export const FOOTER_JUSTIFY_MIN_WIDTH = 68;
 
-export const DISCOVERABLE_COMMANDS = ["help", "provider", "key", "skills", "loop"] as const;
+export const DISCOVERABLE_COMMANDS = ["help", "provider", "models", "key", "skills", "loop"] as const;
 
 /** Resolve the product bin from argv[1] without treating unknown names as branding. */
 export function invokedProductBin(argv1: string | undefined): "llp" | "lloop" | "lightningloop" {
@@ -66,10 +66,12 @@ export function renderDiscoverableHelp(): string {
     "",
     "1. provider select PRESET",
     "2. key set NAME          stdin, never argv or a file — or /login after llp auth",
-    "3. /loop <goal>",
+    "3. /models then /models N",
+    "4. /loop <goal>",
     "",
     "  help                 this list",
     "  provider list        presets",
+    "  models               load the catalog; models N picks a listed ID",
     "  key status|clear     stored/missing only",
     "  skills list|enable|disable",
     "  loop <goal>          run the strict loop",

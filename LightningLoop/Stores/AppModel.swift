@@ -156,7 +156,7 @@ final class AppModel {
         let providerStore = ProviderConfigurationStore()
         if let harness = HarnessProcessClient.discover() {
             let model = AppModel(engine: harness, keychain: keychain, providerStore: providerStore, runtimeLabel: "Shared LightningLoop runtime")
-            Task { await model.refreshRuntimeModelCatalog() }
+            Task { await model.loadModelCatalogIfCredentialFree() }
             return model
         }
         return AppModel(
@@ -834,21 +834,46 @@ final class AppModel {
         }
     }
 
-    var canDiscoverHostModels: Bool {
-        providerProfile.usesPiAuthentication
-            || hasCredential(providerProfile)
-            || providerProfile.preset == .openrouter
+    var canDiscoverHostModels: Bool { canLoadModelCatalog }
+
+    var canLoadModelCatalog: Bool {
+        providerProfile.preset != .selectionRequired
+    }
+
+    var cataloguedPickerModels: [ProviderModelOption] {
+        providerProfile.usesPiAuthentication ? runtimeModels : discoveredCustomModels
+    }
+
+    func loadModelCatalogIfCredentialFree() async {
+        if ProcessInfo.processInfo.environment["LIGHTNINGLOOP_UI_TESTING"] == "1" { return }
+        guard providerProfile.usesPiAuthentication || providerProfile.preset == .openrouter else { return }
+        await loadModelCatalog()
+    }
+
+    func loadModelCatalog() async {
+        if providerProfile.usesPiAuthentication {
+            await refreshRuntimeModelCatalog()
+            return
+        }
+        await discoverHostModels()
     }
 
     func testConnection() async {
+        await loadModelCatalog()
+    }
+
+    func discoverHostModels() async {
         guard providerProfile.allowsNativeConnectionTesting else {
             await refreshRuntimeModelCatalog()
             return
         }
-        let hasKey = hasCredential(providerProfile)
-        settingsMessage = hasKey
-            ? "Discovering \(providerProfile.displayName) models and testing \(providerProfile.modelName)…"
-            : "Discovering \(providerProfile.displayName) models from the live host catalog…"
+        if providerProfile.preset != .openrouter && !hasCredential(providerProfile) {
+            availableModels = []
+            discoveredCustomModels = []
+            settingsMessage = "\(providerProfile.displayName) model discovery requires a LightningLoop-managed API key. Save the key first."
+            return
+        }
+        settingsMessage = "Loading \(providerProfile.displayName) models…"
         do {
             let client = ProviderClient(keychain: keychain, profileStore: providerStore)
             let ids = try await client.listModels()
@@ -862,20 +887,10 @@ final class AppModel {
                     maxOutputTokens: providerProfile.maxOutputTokens
                 )
             }
-            guard availableModels.contains(providerProfile.modelID) else {
-                throw ProviderClientError.server(
-                    provider: providerProfile.displayName,
-                    status: 0,
-                    message: "Model \(providerProfile.modelID) was not returned by /models. Pick a discovered model, then save the profile."
-                )
-            }
-            if hasKey {
-                let reply = try await client.complete(LoopPrompts.connectionProbe())
-                connectionMetrics = reply.metrics
-                settingsMessage = "Connected to \(reply.model). Discovered \(availableModels.count) model\(availableModels.count == 1 ? "" : "s") from the provider /models list (account-visible IDs, not a marketing catalog)."
+            if availableModels.contains(providerProfile.modelID) {
+                settingsMessage = "Loaded \(availableModels.count) catalogued ID\(availableModels.count == 1 ? "" : "s"). Pick one."
             } else {
-                connectionMetrics = nil
-                settingsMessage = "Discovered \(availableModels.count) model ID\(availableModels.count == 1 ? "" : "s") from the public OpenRouter catalog. Save a key to test a completion."
+                settingsMessage = "\(DesignedCopy.modelUnavailablePrefix): \(providerProfile.modelID) is not in the loaded catalog. Pick a listed ID."
             }
         } catch {
             connectionMetrics = nil
@@ -887,13 +902,31 @@ final class AppModel {
 
     /// Apply a discovered custom model ID into a draft profile (display name defaults to the ID).
     func applyDiscoveredCustomModel(_ modelID: String, to profile: inout ProviderConfiguration) {
-        guard availableModels.contains(modelID) else { return }
+        guard availableModels.contains(modelID) else {
+            settingsMessage = "\(DesignedCopy.modelUnavailablePrefix): \(modelID) is not in the loaded catalog. Pick a listed ID."
+            return
+        }
         if let option = discoveredCustomModels.first(where: { $0.modelID == modelID }) {
             profile = profile.applyingRuntimeModel(option)
         } else {
             profile.modelID = modelID
             profile.modelName = modelID
         }
+    }
+
+    func persistCataloguedModel(_ modelID: String, to profile: inout ProviderConfiguration) {
+        if profile.usesPiAuthentication {
+            guard let option = runtimeModels.first(where: { $0.modelID == modelID }) else {
+                settingsMessage = "\(DesignedCopy.modelUnavailablePrefix): \(modelID) is not in the loaded catalog. Pick a listed ID."
+                return
+            }
+            profile = profile.applyingRuntimeModel(option)
+        } else {
+            applyDiscoveredCustomModel(modelID, to: &profile)
+            guard availableModels.contains(modelID) else { return }
+        }
+        saveProviderConfiguration(profile)
+        profile = providerProfile
     }
 
     func refreshRuntimeModelCatalog() async {
@@ -955,28 +988,34 @@ final class AppModel {
     }
 
     func canSaveProviderConfiguration(_ profile: ProviderConfiguration) -> Bool {
-        // Custom profiles do not use the runtime catalog save gate.
-        guard profile.usesPiAuthentication else { return true }
-        // When a catalog is bound for this provider, only catalogued model IDs may be saved.
-        if runtimeModelCatalogProviderID == profile.id {
-            return runtimeModels.contains { $0.modelID == profile.modelID }
+        if profile.usesPiAuthentication {
+            if runtimeModelCatalogProviderID == profile.id {
+                return runtimeModels.contains { $0.modelID == profile.modelID }
+            }
+            return profile.preset != .selectionRequired
         }
-        // Catalog not yet bound: allow selecting a built-in preset so onboarding can proceed.
-        // Execution remains fail-closed via activeRuntimeModelSelectionBlocker until refresh succeeds.
+        if !availableModels.isEmpty {
+            return availableModels.contains(profile.modelID)
+        }
         return profile.preset != .selectionRequired
     }
 
     func runtimeModelSelectionMessage(for profile: ProviderConfiguration) -> String? {
-        guard profile.usesPiAuthentication else { return nil }
-        guard runtimeModelCatalogProviderID == profile.id else {
+        if profile.usesPiAuthentication {
+            guard runtimeModelCatalogProviderID == profile.id else {
+                return profile.runtimeModelSelectionNotice
+                    ?? "Load the installed LightningLoop runtime catalog before saving. Catalogued is not sign-in or entitlement."
+            }
+            if let model = runtimeModels.first(where: { $0.modelID == profile.modelID }) {
+                return "\(model.modelName) is catalogued by the installed LightningLoop runtime. Catalogued is not account entitlement."
+            }
             return profile.runtimeModelSelectionNotice
-                ?? "Refresh the installed LightningLoop runtime catalog before saving. Catalogued is not sign-in or entitlement."
+                ?? "\(DesignedCopy.modelUnavailablePrefix): \(profile.modelName) is not catalogued by the installed LightningLoop runtime. Choose a listed model."
         }
-        if let model = runtimeModels.first(where: { $0.modelID == profile.modelID }) {
-            return "\(model.modelName) is catalogued by the installed LightningLoop runtime. Catalogued is not account entitlement."
+        if !availableModels.isEmpty && !availableModels.contains(profile.modelID) {
+            return "\(DesignedCopy.modelUnavailablePrefix): \(profile.modelID) is not in the loaded catalog. Pick a listed ID."
         }
-        return profile.runtimeModelSelectionNotice
-            ?? "\(profile.modelName) is not catalogued by the installed LightningLoop runtime. Choose a listed model."
+        return nil
     }
 
     func selectProviderPreset(_ preset: ProviderPreset) {
@@ -1031,22 +1070,37 @@ final class AppModel {
             return
         }
         do {
+            let previousID = providerProfile.id
+            let keptRuntime = runtimeModels
+            let keptRuntimeID = runtimeModelCatalogProviderID
+            let keptRuntimeScope = runtimeModelCatalogScope
+            let keptAvailable = availableModels
+            let keptDiscovered = discoveredCustomModels
             try providerStore.save(profile)
             providerProfile = providerStore.load()
-            availableModels = []
-            discoveredCustomModels = []
-            runtimeModels = []
-            runtimeModelCatalogProviderID = nil
-            runtimeModelCatalogScope = ""
-            connectionMetrics = nil
+            if providerProfile.id == previousID && providerProfile.usesPiAuthentication && keptRuntimeID == providerProfile.id {
+                runtimeModels = keptRuntime
+                runtimeModelCatalogProviderID = keptRuntimeID
+                runtimeModelCatalogScope = keptRuntimeScope
+            } else if providerProfile.id == previousID && !providerProfile.usesPiAuthentication {
+                availableModels = keptAvailable
+                discoveredCustomModels = keptDiscovered
+            } else {
+                availableModels = []
+                discoveredCustomModels = []
+                runtimeModels = []
+                runtimeModelCatalogProviderID = nil
+                runtimeModelCatalogScope = ""
+                connectionMetrics = nil
+            }
             let scrubbed = scrubHistoricalStateWithCurrentCredentials()
             let savedMessage = scrubbed
                 ? "Active provider saved: \(providerProfile.displayName) · \(providerProfile.modelID). Historical state was rechecked."
                 : "Active provider saved, but protected history could not be rewritten; it remains hidden or sanitized."
             settingsMessage = providerProfile.runtimeModelSelectionNotice.map { "\(savedMessage) \($0)" } ?? savedMessage
             refreshCredentialState()
-            if providerProfile.usesPiAuthentication {
-                Task { await refreshRuntimeModelCatalog() }
+            if providerProfile.id != previousID {
+                Task { await loadModelCatalogIfCredentialFree() }
             }
         } catch {
             settingsMessage = sanitizeSensitiveText(error.localizedDescription)

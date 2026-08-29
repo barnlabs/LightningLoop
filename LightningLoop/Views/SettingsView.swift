@@ -40,9 +40,7 @@ struct SettingsView: View {
                 draft = model.providerProfile
                 model.refreshManagedLedgers()
                 model.refreshSkillPack()
-                if draft.usesPiAuthentication {
-                    Task { await model.refreshRuntimeModelCatalog() }
-                }
+                Task { await model.loadModelCatalogIfCredentialFree() }
             }
     }
 
@@ -82,51 +80,7 @@ struct SettingsView: View {
                     .font(.callout.weight(.medium))
             }
 
-            Section("Discover and select a model") {
-                Text(draft.usesPiAuthentication
-                     ? "Refresh the installed runtime catalog, pick a listed ID, then save. Catalogued is not sign-in."
-                     : "Discover loads live host model IDs. OpenRouter's public catalog needs no key. GeneralCompute and Custom need a stored key.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                HStack {
-                    if draft.usesPiAuthentication {
-                        Button(isTesting ? "Refreshing…" : "Refresh Runtime Models") {
-                            isTesting = true
-                            Task {
-                                await model.refreshRuntimeModelCatalog()
-                                if let selected = model.runtimeModels.first(where: { $0.modelID == draft.modelID }) {
-                                    draft = draft.applyingRuntimeModel(selected)
-                                }
-                                isTesting = false
-                            }
-                        }
-                        .disabled(isTesting)
-                        .buttonStyle(.borderedProminent)
-                        Button("Copy runtime login command") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString("lightningloop auth", forType: .string)
-                        }
-                    } else {
-                        Button(isTesting ? "Discovering…" : "Discover Models") {
-                            isTesting = true
-                            Task {
-                                await model.testConnection()
-                                if model.availableModels.contains(draft.modelID) {
-                                    model.applyDiscoveredCustomModel(draft.modelID, to: &draft)
-                                }
-                                isTesting = false
-                            }
-                        }
-                        .disabled(!model.canDiscoverHostModels || isTesting)
-                        .buttonStyle(.borderedProminent)
-                    }
-                }
-                if !model.settingsMessage.isEmpty {
-                    Text(model.settingsMessage).font(.caption).foregroundStyle(.secondary)
-                }
-            }
-
-            Section("Active provider profile") {
+            Section("Provider and model") {
                 Picker("Preset", selection: providerPresetBinding) {
                     ForEach(ProviderPreset.allCases) { preset in Text(preset.label).tag(preset) }
                 }
@@ -137,55 +91,52 @@ struct SettingsView: View {
                 } else {
                     LabeledContent("Verified endpoint", value: draft.baseURL)
                 }
-                if draft.usesPiAuthentication {
-                    LabeledContent("Selected model") {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(draft.modelName)
-                            Text(draft.modelID).font(.caption.monospaced()).foregroundStyle(.secondary)
+                Button(isTesting ? "Loading…" : (draft.usesPiAuthentication ? DesignedCopy.loadRuntimeCatalog : DesignedCopy.discoverHostModels)) {
+                    isTesting = true
+                    Task {
+                        await model.loadModelCatalog()
+                        if draft.usesPiAuthentication, let selected = model.runtimeModels.first(where: { $0.modelID == draft.modelID }) {
+                            draft = draft.applyingRuntimeModel(selected)
+                        } else if model.availableModels.contains(draft.modelID) {
+                            model.applyDiscoveredCustomModel(draft.modelID, to: &draft)
+                        }
+                        isTesting = false
+                    }
+                }
+                .disabled(!model.canLoadModelCatalog || isTesting)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("catalog.load")
+                if !model.cataloguedPickerModels.isEmpty {
+                    Picker(DesignedCopy.pickCataloguedModel, selection: cataloguedModelBinding) {
+                        ForEach(model.cataloguedPickerModels) { option in
+                            Text("\(option.modelName) · \(option.supportsImages ? "Image + text" : "Text") · \(option.modelID)")
+                                .tag(option.modelID)
                         }
                     }
-                    if !model.runtimeModels.isEmpty {
-                        Picker("Runtime model", selection: runtimeModelBinding) {
-                            ForEach(model.runtimeModels) { option in
-                                Text("\(option.modelName) · \(option.supportsImages ? "Image + text" : "Text") · \(option.modelID)")
-                                    .tag(option.modelID)
-                            }
-                        }
-                        .accessibilityIdentifier("runtime.model.picker")
-                    } else {
-                        Text("Refresh the installed LightningLoop runtime catalog to select a catalogued model.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    .accessibilityIdentifier(draft.usesPiAuthentication ? "runtime.model.picker" : "custom.model.picker")
                 } else {
-                    TextField("Model ID", text: $draft.modelID)
-                        .font(.body.monospaced())
-                    TextField("Model display name", text: $draft.modelName)
-                    if !model.availableModels.isEmpty {
-                        Picker("Discovered model", selection: Binding(
-                            get: { draft.modelID },
-                            set: { id in
-                                draft.modelID = id
-                                model.applyDiscoveredCustomModel(id, to: &draft)
-                            }
-                        )) {
-                            ForEach(model.availableModels, id: \.self) { id in
-                                Text(id).tag(id)
-                            }
-                        }
-                        .accessibilityIdentifier("custom.model.picker")
-                    }
+                    Text(DesignedCopy.catalogNotLoaded)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 if draft.preset == .openrouter {
                     Toggle(DesignedCopy.justFreeLabel, isOn: Binding(
                         get: { draft.freeOnly ?? false },
-                        set: { draft.freeOnly = $0 }
+                        set: { enabled in
+                            draft.freeOnly = enabled
+                            model.saveProviderConfiguration(draft)
+                            draft = model.providerProfile
+                        }
                     ))
                     .accessibilityIdentifier("openrouter.free.only")
                 }
-                Button("Save Active Profile") { model.saveProviderConfiguration(draft); draft = model.providerProfile }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!model.canSaveProviderConfiguration(draft))
+                if draft.preset == .custom {
+                    Button("Save host") { model.saveProviderConfiguration(draft); draft = model.providerProfile }
+                        .disabled(!model.canSaveProviderConfiguration(draft))
+                }
+                if !model.settingsMessage.isEmpty {
+                    Text(model.settingsMessage).font(.caption).foregroundStyle(.secondary)
+                }
             }
 
             Section("Inference credential") {
@@ -359,12 +310,11 @@ struct SettingsView: View {
         )
     }
 
-    private var runtimeModelBinding: Binding<String> {
+    private var cataloguedModelBinding: Binding<String> {
         Binding(
             get: { draft.modelID },
             set: { modelID in
-                guard let option = model.runtimeModels.first(where: { $0.modelID == modelID }) else { return }
-                draft = draft.applyingRuntimeModel(option)
+                model.persistCataloguedModel(modelID, to: &draft)
             }
         )
     }

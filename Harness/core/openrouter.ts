@@ -125,7 +125,7 @@ export function resolveSelectableModel(
 ): OpenRouterModel {
   const match = models.find((model) => model.id === id);
   if (!match) {
-    throw new Error(`Model '${id}' is not in the current OpenRouter catalog. Run 'lightningloop provider models --free' to list available IDs.`);
+    throw new Error(`model_unavailable: Model '${id}' is not in the current OpenRouter catalog. Run 'lightningloop provider models --free' to list available IDs.`);
   }
   if (freeOnly && !match.free) {
     throw new Error(`Model '${match.id}' is not a free model. Remove --free or choose one from 'lightningloop provider models --free'.`);

@@ -157,7 +157,7 @@ test("footer layout is color-independent (ANSI-stripped equals plain snapshot)",
 });
 
 test("footer help names the discoverable first commands", () => {
-  assert.equal(FOOTER_HELP, "llp help · provider · key · skills · /loop <goal>");
+  assert.equal(FOOTER_HELP, "llp help · provider · models · key · skills · /loop <goal>");
   const lines = renderStatusFooterLines(plain, footerModel, 100);
   assert.equal(lines[1], FOOTER_HELP);
 });

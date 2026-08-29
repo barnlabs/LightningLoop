@@ -185,7 +185,7 @@ export async function fetchHostModels(
 export function resolveHostModel(models: readonly HostModel[], id: string, displayName: string): HostModel {
   const match = models.find((model) => model.id === id);
   if (!match) {
-    throw new Error(`Model '${id}' is not in the current ${displayName} catalog. Run 'lightningloop provider models' to list available IDs.`);
+    throw new Error(`model_unavailable: Model '${id}' is not in the current ${displayName} catalog. Run 'lightningloop provider models' to list available IDs.`);
   }
   return match;
 }

@@ -424,6 +424,34 @@ npm run build:harness
 
 **Last checklist structure update:** 2026-08-28 (one-minute setup / skills pack / no-bloat delivery log). Re-verify LL statuses against `PRODUCTION_READINESS_CHECKLIST.md` before claiming a row green.
 
+### 2026-08-28 — Model pick on the installed app (list / add / pull / select)
+
+| Item | Detail |
+|------|--------|
+| Intent | Same PR. Model pick must work on the installed app (macOS GUI and TUI `llp`/`lloop`), not docs-only: list, add, pull/load from the site or installed runtime catalog, select and persist. Fail closed if the model is not catalogued or the key is missing. Clear error. No silent fallback. No invented models. Ads stay off. PR 17 Keychain silence kept. No fusion. No new providers. |
+| Branch | `cursor/model-pick-catalog-1c7d` |
+| CLI | `llp provider models` pulls and numbers the active catalog. `llp provider pick N\|ID` and `llp provider add ID` persist only a listed ID. |
+| TUI | `/models` lists; `/models N` or `/models add ID` persists. `/provider PRESET` can also pick. |
+| GUI | Setup is one Provider and model section: Load catalog / Load models, catalogued picker, immediate persist. OpenRouter catalog never reads a key. |
+| Fail-closed | Unknown ID → `model_unavailable`. Missing host key → `key set NAME` / Settings API-key message. No invented catalog. |
+| Proof (this Linux VM) | Node v22.22.2. `npm run check:harness` exit 0. `npm run test:portable` **213 tests, 212 pass, 1 skipped, 0 fail**. Isolated `LIGHTNINGLOOP_DATA_DIR`: first-run names `provider models` then `pick N`; `provider models` without a profile fails closed; `provider select cerebras` lists the installed runtime catalog (gemma-4-31b, gpt-oss-120b, zai-glm-4.7); `provider add gemma-4-31b` and `provider pick 2` persist listed IDs; unknown `pick` / `--model` fail closed as `model_unavailable`; GeneralCompute `models`/`pick` without a key fail closed as `key set generalcompute`; `provider.json` has no secrets. **Not run:** xcodebuild, XCTest, XCUITest, live TTY, live inference. macos-app / harness / windows-tui must stay green in CI. |
+| Production rows | **Unchanged.** LL-013–017, LL-021, LL-022 remain MISSING. LL-010 and LL-011 remain REWORK. LL-027 stays REWORK until independent review. No production row faked. |
+
+**Phase exit bullets:**
+
+1. **Changed:** One pick path for CLI, TUI, and GUI. Catalog load is an obvious action. Both fail-closed paths have tests.
+2. **Commands:** `check:harness`, `test:portable`, `build:harness`, isolated CLI list/add/unknown/missing-key probes.
+3. **Risk:** Live macOS Settings picker is source + XCTest, not a live click journey on this VM. CC-A9 fusion stays TODO.
+
+### 2026-08-28 — macos-app XCTest isolation (same PR)
+
+| Item | Detail |
+|------|--------|
+| Trigger | macos-app CI: App target compiled; LightningLoopTests failed at `ProviderClientTests.swift:116` — `mutation of captured var 'credentialReads' in concurrently-executing code`. Testing cancelled. |
+| Cause | Swift 6 isolation: OpenRouter catalog test counted credential reads with a captured `var` inside a `@Sendable` reader. |
+| Fix | Use the existing `LockedCounter` (same file as the Pi-managed no-read test). Assert still requires zero credential reads and no `Authorization`. PR 17 Keychain silence unchanged. |
+| Production rows | **Unchanged.** |
+
 ### 2026-08-28 — One-minute setup, obvious skills, no extra panels
 
 | Item | Detail |

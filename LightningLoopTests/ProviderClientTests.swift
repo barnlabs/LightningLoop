@@ -93,7 +93,7 @@ final class ProviderClientTests: XCTestCase {
     }
 
     func testOpenRouterNativeListModelsIsAllowedWithFixedEndpoint() async throws {
-        let credential = "synthetic-openrouter-credential"
+        let credentialReads = LockedCounter()
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let store = ProviderConfigurationStore(fileURL: root.appendingPathComponent("provider.json"))
         try store.save(.preset(.openrouter))
@@ -105,17 +105,21 @@ final class ProviderClientTests: XCTestCase {
         configuration.protocolClasses = [ProviderURLProtocol.self]
         ProviderURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.absoluteString, "https://openrouter.ai/api/v1/models")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(credential)")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
             let body = #"{"object":"list","data":[{"id":"deepseek/deepseek-chat-v3-0324:free","object":"model"}]}"#
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(body.utf8))
         }
         let client = ProviderClient(
             profileStore: store,
             session: URLSession(configuration: configuration),
-            credentialReader: { _ in credential }
+            credentialReader: { _ in
+                credentialReads.increment()
+                return "must-not-be-read"
+            }
         )
         let models = try await client.listModels()
         XCTAssertEqual(models, ["deepseek/deepseek-chat-v3-0324:free"])
+        XCTAssertEqual(credentialReads.value, 0, "OpenRouter catalog load must not read a credential")
     }
 
     func testOpenRouterPublicCatalogDoesNotRequireAKey() async throws {
