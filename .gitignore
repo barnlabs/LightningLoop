@@ -14,3 +14,5 @@ xcuserdata/
 *.secrets
 *.key
 *.pem
+.zai-local.json
+provider-sheet.json

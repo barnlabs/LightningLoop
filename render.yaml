@@ -1,0 +1,39 @@
+# Render Blueprint — one-click deploy of the LightningLoop web UI.
+# Visit https://render.com, click "New → Blueprint", and point it at this repo.
+# Render reads this file and creates a Node web service for you.
+#
+# You will be asked to fill in your own secrets (LL_API_KEY is required;
+# the search env vars are optional). Your keys are stored as Render secrets
+# and never appear in the repo.
+
+services:
+  - type: web
+    name: lightningloop-web
+    runtime: node
+    plan: free
+    # Build the TypeScript harness, then run the web server.
+    buildCommand: npm ci --ignore-scripts && npm run build:harness
+    startCommand: npm run web
+    # Bind 0.0.0.0 so Render's router can reach the server (defaults to
+    # 127.0.0.1 locally for safety; overridden for hosted deployment).
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_VERSION
+        value: 22.19.0
+      # Required: your LLM provider. Fill these with your own key.
+      - key: LL_API_KEY
+        sync: false
+      - key: LL_BASE_URL
+        sync: false
+      - key: LL_MODEL
+        sync: false
+      # Optional: paid search provider for higher-quality grounding.
+      - key: EXA_API_KEY
+        sync: false
+      - key: BRAVE_SEARCH_API_KEY
+        sync: false
+      - key: FIRECRAWL_API_KEY
+        sync: false
+    healthCheckPath: /
+    autoDeploy: true
